@@ -11,7 +11,10 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  UV_FROZEN: "1"
+  # Assert that uv.lock is in sync with pyproject.toml. If it is not, CI fails
+  # loudly instead of silently re-resolving and testing an environment that
+  # nobody has on their machine.
+  UV_LOCKED: "1"
 
 jobs:
   lint:

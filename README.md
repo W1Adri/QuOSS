@@ -71,4 +71,5 @@ Las flechas nunca van al revés.
 
 ## Licencia
 
-MIT.
+MIT — ver [`LICENSE`](LICENSE). © 2026 Adrià Sancho.
+Proyecto personal; sin afiliación institucional.

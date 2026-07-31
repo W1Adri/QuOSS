@@ -96,6 +96,7 @@ proyecto que use las mismas versiones. `uv cache clean` libera el global.
 | **Sin `[project.scripts]`** | Apuntaría a `quoss.cli.main`, que no existe hasta la etapa 7. Rompe la regla de oro: no escribas algo que importe lo que no existe | Trivial |
 | `line-length = 100` | Las fórmulas de física con subíndices no caben cómodas en 88 | Bajo |
 | Licencia **MIT** | Máxima reproducibilidad por terceros (revisores) | Medio — ver §6 |
+| `UV_LOCKED=1` en CI | Convierte la deriva silenciosa entre `pyproject.toml` y `uv.lock` en un fallo ruidoso | Trivial |
 
 ---
 
@@ -109,17 +110,44 @@ proyecto que use las mismas versiones. `uv cache clean` libera el global.
   y si las conversiones son helpers explícitos o se hacen en el borde (I/O del
   escenario). **Elegirla y no cambiarla.** Candidata a primer ADR.
 
-### A confirmar (asumido, puede estar mal)
+### Resuelto el 2026-07-31
 
-- **Licencia MIT** y **autoría** (`Adrià Sancho <adria.sancho@ixrev.com>`) puestas en
-  `pyproject.toml` sin preguntar. El CTTC puede tener política propia de licencias y
-  de atribución institucional; si el paper sale con afiliación CTTC, revisarlo.
-- **URLs del repo** (`github.com/cttc/quoss`) son **placeholder**. Corregir cuando
-  exista el remoto real.
-- **CI no está verificada de verdad.** En local pasan los mismos comandos que corre el
-  workflow, pero el workflow solo se puede probar contra un remoto en GitHub. Cuando
-  exista: `UV_FROZEN=1` hace que CI falle si el lock se desincroniza del
-  `pyproject.toml`, en vez de re-resolver en silencio. Eso es intencionado.
+- **Proyecto personal, sin afiliación institucional.** El CTTC no interviene: `QuOSS`
+  vive dentro de `~/Escritorio/Adria_files/CTTC/` solo por dónde está la carpeta, no
+  por titularidad. No poner atribución institucional en ningún sitio.
+- **Autoría** → `Adrià Sancho <francesc.adria.sancho@gmail.com>` en `pyproject.toml:11`.
+  El email anterior (`adria.sancho@ixrev.com`) venía de la cuenta de Claude Code, no
+  de una decisión.
+- **URLs del repo** → `https://github.com/W1Adri/QuOSS` (+ `Issues`) en
+  `pyproject.toml:48-50`. El remoto `origin` ya apunta ahí.
+- **Licencia MIT confirmada** y fichero `LICENSE` creado (© 2026 Adrià Sancho). Sin ese
+  fichero, `license = "MIT"` en el `pyproject.toml` no concedía nada: por defecto son
+  todos los derechos reservados. Verificado que el wheel lo embebe
+  (`quoss-0.1.0.dist-info/licenses/LICENSE`, `License-Expression: MIT`).
+
+### A confirmar
+
+- **Identidad de los commits.** `git config user.email` es
+  `francesc.adria.sancho@estudiantat.upc.edu` (global, de la UPC), distinto del email
+  de autoría del paquete. Si se prefiere el gmail en el historial:
+  `git config user.email francesc.adria.sancho@gmail.com` (local a este repo).
+
+### CI: qué está y qué no verificado
+
+En local pasan exactamente los mismos comandos que corre el workflow, pero **el
+workflow en sí no se ha ejecutado nunca** — hace falta un `git push`. No hay ningún
+error conocido; simplemente no hay evidencia todavía.
+
+Corrección respecto a la versión anterior de esta nota: el guardián del lock es
+**`UV_LOCKED=1`**, no `UV_FROZEN=1`. No son lo mismo:
+
+| Variable | Qué hace | Si `uv.lock` no cuadra con `pyproject.toml` |
+|---|---|---|
+| `UV_FROZEN=1` | Instala desde el lock **sin comprobar nada** | Instala un entorno desactualizado en silencio; el fallo aparece más tarde como un `ImportError` confuso |
+| `UV_LOCKED=1` | **Afirma** que el lock está al día | Falla de inmediato con un mensaje claro |
+
+El workflow usa `UV_LOCKED=1` (`.github/workflows/ci.yml:14`). Cuando falle, el arreglo
+es siempre el mismo: `uv lock` en local y commitear el `uv.lock` resultante.
 
 ### Decisiones diferidas (con fecha sugerida)
 

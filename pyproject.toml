@@ -8,7 +8,7 @@ description = "Quantum Optical Satellite Simulator — vectorized satellite QKD 
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
-authors = [{ name = "Adrià Sancho", email = "adria.sancho@ixrev.com" }]
+authors = [{ name = "Adrià Sancho", email = "francesc.adria.sancho@gmail.com" }]
 keywords = ["qkd", "satellite", "quantum", "optical-communications", "simulation"]
 classifiers = [
     "Development Status :: 2 - Pre-Alpha",
@@ -45,8 +45,9 @@ web = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/cttc/quoss"
-Repository = "https://github.com/cttc/quoss"
+Homepage = "https://github.com/W1Adri/QuOSS"
+Repository = "https://github.com/W1Adri/QuOSS"
+Issues = "https://github.com/W1Adri/QuOSS/issues"
 
 # PEP 735 group: tooling only, never shipped to users of the package.
 [dependency-groups]
