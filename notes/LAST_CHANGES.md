@@ -125,18 +125,20 @@ proyecto que use las mismas versiones. `uv cache clean` libera el global.
   todos los derechos reservados. Verificado que el wheel lo embebe
   (`quoss-0.1.0.dist-info/licenses/LICENSE`, `License-Expression: MIT`).
 
-### A confirmar
+- **Identidad de los commits** → resuelta: `Adrià Sancho
+  <francesc.adria.sancho@gmail.com>`, configurada **local a este repo** (la global
+  sigue siendo la de la UPC).
 
-- **Identidad de los commits.** `git config user.email` es
-  `francesc.adria.sancho@estudiantat.upc.edu` (global, de la UPC), distinto del email
-  de autoría del paquete. Si se prefiere el gmail en el historial:
-  `git config user.email francesc.adria.sancho@gmail.com` (local a este repo).
+### CI: verificado en remoto
 
-### CI: qué está y qué no verificado
+Primer run sobre el commit `12db181` (repo privado `W1Adri/QuOSS`):
+**los 4 jobs en verde en 31 s** — `ruff + mypy`, y `pytest` en 3.11, 3.12 y 3.13.
+Las hipótesis de fallo que se manejaron antes de ver el log (numba en 3.11,
+`setup-uv` roto) eran todas falsas.
 
-En local pasan exactamente los mismos comandos que corre el workflow, pero **el
-workflow en sí no se ha ejecutado nunca** — hace falta un `git push`. No hay ningún
-error conocido; simplemente no hay evidencia todavía.
+Único aviso: `actions/checkout@v4` y `astral-sh/setup-uv@v5` apuntan a Node.js 20,
+deprecado; el runner los fuerza a Node 24. Resuelto subiendo a `checkout@v7` y
+`setup-uv@v9`.
 
 Corrección respecto a la versión anterior de esta nota: el guardián del lock es
 **`UV_LOCKED=1`**, no `UV_FROZEN=1`. No son lo mismo:
