@@ -1,0 +1,175 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "quoss"
+description = "Quantum Optical Satellite Simulator — vectorized satellite QKD link and system modelling"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{ name = "Adrià Sancho", email = "adria.sancho@ixrev.com" }]
+keywords = ["qkd", "satellite", "quantum", "optical-communications", "simulation"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Typing :: Typed",
+]
+dynamic = ["version"]
+
+# The core must install with very little: arrays, science, schema. Nothing else.
+dependencies = [
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "pydantic>=2.7",
+]
+
+[project.optional-dependencies]
+# Publication figures (matplotlib style sheet lives in quoss.viz).
+viz = [
+    "matplotlib>=3.8",
+]
+# Optional numeric kernels. Only pulled in when the profiler asks for them.
+accel = [
+    "numba>=0.60",
+]
+# HTTP layer. FastAPI is an extra, never a requirement of the physics core.
+web = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "pydantic-settings>=2.2",
+]
+
+[project.urls]
+Homepage = "https://github.com/cttc/quoss"
+Repository = "https://github.com/cttc/quoss"
+
+# PEP 735 group: tooling only, never shipped to users of the package.
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "hypothesis>=6.100",
+    "ruff>=0.6",
+    "mypy>=1.11",
+]
+
+[tool.hatch.version]
+path = "src/quoss/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/quoss"]
+
+# --------------------------------------------------------------------------- #
+# ruff — lint + format (replaces black / isort / flake8)
+# --------------------------------------------------------------------------- #
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # bugbear
+    "UP",   # pyupgrade
+    "C4",   # comprehensions
+    "SIM",  # simplify
+    "ARG",  # unused arguments
+    "PTH",  # use pathlib
+    "NPY",  # numpy-specific rules
+    "RUF",  # ruff-specific rules
+    "D",    # pydocstyle — the physics docstrings are the physics manual
+]
+ignore = [
+    "E501",   # line length is the formatter's job
+    "D105",   # magic methods need no docstring
+    "D107",   # __init__ documented at class level
+    "D203",   # incompatible with D211
+    "D213",   # incompatible with D212
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D100", "D103", "ARG"]
+"benchmarks/**" = ["D100", "D103"]
+"validation/**" = ["D100", "D103"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.ruff.format]
+docstring-code-format = true
+
+# --------------------------------------------------------------------------- #
+# mypy — permissive by default, strict where typing actually pays: core+physics
+# --------------------------------------------------------------------------- #
+[tool.mypy]
+python_version = "3.11"
+files = ["src", "tests"]
+plugins = ["pydantic.mypy"]
+# The per-module sections below are forward-looking: they cover modules that the
+# roadmap creates in stages 1-4. Warning about them until then is pure noise.
+warn_unused_configs = false
+warn_redundant_casts = true
+warn_unused_ignores = true
+show_error_codes = true
+pretty = true
+
+[[tool.mypy.overrides]]
+# `strict` cannot be set per-module, so the strict flags are spelled out here.
+module = [
+    "quoss.core.*",
+    "quoss.orbits.*",
+    "quoss.channel.*",
+    "quoss.qkd.*",
+    "quoss.system.*",
+    "quoss.scenario.*",
+    "quoss.kernels.*",
+]
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+disallow_untyped_calls = true
+disallow_untyped_decorators = true
+disallow_any_generics = true
+check_untyped_defs = true
+no_implicit_reexport = true
+warn_return_any = true
+strict_equality = true
+extra_checks = true
+
+[[tool.mypy.overrides]]
+module = ["scipy.*", "numba.*", "matplotlib.*", "sgp4.*"]
+ignore_missing_imports = true
+
+# --------------------------------------------------------------------------- #
+# pytest
+# --------------------------------------------------------------------------- #
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+    "--import-mode=importlib",
+]
+markers = [
+    "physics: invariants and property-based physics checks",
+    "golden: numerical comparison against the SimulCTTC oracle",
+    "slow: excluded from the fast feedback loop",
+]
+filterwarnings = ["error"]
+
+[tool.coverage.run]
+source = ["src/quoss"]
+branch = true
+
+[tool.coverage.report]
+exclude_also = ["if TYPE_CHECKING:", "raise NotImplementedError"]
