@@ -39,6 +39,13 @@ Cuatro tensiones reales:
 4. **Elementos medios vs osculadores.** Una tasa secular es una afirmación sobre
    elementos *medios*. `rv_to_coe` devuelve osculadores. La diferencia es O(J2).
 
+   **Ya no es un coste tolerado.** Cuando se escribió este ADR el desajuste
+   quedaba documentado y nada lo impedía; hoy `secular_rates_j2` **rechaza** unos
+   elementos que no estén etiquetados `MEAN_BROUWER`, con `DomainError`, y la vía
+   para saltárselo a propósito —lo que hacen los tests que miden el desajuste— se
+   llama `relabelled_as` y admite en su nombre que no convierte nada. Ver
+   [ADR 0006](0006-osculating-vs-mean-elements.md).
+
 ## Decisión
 
 **La fuerza zonal J2/J3/J4 exacta, escrita como una sola expresión general de
@@ -51,6 +58,8 @@ dentro del módulo, como oráculo de la teoría. Ninguna tasa secular de J3.**
 | Armónicos en la fuerza | J2, J3, J4 (cualquiera puede ser cero) |
 | Orden de la teoría secular | **primero, solo J2**. `J2²` y `J4` no se implementan |
 | Tasa secular de J3 | no existe, y la firma no admite dónde ponerla |
+| Tipo de elemento que acepta `secular_rates_j2` | **exige `MEAN_BROUWER`**, con `DomainError` si no. Añadido después, ver [ADR 0006](0006-osculating-vs-mean-elements.md) |
+| Constantes de los elementos medios | **no** las fija la etiqueta: viajan con el modelo (esta tabla, fila «Modelo de gravedad»), no con los elementos. Ver ADR 0006 |
 | Integrador | `solve_ivp(DOP853)`, `rtol` y `atol` como argumentos explícitos |
 | Modelo de gravedad | `ZonalGravity` lleva `mu`, radio de referencia y armónicos juntos |
 | Constante nueva | `EGM96_RADIUS_EQUATORIAL_KM` (6378.1363 km), ≠ WGS-84 |
@@ -218,8 +227,21 @@ Dos detalles que los tests destaparon y que quedan documentados en el código:
 - **Términos seculares de segundo orden** (`J2²`, `J4`). Ver arriba: falta el
   oráculo, no las ganas.
 - **Transformación osculador↔medio** (Brouwer-Lyddane). Es la pieza que
-  desbloquea lo anterior, y la misma que `tle.py` necesitará para no confundir
-  los elementos medios de un TLE con los osculadores de `kepler.py`.
+  desbloquea lo anterior, y **también** el modo analítico de `propagator.py`, que
+  sin ella no puede devolver un estado utilizable ([ADR 0005](0005-propagation.md)).
+
+  **Corregido:** este punto decía además que era «la misma que `tle.py`
+  necesitará para no confundir los elementos medios de un TLE con los osculadores
+  de `kepler.py`». Eso está sobredimensionado y contradecía al ADR 0006. Un TLE se
+  propaga con SGP4, cuyo `Satrec.sgp4_array` devuelve **posición y velocidad en
+  TEME** — estado osculador — porque SGP4 ya hace por dentro la transformación de
+  medios a estado, términos de período corto incluidos. Así que el camino
+  TLE → posición no pasa por ninguna pieza nuestra de Brouwer-Lyddane. Lo que
+  `tle.py` necesita no es una transformación sino la **disciplina** de no construir
+  un `ClassicalElements` con los elementos medios de un TLE, que es lo que la
+  bandera del ADR 0006 hace cumplir. Y si algún día hiciera falta interpretarlos
+  directamente, Brouwer-Lyddane genérico tampoco serviría: harían falta las
+  convenciones concretas de SGP4 (Kozai, WGS-72), que son otra pieza.
 - **Arrastre atmosférico**, presión de radiación, tercer cuerpo. Ninguno es
   gravedad zonal y ninguno entra aquí.
 - **Armónicos teselares** (`J22` y compañía). Rompen la simetría axial, que es

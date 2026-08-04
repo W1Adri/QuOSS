@@ -13,6 +13,12 @@ that contract is spelled out.
 Broadcasting is *not* here. ``frames._broadcast_against`` and
 ``kepler._broadcast_to_common`` differ in shape and in what their messages
 advise, and collapsing them would produce a helper that says less than either.
+
+Freezing is not here either, and for a harder reason: the containers that need it
+include :class:`~quoss.core.types.TimeGrid`, which lives in ``core`` and may not
+import from ``orbits``. :func:`~quoss.core.types.frozen_copy` and
+:func:`~quoss.core.types.frozen_view` therefore sit beside the array aliases they
+enforce, which is the lowest layer that needs them.
 """
 
 from __future__ import annotations

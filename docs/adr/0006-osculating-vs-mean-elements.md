@@ -37,24 +37,62 @@ crece.
 ### Por qué eso es un problema y no un detalle
 
 Medido en este repo, contra `propagate_zonal` con J2 solo en los dos lados (así
-que la diferencia es *solo* el desajuste, no física distinta):
+que la diferencia es *solo* el desajuste, no física distinta), con los elementos
+declarados en ν = 0:
 
-| Órbita | 1 vuelta | 15 vueltas (~1 día) | radial | cross-track |
-|---|---|---|---|---|
-| SSO 700 km, i = 98.2° | 14.6 km | **219 km** | 11.7 km | 1.0 km |
-| ISS-like, i = 51.6° | 9.9 km | **144 km** | 5.3 km | 4.0 km |
-| LEO polar, i = 90° | 14.9 km | **224 km** | 12.3 km | 0.0 km |
+| Órbita | 1 vuelta | 15 vueltas (~1 día) | radial (1 vuelta) | cross-track (1 vuelta) | reloj |
+|---|---|---|---|---|---|
+| SSO 700 km, i = 98.2° | 86.3 km | **1293 km** | 0.53 km | 0.03 km | 11.5 s/vuelta |
+| ISS-like, i = 51.6° | 56.4 km | **845 km** | 0.23 km | 0.07 km | 7.4 s/vuelta |
+| LEO polar, i = 90° | 88.1 km | **1319 km** | 0.55 km | ~0 | 11.7 s/vuelta |
+| LEO baja i, i = 28.5° | 20.3 km | **305 km** | 0.03 km | 0.01 km | 2.7 s/vuelta |
 
-Control del instrumento: con `j2 = 0` en los dos lados el residuo cae a **0.09 mm**
-sobre 15 vueltas, así que los 219 km son física y no un fallo de la comparación.
+Control del instrumento: con `j2 = 0` en los dos lados el residuo cae a **0.08 mm**
+sobre 15 vueltas, así que la tabla es física y no un fallo de la comparación.
+
+> **Corregida el 2026-08-04.** La versión anterior de esta tabla daba 14.6 km por
+> vuelta y 219 km al día para la SSO, más un radial de 11.7 km y un cross-track de
+> 1.0 km. Esos números venían de una medición ad-hoc registrada solo en prosa, y al
+> escribir por fin el test que los reproduce (`INCONSISTENCIAS.md` C1) resultaron
+> **5.9 veces demasiado pequeños**. Los radiales citados eran además un artefacto:
+> a 15 vueltas el error along-track son 1290 km, o 10.4° de arco, y la cuerda hasta
+> un punto tan lejano sobre una órbita curva tiene una componente radial de
+> `a(1−cos 10.4°)` = 117 km — geometría de la medida, no error radial. La
+> descomposición solo significa algo mientras la separación es pequeña, y por eso
+> la tabla ahora la da a **una** vuelta.
 
 **Lo que hay que leer en la tabla no es el tamaño, es que crece.** El error radial
 y el cross-track se quedan quietos: son el bamboleo de período corto, que oscila y
-no acumula. El along-track crece linealmente, ~14.6 km por vuelta, porque un error
-O(J2) en el semieje `a` es un error O(J2) en el movimiento medio (`n ∝ a^{-3/2}`),
-y una velocidad angular equivocada integra. En unidades útiles: **≈2 s de error de
-reloj orbital por vuelta, ≈30 s al día**. Un pase dura ~10 minutos, así que a la
-semana las ventanas de visibilidad están corridas varios minutos.
+no acumula. El along-track crece linealmente porque un error O(J2) en el semieje
+`a` es un error O(J2) en el movimiento medio (`n ∝ a^{-3/2}`), y una velocidad
+angular equivocada integra. Y esa cadena no se cita, se **deriva**:
+
+> along-track por vuelta = `2π · a · 1.5 · δa/a` = **`3π · δa`**,
+> con `δa` = semieje osculador en la época − su propio promedio sobre una vuelta.
+
+Para la SSO, `δa` = 9.147 km ⇒ 86.2 km predichos contra 86.3 km medidos. Las cuatro
+filas cuadran con esa predicción a mejor del 2 %. Es el patrón del ADR 0004
+aplicado otra vez: no acotar el residuo, **atribuirlo**.
+
+### Y por qué no hay un número que citar
+
+La medición destapó algo que la tabla anterior escondía: **el tamaño depende de en
+qué punto de la órbita se declaren los elementos.** El término de período corto de
+J2 hace oscilar el semieje osculador alrededor del medio —18.3 km de pico a pico en
+esta órbita— así que lo que fija la deriva es cuánto se aparta la época del cruce:
+
+| La misma SSO, declarada en | `δa` | 15 vueltas |
+|---|---|---|
+| ν = 0° | 9.15 km | 1293 km |
+| ν = 45° | −0.014 km | 1.1 km |
+
+**Un factor de 1100 entre dos escenarios que solo difieren en cuándo se escribieron
+los elementos.** Eso refuerza la decisión en vez de debilitarla: no hay un número
+que poner en un aviso, un escenario no puede saber en qué caso está, y por eso la
+guarda es un rechazo y no una nota al pie con una cifra.
+
+En unidades de pase, el peor caso: ~2.9 minutos de reloj orbital al día contra un
+pase que dura diez.
 
 Y el modo de fallo es el característico del proyecto: **no da un error, da un
 número plausible**. Los arrays tienen la forma correcta, las magnitudes son
@@ -109,7 +147,7 @@ necesita elementos medios, así que parece el sitio natural del control. Pero
   descarta. Es un error, y ahora se rechaza, pero es del tamaño de la propia
   incertidumbre del modelo.
 - Convertir un juego medio a estado como si fuera osculador es la tabla de arriba:
-  219 km al día, y creciendo.
+  más de mil km al día, y creciendo.
 
 Si la bandera se comprobara en un solo sentido, el agujero grande quedaría
 abierto. Así que se cierran los dos, y el que se documenta más largo es este.
@@ -129,11 +167,32 @@ enteraría. Hay un test parametrizado sobre `PropagationMethod` que lo fija.
 ### Subdecisión 2 — dos miembros, y por qué el segundo se llama `MEAN_BROUWER`
 
 «Medio» no es una cosa: es una por teoría. Los elementos medios de un TLE son de
-Brouwer con la modificación de Kozai y referidos a las constantes de WGS-72; los
-que necesita `secular_rates_j2` son de Brouwer-Lyddane con EGM96. **No son
-intercambiables**, y una bandera de dos valores cuyo segundo valor se llamara
-`MEAN` los haría parecerlo — exactamente el error que la bandera existe para
-prevenir.
+Brouwer con la modificación de Kozai; los que necesita `secular_rates_j2` son de
+Brouwer-Lyddane. Las dos teorías dan un significado distinto a los mismos seis
+números, así que **no son intercambiables**, y una bandera de dos valores cuyo
+segundo valor se llamara `MEAN` los haría parecerlo — exactamente el error que la
+bandera existe para prevenir.
+
+**La etiqueta nombra la teoría, no las constantes**, y conviene decirlo porque la
+primera versión de este ADR y el docstring de `ElementType` afirmaban que
+`MEAN_BROUWER` eran «elementos referidos a las constantes de EGM96». Eso afirmaba
+de más, y el propio repo lo desmentía: existe y pasa un test que evalúa elementos
+`MEAN_BROUWER` con constantes de WGS-72 —
+`test_wgs72_gives_a_slightly_different_answer_than_egm96` — y ese test es
+**legítimo**, porque mide justo la diferencia entre dos juegos de constantes sobre
+la misma órbita. Por la regla del [ADR 0004](0004-zonal-perturbations.md) las
+constantes viajan con el **modelo** (`ZonalGravity`, o los argumentos de la
+función), nunca con los elementos.
+
+El matiz que no hay que perder: unos elementos medios *sí* dependen de con qué
+constantes se promediaron —el semieje medio de Brouwer depende del J2 y del radio
+usados— así que la etiqueta no es del todo ajena a ellas. La afirmación honesta es
+que **la coherencia entre las dos no se comprueba porque no se puede**, y meter un
+juego de constantes en la etiqueta sería afirmar algo que el código no verifica
+nunca. Cada teoría arrastra su juego habitual (WGS-72 la de los TLE, EGM96 esta),
+pero eso es una convención del llamante. Nada de esto debilita la subdecisión: un
+`MEAN` a secas seguiría siendo falso, por la **teoría**, que es lo que cambia el
+significado del semieje.
 
 El miedo legítimo a quedarse en dos valores era: «añadir un tercero después toca a
 todos los llamantes». Ese miedo **desaparece al nombrar el miembro por su
@@ -213,8 +272,8 @@ del proyecto para proteger un caso que aún no puede darse.
   [ADR 0004](0004-zonal-perturbations.md). Pendiente de elegir alcance (solo
   período corto, o corto + largo) y oráculo de validación. Hoy la bandera es una
   **puerta cerrada, no un paso**: marca dónde haría falta la conversión.
-- **`MEAN_KOZAI_SGP4`.** Entra el día que algo lo produzca, y con las constantes
-  WGS-72 que le corresponden.
+- **`MEAN_KOZAI_SGP4`.** Entra el día que algo lo produzca. Las constantes WGS-72
+  que suelen acompañarlo son del llamante, no de la etiqueta.
 - **El esquema de escenario (etapa 4).** El campo aceptará la cadena
   (`ElementType` es `StrEnum` y se resuelve desde texto), pero cómo se escribe en
   el YAML y qué valida Pydantic es decisión de esa etapa.
@@ -240,7 +299,7 @@ que los medios de un TLE y los de Brouwer-Lyddane son la misma cosa.
 **`assume_mean=True`.** Ver subdecisión 3.
 
 **Guardar solo en `secular_rates_j2`.** Ver subdecisión 1: deja abierto el agujero
-de 219 km/día.
+de más de mil km al día.
 
 ## Referencias
 

@@ -53,23 +53,41 @@ while :func:`~quoss.orbits.kepler.rv_to_coe` and every scenario file speak
 difference between the two is itself ``O(J2)``, ~1e-3 relative, and feeding one
 where the other is meant is not a rounding error:
 
-========================  =========  ==================  ============
-Orbit                     1 rev      15 revs (~1 day)    Growing part
-========================  =========  ==================  ============
-SSO 700 km, i = 98.2 deg  14.6 km    **219 km**          along-track
-ISS-like, i = 51.6 deg    9.9 km     **144 km**          along-track
-LEO polar, i = 90 deg     14.9 km    **224 km**          along-track
-========================  =========  ==================  ============
+========================  ==========  ==================  =============
+Orbit (elements at nu=0)  1 rev       15 revs (~1 day)    Clock error
+========================  ==========  ==================  =============
+SSO 700 km, i = 98.2 deg  86.3 km     **1293 km**         11.5 s / rev
+ISS-like, i = 51.6 deg    56.4 km     **845 km**          7.4 s / rev
+LEO polar, i = 90 deg     88.1 km     **1319 km**         11.7 s / rev
+LEO low-i, i = 28.5 deg   20.3 km     **305 km**          2.7 s / rev
+========================  ==========  ==================  =============
 
 measured against ``propagate_zonal`` with J2 only on both sides, so the
-discrepancy is the mean/osculating mismatch alone and not different physics. The
-radial and cross-track parts stay put — they are the short-period wobble, which
-oscillates and does not accumulate — but the along-track part grows linearly at
-~14.6 km per revolution, because an ``O(J2)`` error in the semi-major axis is an
-``O(J2)`` error in the angular *rate*, and a rate integrates. In units that
-matter for a pass: **~2 s of orbital clock error per revolution, ~30 s per day**.
-A pass lasts about ten minutes, so within a week the visibility windows are
-minutes out of place.
+discrepancy is the mean/osculating mismatch alone and not different physics; with
+J2 zero on both sides the same comparison closes to 0.08 mm over fifteen
+revolutions, which is what says the table is physics and not the instrument.
+Almost all of it is along-track: after one revolution the radial part is 0.5 km
+and the cross-track 0.03 km, because those are the short-period wobble, which
+oscillates and does not accumulate. The along-track part grows **linearly**, and
+its size is not a coincidence to be quoted but a quantity to be derived — an
+``O(J2)`` error in the semi-major axis is an ``O(J2)`` error in the angular
+*rate*, and a rate integrates:
+
+    along-track per revolution = ``3 pi * (a_osculating(epoch) - <a_osculating>)``
+
+which for the SSO row is ``3 pi * 9.147 km`` = 86.2 km against 86.3 km measured.
+Every row of the table agrees with that prediction to better than 2 %.
+
+**And the size depends on orbital phase, which is why no single number is the
+answer.** The osculating semi-major axis oscillates about the mean one with the
+short-period J2 term — peak to peak 18.3 km on this orbit — so how far the epoch
+sits from the crossing sets the drift. Stating the same SSO at ``nu`` near 45 deg
+puts the epoch on the crossing, and the drift collapses to 0.07 km per revolution:
+a factor of 1150. A scenario cannot know which case it is in, and the difference
+between them is the difference between a usable propagator and a useless one.
+
+For a pass that means: at ``nu = 0`` the visibility windows are ~2.9 minutes out of
+place after one day, against a pass that lasts about ten.
 
 The missing piece is the Brouwer-Lyddane short-period transformation, which this
 project does not have and which ``docs/adr/0003-orbital-elements.md`` warns
@@ -148,8 +166,8 @@ from enum import StrEnum
 import numpy as np
 
 from quoss.core.errors import ConvergenceError, DomainError
-from quoss.core.types import FloatArray, TimeGrid
-from quoss.orbits.frames import Frame
+from quoss.core.types import FloatArray, TimeGrid, frozen_view
+from quoss.orbits.frames import Frame, resolve_frame
 from quoss.orbits.kepler import (
     ClassicalElements,
     advance_mean_anomaly,
@@ -199,8 +217,9 @@ class PropagationMethod(StrEnum):
     -----
     There is no ``J2_SECULAR_ANALYTIC``, and that is deliberate — the analytic
     mode needs mean elements, this project only has osculating ones, and the gap
-    between them is ~219 km after a day rather than a rounding error. The module
-    docstring has the measured table and the condition for the member to appear.
+    between them runs to ~1300 km after a day rather than a rounding error. The
+    module docstring has the measured table, the derivation of its size, and the
+    condition for the member to appear.
 
     Examples
     --------
@@ -222,6 +241,13 @@ class Trajectory:
 
     What :func:`propagate` returns. Immutable and validated at construction, so a
     consumer may assume the arrays line up with the grid without re-checking.
+    **Immutable includes the states**: they are stored as read-only views, so
+    ``traj.r_km[0, 0, 0] = 0.0`` raises instead of quietly editing a result that
+    other consumers still hold. Read-only *views* and not copies, because these
+    arrays are produced by this module and handed to nobody else first — copying a
+    ``(S, n, 3)`` block would cost 24 MB per array for a million samples to defend
+    against a second reference that does not exist. See
+    :func:`~quoss.core.types.frozen_view`.
 
     Parameters
     ----------
@@ -234,7 +260,10 @@ class Trajectory:
         The time axis. ``grid.epoch_jd`` is the instant the input elements were
         stated at, and ``grid.t_s[k]`` is the elapsed time of sample ``k``.
     frame : Frame
-        Inertial frame the states are expressed in, inherited from the elements.
+        Inertial frame the states are expressed in, inherited from the elements. A
+        string equal to a member's value is resolved to the member, so
+        ``traj.frame is Frame.TEME`` holds however it was written; see
+        :func:`~quoss.orbits.frames.resolve_frame`.
     method : PropagationMethod
         The model that produced them. Carried so a result never has to be asked
         how it was made.
@@ -244,7 +273,7 @@ class Trajectory:
     DomainError
         If the two arrays disagree in shape, if the shape is not
         ``(S, n_samples, 3)`` with ``S >= 1``, if the sample axis does not match
-        ``grid.n``, or if ``frame`` is not inertial.
+        ``grid.n``, or if ``frame`` names no frame or names one that rotates.
 
     Notes
     -----
@@ -309,11 +338,20 @@ class Trajectory:
                 f"The sample axis has length {self.r_km.shape[1]} but the grid has "
                 f"{self.grid.n} samples."
             )
-        if self.frame not in (Frame.TEME, Frame.GCRF):
+        # Resolved before it is judged, so that what gets stored is the member and
+        # `traj.frame is Frame.TEME` means what a reader expects. Same two-step as
+        # ClassicalElements, and for the same StrEnum reason.
+        resolved_frame = resolve_frame(self.frame)
+        if resolved_frame not in (Frame.TEME, Frame.GCRF):
             raise DomainError(
                 f"A trajectory is expressed in an inertial frame, got {self.frame!r}. "
                 f"Convert to ITRF with quoss.orbits.frames after propagating, not before."
             )
+        # `object.__setattr__` because the dataclass is frozen: freezing the arrays
+        # and storing the resolved frame are exactly the assignments it forbids.
+        object.__setattr__(self, "frame", resolved_frame)
+        object.__setattr__(self, "r_km", frozen_view(self.r_km))
+        object.__setattr__(self, "v_km_s", frozen_view(self.v_km_s))
 
     @property
     def n_satellites(self) -> int:
@@ -421,7 +459,7 @@ def _two_body_states(
         # Carried, not defaulted. Both labels the caller can hold are meaningful
         # here, and letting the flattened stack fall back to the OSCULATING
         # default would launder mean elements past the guard in `coe_to_rv`
-        # below — the one place that stops a 219 km/day error.
+        # below — the one place that stops the error in the module docstring's table.
         element_type=elements.element_type,
     )
     r_flat, v_flat = coe_to_rv(stack, mu_km3_s2)
@@ -542,9 +580,12 @@ def propagate(
     ------
     DomainError
         If ``method`` names no member, if ``elements`` or ``grid`` are not of the
-        expected type, if the tolerances are not positive, or if an orbit leaves
-        the domain of the force model — a perigee inside the Earth, typically an
-        initial state that was not the one the caller meant.
+        expected type, if ``elements`` are
+        :attr:`~quoss.orbits.kepler.ElementType.MEAN_BROUWER` — **every** mode
+        refuses them, raised from :func:`~quoss.orbits.kepler.coe_to_rv`, which
+        both branches pass through — if the tolerances are not positive, or if an
+        orbit leaves the domain of the force model: a perigee inside the Earth,
+        typically an initial state that was not the one the caller meant.
     ConvergenceError
         If the integrator fails, with the offending orbit named.
 

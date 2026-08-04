@@ -908,7 +908,7 @@ class TestTheElementTypeFlag:
 
     Nothing here measures physics, because the hazard produces no wrong number
     *in this module*: labelling a mean element set as osculating and converting
-    it costs 14.6 km after one revolution and 219 km after a day, and every
+    it costs up to 86 km after one revolution and 1290 km after a day, and every
     intermediate quantity on the way there is finite and plausible. So what is
     asserted is the shape of the API — that the label exists, that it travels,
     that the two functions which can only be right for one kind refuse the
@@ -965,8 +965,10 @@ class TestTheElementTypeFlag:
         The intuitive place to guard the distinction is ``secular_rates_j2``,
         whose theory needs mean elements. But feeding *that* osculating elements
         costs ``O(J2)`` — the theory's own truncation error — whereas converting
-        mean elements to a state as though they were osculating is the 219 km/day
-        error. Guarding only the first would have left the larger hole open.
+        mean elements to a state as though they were osculating is the
+        thousand-km-per-day error measured in
+        ``test_propagator.py::TestWhatNotHavingBrouwerLyddaneCosts``. Guarding only
+        the first would have left the larger hole open.
         """
         with pytest.raises(DomainError, match="osculating by definition"):
             coe_to_rv(self._elements(ElementType.MEAN_BROUWER))
@@ -1050,6 +1052,190 @@ class TestTheElementTypeFlag:
         """A repr that hid it would defeat the purpose of carrying it."""
         assert "osculating" in repr(self._elements())
         assert "mean_brouwer" in repr(self._elements(ElementType.MEAN_BROUWER))
+
+    def test_relabelling_does_not_hand_back_a_shared_buffer(self) -> None:
+        """A relabelled set must be a separate object all the way down.
+
+        ``test_relabelling_moves_the_label_and_nothing_else`` compares values, so
+        it would pass while the two objects shared memory — and they did: three of
+        the six elements were passed straight through while ``Omega``, ``omega``
+        and ``nu`` came out as fresh arrays from the angle wrapping. Half aliased
+        and half not is worse than either, consistently, because it makes the
+        behaviour depend on which element someone happens to test.
+
+        What made it harmless was that nothing in the project mutates elements.
+        That is not an invariant anyone declared, which is why it is asserted here
+        instead of assumed.
+        """
+        osculating = self._elements()
+        relabelled = osculating.relabelled_as(ElementType.MEAN_BROUWER)
+
+        for name in (
+            "semi_latus_rectum_km",
+            "eccentricity",
+            "inclination_rad",
+            "raan_rad",
+            "argp_rad",
+            "true_anomaly_rad",
+        ):
+            assert not np.shares_memory(getattr(relabelled, name), getattr(osculating, name)), (
+                f"{name} is aliased between the two labels"
+            )
+
+
+class TestElementsAreActuallyImmutable:
+    """The class promises immutability to justify consumers not re-checking.
+
+    ``__slots__`` and a hand-written ``__init__`` freeze the *attribute binding*:
+    ``coe.eccentricity = ...`` fails. Neither freezes the array, so
+    ``coe.eccentricity[0] = 2.0`` used to succeed and leave a set of elements
+    holding an eccentricity its own constructor rejects — with the docstring
+    telling every downstream function it need not look.
+    """
+
+    @staticmethod
+    def _elements() -> ClassicalElements:
+        return ClassicalElements.from_semi_major_axis(
+            semi_major_axis_km=7078.137,
+            eccentricity=0.001,
+            inclination_rad=np.deg2rad(98.19),
+            raan_rad=0.4,
+            argp_rad=1.2,
+            true_anomaly_rad=0.7,
+        )
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "semi_latus_rectum_km",
+            "eccentricity",
+            "inclination_rad",
+            "raan_rad",
+            "argp_rad",
+            "true_anomaly_rad",
+        ],
+    )
+    def test_no_element_can_be_written_through(self, name: str) -> None:
+        """All six, because a guarantee that holds for five is not a guarantee."""
+        elements = self._elements()
+        with pytest.raises(ValueError, match="read-only"):
+            getattr(elements, name)[0] = 0.5
+
+    def test_a_validated_range_cannot_be_escaped_after_construction(self) -> None:
+        """States the invariant, not the mechanism: ``e >= 1`` stays unreachable."""
+        with pytest.raises(DomainError):
+            ClassicalElements.from_semi_major_axis(
+                semi_major_axis_km=7078.137,
+                eccentricity=1.5,
+                inclination_rad=0.0,
+                raan_rad=0.0,
+                argp_rad=0.0,
+                true_anomaly_rad=0.0,
+            )
+
+        elements = self._elements()
+        with pytest.raises(ValueError, match="read-only"):
+            elements.eccentricity[0] = 1.5
+        assert float(elements.eccentricity[0]) < 1.0
+
+    def test_the_callers_array_is_copied_not_borrowed(self) -> None:
+        """The aliasing half. ``as_1d`` returns 1-D float64 input *unchanged*.
+
+        That is the right call inside a physics function, which goes on to build
+        new arrays from it — but a container that stored the return value directly
+        would share the caller's buffer, and an edit the caller made afterwards
+        would change the elements underneath.
+        """
+        eccentricity = np.array([0.001, 0.002])
+        elements = ClassicalElements.from_semi_major_axis(
+            semi_major_axis_km=7078.137,
+            eccentricity=eccentricity,
+            inclination_rad=np.deg2rad(98.19),
+            raan_rad=0.0,
+            argp_rad=0.0,
+            true_anomaly_rad=0.0,
+        )
+
+        assert not np.shares_memory(elements.eccentricity, eccentricity)
+        eccentricity[0] = 0.9
+        assert float(elements.eccentricity[0]) == 0.001
+        assert eccentricity.flags.writeable, "the caller's array is theirs, not ours to freeze"
+
+    def test_a_broadcast_scalar_is_stored_as_real_values(self) -> None:
+        """Not a stride-0 view, which is what broadcasting a length-1 input gives.
+
+        A zero-stride array is read-only already, so this is not about mutation:
+        it is that the elements of a two-orbit stack should be two independent
+        numbers, so that anything downstream writing into a copy of them — or
+        simply inspecting strides — sees an ordinary contiguous array.
+        """
+        elements = ClassicalElements.from_semi_major_axis(
+            semi_major_axis_km=np.array([7078.137, 6798.0]),
+            eccentricity=0.001,
+            inclination_rad=np.deg2rad(98.19),
+            raan_rad=0.0,
+            argp_rad=0.0,
+            true_anomaly_rad=0.0,
+        )
+
+        assert elements.eccentricity.shape == (2,)
+        assert elements.eccentricity.strides == (8,)
+        assert np.array_equal(elements.eccentricity, [0.001, 0.001])
+
+
+class TestFrameIsStoredAsAMember:
+    """The other tag, held to the same discipline as ``element_type``.
+
+    The validation used to be ``if frame not in (Frame.TEME, Frame.GCRF)``, which a
+    plain ``"teme"`` satisfies because ``Frame`` is a ``StrEnum`` — so the check
+    passed and the raw string was stored. Nothing raised, the repr was identical,
+    and the first consumer to write ``if traj.frame is Frame.TEME`` would have
+    taken the wrong branch in silence. See
+    ``tests/orbits/test_frames.py::TestFrameResolution``.
+    """
+
+    @staticmethod
+    def _with_frame(frame: Frame) -> ClassicalElements:
+        return ClassicalElements.from_semi_major_axis(
+            semi_major_axis_km=7078.137,
+            eccentricity=0.001,
+            inclination_rad=1.7,
+            raan_rad=0.0,
+            argp_rad=0.0,
+            true_anomaly_rad=0.0,
+            frame=frame,
+        )
+
+    def test_a_string_frame_is_resolved_to_the_member(self) -> None:
+        elements = self._with_frame("teme")  # type: ignore[arg-type]
+
+        assert elements.frame is Frame.TEME
+
+    def test_relabelling_keeps_the_resolved_member(self) -> None:
+        """The tag must not decay back to a string on the way through.
+
+        ``relabelled_as`` rebuilds the object, so it re-enters the same
+        constructor; this pins that the round trip preserves identity rather than
+        merely equality. Whether the member survives all the way into a
+        ``Trajectory`` is asserted in ``test_propagator.py``, which is the module
+        that owns that type.
+        """
+        elements = self._with_frame("teme")  # type: ignore[arg-type]
+
+        assert elements.relabelled_as(ElementType.MEAN_BROUWER).frame is Frame.TEME
+
+    def test_an_unknown_frame_and_a_rotating_one_are_different_complaints(self) -> None:
+        """Two distinct mistakes, so two distinct messages.
+
+        Collapsing them into "not a valid frame" would lose the sentence that
+        actually teaches something — that elements referred to a rotating frame
+        are not elements — and it is the more likely of the two mistakes.
+        """
+        with pytest.raises(DomainError, match="is not a frame"):
+            self._with_frame("ecef")  # type: ignore[arg-type]
+
+        with pytest.raises(DomainError, match="inertial frame"):
+            self._with_frame(Frame.ITRF)
 
 
 @pytest.mark.physics

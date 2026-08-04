@@ -1,7 +1,14 @@
 # QuOSS — Últimos cambios y cosas a considerar
 
 > Bitácora viva. Se actualiza al cerrar cada etapa del [`ROADMAP.md`](ROADMAP.md).
-> Última actualización: **2026-08-01** — **la bandera osculador/medio**, que no es
+> Última actualización: **2026-08-04** — **las siete entradas de
+> [`INCONSISTENCIAS.md`](INCONSISTENCIAS.md), cerradas** (§14). La grande no era una
+> de las seis inconsistencias sino la consideración C1: los «219 km» citados en
+> quince sitios, incluido un mensaje de error, **no se reproducían** — la cifra real
+> es 5.9 veces mayor, y además no existe una cifra única porque el coste depende de
+> en qué punto de la órbita se declaren los elementos.
+>
+> Entrada anterior: **2026-08-01** — **la bandera osculador/medio**, que no es
 > un módulo nuevo sino la pieza que faltaba entre los tres que ya hay. Con sus
 > tres subdecisiones resueltas y medidas (→ [ADR 0006](../docs/adr/0006-osculating-vs-mean-elements.md)).
 > El aviso que llevaba tres documentos escrito pasa a ser un `DomainError`, y en
@@ -25,8 +32,9 @@
 | Etapa cerrada | **1 — `core/`** |
 | En curso | **2.1 — `orbits/`**. Hecho: `frames.py`, `kepler.py`, `perturbations.py`, `propagator.py`. Siguiente: `tle.py` |
 | Física implementada | Marcos y escalas de tiempo · dos cuerpos · gravedad zonal J2/J3/J4 y teoría secular de J2 · propagación sobre una rejilla temporal, con época y método explícitos · **el tipo de elemento (osculador/medio) como parte del tipo, no como aviso** |
-| Novedad de esta entrada | **La bandera osculador/medio, con sus tres subdecisiones cerradas.** `ClassicalElements` lleva un `ElementType` igual que lleva su `Frame`; `coe_to_rv` exige osculadores y `secular_rates_j2` exige medios, los dos con `DomainError`. No hay conversión: Brouwer-Lyddane sigue sin existir, así que la bandera es hoy **una puerta cerrada que marca dónde haría falta**, no un paso más |
-| Novedad de la entrada anterior | Se envía un enum incompleto a propósito: `PropagationMethod` tiene dos miembros y el modo analítico de J2 **no existe** en vez de existir roto |
+| Novedad de esta entrada | **Las siete inconsistencias abiertas, cerradas** (§14): el marco que se guardaba como cadena, la inmutabilidad que no lo era en los tres contenedores, el aliasing de `relabelled_as`, tres arreglos documentales, y **C1 — los 219 km, que resultaron falsos** |
+| Novedad de la entrada anterior | **La bandera osculador/medio, con sus tres subdecisiones cerradas.** `ClassicalElements` lleva un `ElementType` igual que lleva su `Frame`; `coe_to_rv` exige osculadores y `secular_rates_j2` exige medios, los dos con `DomainError`. No hay conversión: Brouwer-Lyddane sigue sin existir, así que la bandera es hoy **una puerta cerrada que marca dónde haría falta**, no un paso más |
+| Novedad de dos entradas atrás | Se envía un enum incompleto a propósito: `PropagationMethod` tiene dos miembros y el modo analítico de J2 **no existe** en vez de existir roto |
 
 Verificación ejecutada:
 
@@ -34,7 +42,7 @@ Verificación ejecutada:
 uv run ruff check .          # All checks passed!
 uv run ruff format --check . # all files already formatted
 uv run mypy                  # Success: no issues found in 28 source files
-uv run pytest                # 586 passed  (566 + 18 tests + 2 doctests nuevos)
+uv run pytest                # 625 passed  (586 + 36 tests + 3 doctests nuevos, §14)
 uv run pytest --cov          # 99 % global · frames/kepler/perturbations/propagator 100 %
 ```
 
@@ -388,9 +396,11 @@ ella todo el rato. Así que «la órbita» son dos cosas distintas:
   ningún instante, pero es de lo que habla una tasa secular.
 
 La diferencia es O(J2) ≈ una parte en mil. Sobre 7000 km, ~7 km — y la parte que
-importa **crece**: 14.6 km por vuelta y **219 km al día** en along-track para una
-SSO de 700 km, que en unidades de pase son ≈2 s de reloj orbital por vuelta y
-≈30 s al día. Un pase dura diez minutos.
+importa **crece**: **86 km por vuelta y 1290 km al día** en along-track para una
+SSO de 700 km declarada en ν = 0, que en unidades de pase son ≈11.5 s de reloj
+orbital por vuelta y ≈2.9 minutos al día. Un pase dura diez minutos. (Cifras
+corregidas el 2026-08-04: las que estaban aquí eran 5.9 veces menores y nunca se
+reprodujeron — ver §14.1.)
 
 Ahora `ClassicalElements` lleva un `ElementType` igual que lleva su `Frame`, con
 dos miembros: `OSCULATING` (el defecto) y `MEAN_BROUWER`.
@@ -488,10 +498,11 @@ tercero que el roadmap pedía —propagador analítico de J2 sobre
 
 La razón está medida y ya estaba escrita en §12 de la entrada anterior: un
 propagador analítico alimentado con los osculadores que devuelve `rv_to_coe`
-comete un error que **crece**, ~14.6 km por vuelta en along-track, 219 km tras un
-día para una SSO. Y lo que importa no es el tamaño sino que sea deriva: son **≈2 s
-de error de reloj orbital por vuelta, ≈30 s al día**. Un pase dura ~10 minutos, así
-que en una semana las ventanas de visibilidad están corridas minutos.
+comete un error que **crece**, ~86 km por vuelta en along-track, ~1290 km tras un
+día para una SSO declarada en ν = 0. Y lo que importa no es el tamaño sino que sea
+deriva: son **≈11.5 s de error de reloj orbital por vuelta, ≈2.9 minutos al día**.
+Un pase dura ~10 minutos, así que en un día las ventanas de visibilidad ya están
+corridas una fracción apreciable de un pase.
 
 Las tres opciones eran:
 
@@ -893,29 +904,39 @@ exista (§7). Se conserva aquí porque es la medición, no la conclusión.
   descomponiendo el error en radial / along-track (a lo largo del movimiento) /
   cross-track (perpendicular al plano):
 
-  | Órbita | 1 vuelta | 15 vueltas (~1 día) | radial | cross-track |
+  > **Esta tabla estaba equivocada y se corrigió el 2026-08-04 (§14.1).** Se
+  > conserva aquí solo el texto corregido; los valores originales —14.6 / 219 /
+  > 144 / 224 / 66 km, con radiales de 5–13 km— nunca se reprodujeron, y al
+  > escribirles por fin un test resultaron 5.9 veces menores que la medición. Los
+  > radiales citados eran además geometría de la cuerda, no error radial.
+
+  | Órbita (elementos en ν = 0) | 1 vuelta | 15 vueltas (~1 día) | radial (1 vuelta) | cross-track (1 vuelta) |
   |---|---|---|---|---|
-  | SSO 700 km, i = 98.2° | 14.6 km | **219 km** | 11.7 km | 1.0 km |
-  | ISS-like, i = 51.6° | 9.9 km | **144 km** | 5.3 km | 4.0 km |
-  | LEO polar, i = 90° | 14.9 km | **224 km** | 12.3 km | 0.0 km |
-  | LEO baja i, i = 28.5° | 16.2 km | **66 km** | 13.1 km | 3.6 km |
+  | SSO 700 km, i = 98.2° | 86.3 km | **1293 km** | 0.53 km | 0.03 km |
+  | ISS-like, i = 51.6° | 56.4 km | **845 km** | 0.23 km | 0.07 km |
+  | LEO polar, i = 90° | 88.1 km | **1319 km** | 0.55 km | ~0 |
+  | LEO baja i, i = 28.5° | 20.3 km | **305 km** | 0.03 km | 0.01 km |
 
   Control del instrumento: con `j2 = 0` en los dos lados, el camino analítico es
-  dos cuerpos exacto y el residuo cae a **0.09 mm** sobre 15 vueltas. Así que
-  los 219 km son física, no un fallo de la comparación.
+  dos cuerpos exacto y el residuo cae a **0.083 mm** sobre 15 vueltas. Así que la
+  tabla es física, no un fallo de la comparación — y ese control es lo único de la
+  medición original que sí se reprodujo.
 
   **Lo que hay que leer en esa tabla no es el tamaño, es que crece.** El error
-  radial y el cross-track se quedan quietos (~10 km y ~1–4 km): son el bamboleo
-  de período corto, que oscila y no acumula. El along-track **crece
-  linealmente**, ~14.6 km por vuelta. La razón: la propiedad `a` (semieje) de un
+  radial y el cross-track se quedan quietos (0.5 km y 0.03 km tras una vuelta): son
+  el bamboleo de período corto, que oscila y no acumula. El along-track **crece
+  linealmente**, ~86 km por vuelta. La razón: la propiedad `a` (semieje) de un
   juego osculador difiere de la del medio en O(J2), y el movimiento medio va como
   `a^(-3/2)`, así que un error O(J2) en `a` es un error O(J2) en la *velocidad
-  angular*, y eso integra. En unidades útiles: **≈2 s de error de reloj por
-  vuelta, ≈30 s al día**.
+  angular*, y eso integra — cuantitativamente, `3π·δa` por vuelta, que predice las
+  cuatro filas a mejor del 2 % (§14.1). En unidades útiles: **≈11.5 s de error de
+  reloj por vuelta, ≈2.9 minutos al día**.
 
-  Y eso es lo que decide el diseño. 30 s/día de deriva en el reloj orbital no es
-  un detalle de precisión: un pase dura ~10 minutos, así que a la semana las
-  ventanas de visibilidad están corridas varios minutos. El camino analítico
+  Y eso es lo que decide el diseño, ahora con más fuerza que cuando se escribió:
+  minutos al día de deriva en el reloj orbital no es un detalle de precisión, un
+  pase dura ~10 minutos. Y el tamaño depende de en qué punto de la órbita se
+  declaren los elementos —factor 1100 entre ν = 0° y ν = 45° (§14.1)— así que no hay
+  una cifra que documentar. El camino analítico
   **no puede devolver un estado utilizable sin la parte de período corto de
   Brouwer-Lyddane**, y por tanto BL no es solo la llave del segundo orden
   secular (§5): es requisito del propio modo analítico.
@@ -1057,11 +1078,11 @@ los elementos medios de un TLE — que es lo que la bandera hace cumplir.
 ### Deuda pequeña (heredada, sigue viva)
 
 > Auditoría del **2026-08-04**: seis inconsistencias entre lo que el código o los
-> documentos afirman y lo que se cumple —ninguna la detecta la suite— más el
-> hueco de que **219 km es un número sin test**. Viven en
-> [`INCONSISTENCIAS.md`](INCONSISTENCIAS.md), con evidencia reproducible y coste
-> de arreglo. Las tres primeras (marco como cadena, «Immutable» que no lo es,
-> aliasing de `relabelled_as`) son **preexistentes**, no de la bandera.
+> documentos afirman y lo que se cumple —ninguna la detectaba la suite— más el
+> hueco de que **219 km era un número sin test**. **Las siete están cerradas el
+> mismo día**; ver §14, y [`INCONSISTENCIAS.md`](INCONSISTENCIAS.md), que se queda
+> sin entradas abiertas. Las tres primeras (marco como cadena, «Immutable» que no
+> lo era, aliasing de `relabelled_as`) eran **preexistentes**, no de la bandera.
 
 - **`--all-extras` en CI arrastra `numba`.** Sigue pendiente. Nota: el grupo
   `reference` **no** se ve afectado, porque los grupos PEP 735 no por defecto no
@@ -1086,3 +1107,177 @@ los elementos medios de un TLE — que es lo que la bandera hace cumplir.
   que llegue ahí.
 - **Higiene de repo** (guía §5): un solo sistema de metadatos de agentes; PDFs y
   `.tex` fuera del repo de código. Aplica al migrar desde SimulCTTC.
+
+---
+
+## 14. Los arreglos de la auditoría del 2026-08-04
+
+Esta sección va al final y no en el §2 que le tocaría por fecha, para no invalidar
+las referencias `§N` que el resto del fichero y `ROADMAP.md` ya hacen entre sí.
+
+Las **seis inconsistencias** de `INCONSISTENCIAS.md` más la consideración **C1**,
+cerradas. Ninguna la detectaba la suite —eso era lo que las hacía dignas de estar
+escritas— y una de ellas resultó ser peor de lo que la propia auditoría creía.
+
+### 14.1 El titular: los 219 km eran falsos, y no hay ningún número que los sustituya
+
+C1 pedía un test para las cifras «14.6 km por vuelta, 219 km al día» que estaban
+citadas en 15 sitios, **incluido el texto de un `DomainError` que un usuario lee**.
+Al escribir el test, las cifras no salieron. Lo que salió, para la misma SSO de
+700 km declarada en ν = 0:
+
+| Órbita (elementos en ν = 0) | 1 vuelta | 15 vueltas (~1 día) | radial (1 vuelta) | cross-track (1 vuelta) | reloj |
+|---|---|---|---|---|---|
+| SSO 700 km, i = 98.2° | **86.3 km** | **1293 km** | 0.53 km | 0.03 km | 11.5 s/vuelta |
+| ISS-like, i = 51.6° | 56.4 km | 845 km | 0.23 km | 0.07 km | 7.4 s/vuelta |
+| LEO polar, i = 90° | 88.1 km | 1319 km | 0.55 km | ~0 | 11.7 s/vuelta |
+| LEO baja i, i = 28.5° | 20.3 km | 305 km | 0.03 km | 0.01 km | 2.7 s/vuelta |
+
+**5.9 veces más grande** que lo documentado, y en las cuatro órbitas.
+
+Que el instrumento es el mismo que usó la medición vieja lo dice su propio control:
+con `j2 = 0` en los dos lados el residuo cae a **0.083 mm** sobre 15 vueltas, que
+es el «0.09 mm» que la bitácora ya tenía escrito. Es decir: no es que la
+comparación se hiciera de otra forma, es que el número no se reprodujo nunca.
+
+**Y hay un hallazgo que vale más que la corrección.** El tamaño **depende de en qué
+punto de la órbita se declaren los elementos**, porque el término de período corto
+de J2 hace oscilar el semieje osculador alrededor del medio (18.3 km de pico a pico
+en esta órbita) y lo que fija la deriva es cuánto se aparta la época del cruce:
+
+| La misma SSO, declarada en | `a(época) − ⟨a⟩` | 15 vueltas |
+|---|---|---|
+| ν = 0° | 9.15 km | 1293 km |
+| ν = 45° | −0.014 km | 1.1 km |
+
+Un **factor de 1100** entre dos escenarios que solo difieren en cuándo se
+escribieron los seis números. Eso explica por qué una medición ad-hoc pudo caer en
+cualquier sitio, y refuerza la decisión del ADR 0005: si no hay una cifra que
+poner en un aviso, la guarda tiene que ser un rechazo.
+
+**Lo que el test hace y una cota no haría: atribuir.** El along-track no se acota,
+se predice, con lo que ya existe en el repo:
+
+> along-track por vuelta = `2π · a · 1.5 · δa/a` = **`3π · δa`**,
+> con `δa` = semieje osculador en la época − su propio promedio sobre una vuelta.
+
+Para la SSO: `3π · 9.147 km` = 86.2 km predichos contra 86.3 medidos. Las cuatro
+filas cuadran a mejor del **2 %**, y de ahí sale la tolerancia del 5 % del test —
+derivada del orden del predictor (sustituye el promedio temporal por el semieje
+medio de Brouwer, que difiere en O(J2)), no ajustada al resultado. Es el patrón del
+§5 aplicado otra vez: no decir «se parece», decir «lo que sobra es el término que
+decidí no calcular».
+
+**Un artefacto de la tabla vieja, además.** Daba «radial 11.7 km» a 15 vueltas. A
+15 vueltas el along-track son 1290 km, o **10.4° de arco**, y la cuerda hasta un
+punto tan lejano sobre una órbita curva tiene componente radial
+`a(1 − cos 10.4°)` = **117 km**: geometría de la medida, no error radial. La
+descomposición solo significa algo mientras la separación es pequeña, así que la
+tabla nueva la da a **una** vuelta — donde el along-track es 164 veces el radial y
+2800 veces el cross-track, que es la afirmación que se quería hacer.
+
+`TestWhatNotHavingBrouwerLyddaneCosts`, 8 tests, 1.5 s: la atribución sobre las
+cuatro órbitas, la linealidad (ratio 14.92 contra 15.0 exacto), la descomposición,
+el control con `j2 = 0`, y la dependencia con la fase. El propagador analítico que
+la medición necesita vive **en el test**, no en `src/`, y usa `relabelled_as` en las
+**dos** direcciones — el uso más elocuente que la bandera tiene.
+
+### 14.2 El marco se guardaba como cadena (inconsistencia 1)
+
+`Frame` es un `StrEnum`, así que `"teme" == Frame.TEME` es `True` y la validación
+`if frame not in (Frame.TEME, Frame.GCRF)` **aceptaba** la cadena y guardaba la
+cadena. Repr idéntico, todos los tests pasando, y el primer consumidor que
+escribiera `if traj.frame is Frame.TEME` —la forma idiomática, la que ya usan los
+tests de `frames.py`— habría tomado la rama equivocada **sin error**.
+
+`frames.resolve_frame` (público, y por la misma razón por la que
+`DEFAULT_ZONAL_RTOL` se hizo público: lo necesitan dos módulos). Resuelve y **nada
+más**; que un marco concreto sea admisible sigue siendo regla del llamante, con su
+mensaje. Eran dos fallos distintos y siguen teniendo dos mensajes: «no es un
+marco» (que además dice dónde fue a parar ECEF) y «unos elementos en un marco que
+rota no son unos elementos». `ClassicalElements` y `Trajectory` lo llaman antes de
+juzgar.
+
+Las aserciones nuevas son de **identidad**, no de igualdad: un test con `==`
+pasaría contra el bug.
+
+### 14.3 «Immutable» era falso en los tres contenedores (2 y 3)
+
+`frozen=True` y `__slots__` congelan el *binding*, no el buffer. El caso peor no
+era teórico: `TimeGrid(t_s=[99, 60])` se **rechaza** en construcción por no ser
+creciente, y se llegaba a ese estado mutando después — con `duration_s` e
+`is_uniform` respondiendo como si nada, y con el docstring dando permiso explícito
+a los consumidores para no re-comprobar.
+
+Dos helpers en `core/types.py` — **no** en `orbits/_validation.py`, que era el
+sitio evidente y habría roto la regla `core ← orbits`: `TimeGrid` vive en `core` y
+no puede importar de `orbits`. Que el arreglo de una inconsistencia estuviera a
+punto de crear otra es la anécdota útil de esta entrada.
+
+| Contenedor | Qué hace | Por qué |
+|---|---|---|
+| `TimeGrid`, `ClassicalElements` | `frozen_copy` — copia y congela | reciben arrays **del llamante**, así que congelar sin copiar dejaría al llamante con una referencia escribible al mismo buffer. La copia es de tamaño `n`: irrelevante |
+| `Trajectory` | `frozen_view` — congela una **vista**, sin copiar | sus arrays los produce el propio módulo y no hay segunda referencia. Copiar `(S, n, 3)` son 24 MB por array para un millón de muestras |
+
+`frozen_view` devuelve una vista y no el argumento porque `writeable` es del objeto
+array, no del buffer: congelar el argumento haría de solo lectura el array del
+llamante como **efecto secundario de pasarlo**. Hay un test que lo fija.
+
+Esto cierra la 3 de paso: `relabelled_as` compartía `p`, `e` e `i` con el original
+y **no** `Ω`, `ω`, `ν` (esos los creaba `_wrap_two_pi`) — medio aliaseado, que es
+peor que cualquiera de las dos cosas de forma consistente. El test que existía
+comparaba valores, así que habría pasado igual; el nuevo compara `shares_memory` en
+los seis.
+
+Coste medido: **ninguno visible**. La suite pasa de 586 a 625 tests y de ~11 s a
+~12 s, y la cobertura es la misma antes y después (99 % global, 100 % en los cuatro
+módulos de `orbits/`).
+
+### 14.4 Las tres documentales (4, 5, 6)
+
+- **`MEAN_BROUWER` afirmaba fijar unas constantes que no fija.** Decía «referred to
+  the EGM96 constants», y el propio repo lo desmentía con un test legítimo que
+  evalúa elementos `MEAN_BROUWER` con constantes WGS-72. La afirmación honesta, ya
+  escrita en el docstring y en el ADR 0006: **la etiqueta nombra la teoría**, las
+  constantes viajan con el modelo (regla del ADR 0004), y la coherencia entre las
+  dos **no se comprueba porque no se puede**. El matiz que no se pierde: unos
+  elementos medios *sí* dependen de con qué constantes se promediaron, así que la
+  etiqueta no es del todo ajena a ellas — pero meterlas en la etiqueta sería
+  afirmar algo que el código no verifica nunca. La subdecisión 2 sigue en pie por
+  la **teoría**, que es lo que cambia el significado del semieje.
+- **El ADR 0004 contradecía al 0006.** Dos filas nuevas en su tabla (el tipo de
+  elemento que exige `secular_rates_j2`, y que las constantes no las fija la
+  etiqueta), su punto de contexto 4 actualizado —el desajuste ya no es un coste
+  tolerado, es un `DomainError`— y el bullet del acoplamiento con `tle.py`
+  corregido en el sitio donde estaba mal, con el análisis de por qué SGP4 no
+  necesita ninguna pieza nuestra de Brouwer-Lyddane.
+- **Dos huecos menores.** El `Raises` de `propagate` nombra ahora los elementos
+  medios y dice que la guarda es la de `coe_to_rv`, la misma para los dos modos. Y
+  el ejemplo de «explicación mala» de `CLAUDE.md` sigue siendo válido **como
+  estilo** pero avisa de que como hecho está caducado: hoy eso no introduce un
+  error, levanta un `DomainError`.
+
+Y una vuelta de tuerca en `CLAUDE.md` que no pedía la auditoría pero que es la
+lección de C1: la norma 1 exige «un ejemplo con números, preferiblemente medido en
+este repo». Queda escrito que **«medido en este repo» significa medido por un test
+que corre**, y que si no hay test, lo honesto es decir de dónde salió el número.
+
+### 14.5 Ficheros
+
+Código: `core/types.py` (los dos helpers + `TimeGrid`), `orbits/frames.py`
+(`resolve_frame`), `orbits/kepler.py` (marco resuelto, seis campos copiados y
+congelados, docstrings), `orbits/propagator.py` (`Trajectory` congelado y con marco
+resuelto, `Raises`, tabla), `orbits/_validation.py` (una nota sobre por qué las
+congeladoras no están ahí).
+
+Tests: `test_types.py` (`TestTimeGridImmutabilityIsReal`), `test_frames.py`
+(`TestFrameResolution`), `test_kepler.py` (`TestElementsAreActuallyImmutable`,
+`TestFrameIsStoredAsAMember`, y el `shares_memory` de `relabelled_as`),
+`test_propagator.py` (`TestTrajectoryIsWhatItSaysItIs` y
+`TestWhatNotHavingBrouwerLyddaneCosts`).
+
+Documentos: ADR 0004, 0005 y 0006; `CLAUDE.md`; `ROADMAP.md`;
+`INCONSISTENCIAS.md`, que se queda **sin ninguna entrada abierta**.
+
+Verificación: `ruff`, `ruff format`, `mypy` (28 ficheros), **625 tests en 12 s**,
+99 % de cobertura global.

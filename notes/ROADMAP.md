@@ -95,8 +95,12 @@ lo demás depende de él (era la duda anotada en `LAST_CHANGES.md` §6).
    **Enviado a propósito con el enum incompleto:** solo `TWO_BODY` y
    `ZONAL_NUMERIC`. El modo analítico de J2 que este roadmap pedía **no puede
    devolver un estado utilizable** sin la transformación de período corto de
-   Brouwer-Lyddane: alimentar tasas seculares con osculadores cuesta 219 km tras
-   un día, y lo que crece es el reloj orbital (~30 s/día), no un sesgo. Un nombre
+   Brouwer-Lyddane: alimentar tasas seculares con osculadores cuesta ~1300 km tras
+   un día, y lo que crece es el reloj orbital (~2.9 min/día), no un sesgo — y cuánto
+   cuesta depende de en qué punto de la órbita se declaren los elementos, así que no
+   hay una cifra que documentar (medido en
+   `tests/orbits/test_propagator.py::TestWhatNotHavingBrouwerLyddaneCosts`,
+   corregido el 2026-08-04). Un nombre
    ausente obliga a preguntar en el punto de llamada; uno presente y equivocado
    no obliga a nada. Aquí se resuelven además los dos pendientes del módulo:
    la época viaja obligatoria dentro del `TimeGrid`, y la forma multi-satélite es
