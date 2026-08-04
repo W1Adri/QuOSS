@@ -81,6 +81,21 @@ line-length = 100
 target-version = "py311"
 src = ["src", "tests"]
 
+# The formatter's job is source code; the .md files here are prose. Ruff gained
+# Markdown support in a release later than the `ruff>=0.6` floor below, and
+# started reformatting the ```python blocks of the notes and ADRs as a side
+# effect nobody asked for — which turned `ruff format --check` in CI red over
+# hand-aligned comments that are aligned on purpose, because a three-line block
+# comparing two behaviours is only readable as a column (CLAUDE.md, norm 1).
+#
+# What this gives up is nothing but cosmetics, and that is measured rather than
+# assumed: pointed at a .md holding a deliberately broken snippet (unused
+# import), `ruff check` answers `warning: No Python files found` and reports
+# clean, while the same code in a .py is flagged. The linter — the only half of
+# ruff that can find a defect — does not read Markdown at all. Snippets inside
+# *docstrings* stay covered, by `docstring-code-format` under [tool.ruff.format].
+extend-exclude = ["*.md"]
+
 [tool.ruff.lint]
 select = [
     "E",    # pycodestyle errors
