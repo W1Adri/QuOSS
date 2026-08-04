@@ -8,10 +8,25 @@
 existe. El grafo de dependencias es `core ← física ← system ← engine ← {cli, api, viz}`,
 y este roadmap lo recorre en ese sentido.
 
-**Regla de oro de la migración:** SimulCTTC es el **oráculo**. Cada módulo de física
-portado se cierra con un golden test que compara su salida contra la del código viejo
-en un escenario fijo. Si no coincide (dentro de tolerancia), uno de los dos está mal y
-hay que averiguar cuál *antes* de seguir.
+**Regla de oro de la migración (corregida en la etapa 2.1):** ~~SimulCTTC es el
+oráculo~~. **SimulCTTC no es un oráculo**: nunca fue validado, y leerlo destapó
+defectos que congelar su salida habría canonizado (latitud geocéntrica devuelta como
+geodésica, estaciones sobre una esfera con hasta ~21 km de error, una tasa «secular»
+para J3 que no tiene término secular de primer orden, época que caía silenciosamente
+al reloj de pared).
+
+Cada módulo de física se cierra contra **fuentes externas**, en cuatro niveles
+(ver [`tests/golden/README.md`](../tests/golden/README.md)):
+
+| Nivel | Qué | Prueba |
+|---|---|---|
+| **V1** | invariantes y property-based, sin datos externos | consistencia interna |
+| **V2** | valores publicados, transcritos con su cita | **corrección absoluta** |
+| **V3** | implementación independiente (astropy/ERFA, datos de verificación del paquete `sgp4`, GMAT, Orekit), congelada en `tests/golden/data/` con manifest | corrección en régimen amplio |
+| **V4** | snapshot de la salida *propia* de QuOSS | que un refactor no cambió nada. **No es validación** |
+
+SimulCTTC queda como **diff informativo y no bloqueante**: una discrepancia es una
+pista que vale la pena seguir en cualquiera de las dos direcciones, nunca un `assert`.
 
 ---
 
@@ -52,16 +67,56 @@ o cuesta durante todo el proyecto. Elígela y no la cambies.
 El corazón. **Todo vectorizado sobre el eje temporal desde el primer archivo** — no
 "lo optimizo después": la firma escalar contamina a todos los llamantes. Cada módulo:
 funciones puras → sin estado, sin I/O, sin red. Cada uno se cierra con sus tests
-(unitarios + invariantes + golden contra SimulCTTC) antes de pasar al siguiente.
+(unitarios + invariantes V1 + referencia externa V2/V3) antes de pasar al siguiente.
 
 ### 2.1 `orbits/` — geometría del problema
-1. `orbits/kepler.py` — Kepler, anomalías, posición/velocidad, elementos ↔ estado
-2. `orbits/perturbations.py` — J2/J3/J4, tasas seculares
-3. `orbits/frames.py` — ECI ↔ ECEF ↔ geodésico, GMST, tiempo juliano
-4. `orbits/propagator.py` — propagación vectorizada: devuelve arrays de estado
-5. `orbits/tle.py` — parseo TLE + SGP4 (usar `sgp4`, no reimplementar)
-6. `orbits/constellations.py` — Walker-Delta, SSO, traza repetida
-7. `orbits/geometry.py` — elevación/azimut/slant range/Doppler estación↔satélite
+
+Orden revisado: `frames.py` va **primero**, no tercero. No depende de Kepler y todo
+lo demás depende de él (era la duda anotada en `LAST_CHANGES.md` §6).
+
+1. ✅ `orbits/frames.py` — TEME ↔ ITRF ↔ geodésico, ENU, GMST, calendario ↔ JD.
+   Ver [ADR 0002](../docs/adr/0002-frames-and-time-scales.md)
+2. ✅ `orbits/kepler.py` — Kepler, anomalías, posición/velocidad, elementos ↔ estado.
+   Ver [ADR 0003](../docs/adr/0003-orbital-elements.md)
+3. ✅ `orbits/perturbations.py` — fuerza zonal J2/J3/J4 exacta **+ integrador zonal
+   numérico**, y tasas seculares analíticas **de primer orden en J2**.
+   Ver [ADR 0004](../docs/adr/0004-zonal-perturbations.md).
+   **Corregido al implementarlo:** el numérico **no** puede validar el analítico a
+   O(J2²). Una tasa secular habla de elementos *medios*, y la diferencia
+   medio↔osculador es ella misma O(J2) — mil veces mayor que la corrección de
+   segundo orden. Los términos `J2²`/`J4` quedan fuera hasta que exista una
+   transformación de Brouwer-Lyddane (la misma que necesitará `tle.py`). Lo que
+   sí se validó, y más fuerte que una cota: el residuo del primer orden es
+   **exactamente proporcional a J2**. J3 sale correcto por construcción y su
+   ausencia de término secular está medida, no afirmada
+4. ✅ `orbits/propagator.py` — propagación vectorizada: `propagate(elementos,
+   TimeGrid, method=…)` → `Trajectory` en `(S, n, 3)` con marco, época y método
+   dentro. Ver [ADR 0005](../docs/adr/0005-propagation.md).
+   **Enviado a propósito con el enum incompleto:** solo `TWO_BODY` y
+   `ZONAL_NUMERIC`. El modo analítico de J2 que este roadmap pedía **no puede
+   devolver un estado utilizable** sin la transformación de período corto de
+   Brouwer-Lyddane: alimentar tasas seculares con osculadores cuesta 219 km tras
+   un día, y lo que crece es el reloj orbital (~30 s/día), no un sesgo. Un nombre
+   ausente obliga a preguntar en el punto de llamada; uno presente y equivocado
+   no obliga a nada. Aquí se resuelven además los dos pendientes del módulo:
+   la época viaja obligatoria dentro del `TimeGrid`, y la forma multi-satélite es
+   `(S, n, 3)` satellite-major
+5. `orbits/tle.py` — parseo TLE + SGP4 (usar `sgp4`, no reimplementar). El paquete
+   trae `SGP4-VER.TLE` y `tcppver.out`: datos de verificación oficiales, gratis
+6. `orbits/geometry.py` — elevación/azimut/slant range/Doppler + **ángulo de
+   point-ahead** (35 µrad a 1000 km: mayor que el jitter de apuntado que se modelará)
+7. `orbits/constellations.py` — Walker-Delta, SSO, traza repetida
+
+**Trampa a hacer imposible por tipos:** los elementos medios de un TLE son de
+Brouwer-Lyddane con corrección de Kozai, **no** los del propagador J2 analítico.
+Mezclarlos es un error de km que parece funcionar.
+
+✅ **Hecho por tipos (2026-08-01), transversal a 2.1.2–2.1.4:** `ClassicalElements`
+lleva un `ElementType` (`OSCULATING` / `MEAN_BROUWER`) igual que lleva su `Frame`.
+`rv_to_coe` marca osculador, `coe_to_rv` exige osculador, `secular_rates_j2` exige
+medio, y no hay conversión entre los dos porque Brouwer-Lyddane sigue sin existir:
+la bandera es hoy una puerta cerrada que marca dónde haría falta. Ver
+[ADR 0006](../docs/adr/0006-osculating-vs-mean-elements.md).
 
 ### 2.2 `channel/` — el canal óptico
 1. `channel/atmosphere.py` — perfiles Cn² (HV5/7, Bufton, HV modificado), airmass
@@ -86,7 +141,8 @@ funciones puras → sin estado, sin I/O, sin red. Cada uno se cierra con sus tes
 3. `kernels/numba_backend.py` — más adelante, con golden test contra la de referencia
 
 **Hecho cuando:** se puede calcular una curva SKR(t) llamando funciones a mano desde
-un notebook, y los golden tests contra SimulCTTC coinciden.
+un notebook, y cada módulo tiene su verificación V1–V3 en verde (ver la regla de oro
+arriba).
 
 ---
 
@@ -129,7 +185,7 @@ Lo que hoy está enterrado en un handler HTTP. Sin dependencias web.
 5. `engine/profiling.py` — tiempos por etapa dentro del propio resultado
 
 **Hecho cuando:** `run(scenario) → result` funciona en una línea de Python y un
-escenario de referencia da los mismos números que SimulCTTC.
+escenario de referencia reproduce números publicados (V2), no los de SimulCTTC.
 
 ---
 

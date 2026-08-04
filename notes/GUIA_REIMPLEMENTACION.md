@@ -240,9 +240,12 @@ referencia es deuda, no optimización.
 
 **Sobre la migración (importante hacerla en este orden):**
 1. Definir `scenario/` y el contrato de resultado **primero**. Todo cuelga de ahí.
-2. Portar la física **módulo a módulo**, y para cada uno un golden test que compare
-   contra la salida del código viejo en un escenario fijo. **SimulCTTC es el oráculo
-   de referencia**: es la forma más segura de reescribir sin perder física validada.
+2. Portar la física **módulo a módulo**, y cerrar cada uno contra **fuentes externas**
+   en cuatro niveles (invariantes / valores publicados / implementación independiente /
+   regresión propia). Ver `tests/golden/README.md` y la regla de oro de `ROADMAP.md`.
+   **Corregido en la etapa 2.1:** SimulCTTC **no** es un oráculo — nunca fue validado,
+   y leerlo destapó defectos que congelar su salida habría canonizado. Queda como diff
+   informativo no bloqueante. Su valor real es la *física documentada*, no sus números.
 3. Después `engine/` + CLI. Con eso ya hay simulador completo y utilizable.
 4. La API y el frontend **al final**. Son los consumidores, y rehacerlos antes de
    tener el motor es lo que produjo el acoplamiento actual.

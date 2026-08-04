@@ -6,8 +6,11 @@ protocolo QKD → métricas de sistema (SKR, volumen de clave, outage).
 Núcleo Python puro y **vectorizado sobre el eje temporal**, sin dependencias web. La
 CLI, la API y el frontend son *consumidores* del mismo motor, no parte de él.
 
-> Estado: **Etapa 0 — cimientos**. El paquete se instala y CI está verde; todavía no
-> hay física. Ver [`notes/ROADMAP.md`](notes/ROADMAP.md) para el orden de construcción,
+> Estado: **Etapa 2.1 — `orbits/`**. Hecho: `frames.py`, `kepler.py`,
+> `perturbations.py`, `propagator.py`, y la bandera osculador/medio que los tres
+> últimos comparten ([ADR 0006](docs/adr/0006-osculating-vs-mean-elements.md)).
+> Siguiente: `tle.py`.
+> Ver [`notes/ROADMAP.md`](notes/ROADMAP.md) para el orden de construcción,
 > [`notes/GUIA_REIMPLEMENTACION.md`](notes/GUIA_REIMPLEMENTACION.md) para el porqué de la
 > arquitectura y [`notes/LAST_CHANGES.md`](notes/LAST_CHANGES.md) para el estado actual.
 
@@ -67,7 +70,12 @@ Las flechas nunca van al revés.
 - **Procedencia en cada resultado**: hash de escenario + versión de código + versión de
   datos externos + semilla.
 - **Incertidumbre de primera clase**: el motor devuelve P5/P50/P95 y outage, no escalares.
-- SimulCTTC es el **oráculo**: cada módulo de física portado se cierra con un golden test.
+- **SimulCTTC no es un oráculo.** Nunca fue validado, y leerlo destapó defectos que
+  congelar su salida habría canonizado. Cada módulo de física se cierra contra fuentes
+  externas en cuatro niveles (invariantes / valores publicados / implementación
+  independiente / regresión propia); ver [`tests/golden/README.md`](tests/golden/README.md).
+  Lo que se reporte como validado traza a un valor publicado o a una implementación
+  independiente, nunca a un snapshot propio.
 
 ## Licencia
 
