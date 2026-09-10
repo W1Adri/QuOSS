@@ -5,10 +5,10 @@ Private to :mod:`quoss.channel`, and the same reasoning as
 relocates the error to wherever the ``nan`` eventually surfaces, which is never
 where it was made.
 
-Three arguments recur across every module of this package — an elevation angle,
-a wavelength, and an aperture or other positive length — and each of the three
-has a *specific* way of going wrong that a generic "must be positive" message
-would not catch:
+Four arguments recur across every module of this package — an elevation angle, a
+wavelength, an aperture or other positive length, and a duration — and each of
+them has a *specific* way of going wrong that a generic "must be positive"
+message would not catch:
 
 - **Elevation** arrives from :func:`quoss.orbits.geometry.look_angles`, which
   reports elevations *below* the horizon without filtering, because a pass has
@@ -19,8 +19,12 @@ would not catch:
 - **Wavelength** is the argument most likely to arrive in nanometres, and 1550
   is as finite and positive as 1.55e-6.
 - **Apertures** are the argument most likely to arrive in centimetres.
+- **Durations** in this package are all sub-microsecond — a 1 ns detection gate,
+  a 50 ps jitter, a 30 ns dead time — so the characteristic error is an argument
+  that arrived in nanoseconds, and a gate of ``1`` instead of ``1e-9`` inflates
+  every background and dark-count number by a factor of a billion.
 
-Keeping the three in one place is what makes those messages identical wherever
+Keeping the four in one place is what makes those messages identical wherever
 they fire, which matters because the message *is* the documentation at the point
 of failure.
 """
@@ -34,6 +38,7 @@ from quoss.core.types import FloatArray
 
 __all__ = [
     "MICROMETRES_PER_METRE",
+    "validated_duration_s",
     "validated_elevation",
     "validated_positive_length_m",
     "validated_wavelength_m",
@@ -150,3 +155,48 @@ def validated_positive_length_m(name: str, value: float, *, hint: str = "") -> f
         message = f"{name} must be finite and positive, got {length}."
         raise DomainError(f"{message} {hint}".strip())
     return length
+
+
+def validated_duration_s(name: str, value: float, *, hint: str = "") -> float:
+    """Return a strictly positive duration in seconds, named in the message.
+
+    Every duration in this package is short — gates, jitters and dead times are
+    picoseconds to tens of nanoseconds — so the default message names the two
+    published ones rather than saying "must be positive", and a caller who needs
+    a third can append it through ``hint``.
+
+    Parameters
+    ----------
+    name
+        Argument name, quoted verbatim in the message.
+    value
+        The duration to validate, s.
+    hint
+        Extra sentence appended to the message, for a duration whose own scale
+        is worth naming — a dead time, a gate period.
+
+    Returns
+    -------
+    float
+        The validated duration, in seconds.
+
+    Raises
+    ------
+    DomainError
+        If the value is not finite and strictly positive. Strictly: a gate of
+        zero width collects nothing and divides by nothing, but every formula
+        that takes one either divides by it or reports a rate per unit of it.
+
+    Examples
+    --------
+    >>> validated_duration_s("gate_duration_s", 1e-09)
+    1e-09
+    """
+    duration = float(value)
+    if not np.isfinite(duration) or duration <= 0.0:
+        message = (
+            f"{name} must be finite and positive, got {duration}. The unit is seconds: a 1 "
+            "nanosecond gate is 1e-9, and a 50 picosecond jitter is 50e-12."
+        )
+        raise DomainError(f"{message} {hint}".strip())
+    return duration

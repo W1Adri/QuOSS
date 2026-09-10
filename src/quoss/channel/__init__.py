@@ -26,9 +26,12 @@ beam
 pointing
     Pointing loss and the fading that mechanical jitter produces.
 background
-    Sky radiance, background count rate, and the detection time gate.
+    Sky radiance, background count rate, and the detection time gate — including
+    the law that prices the gate against the detector's timing jitter, because
+    the gate is what the jitter trades against.
 detector
-    Efficiency, dark counts, dead time, afterpulsing, timing jitter.
+    The receiver efficiency chain, dark counts, afterpulsing and dead time: what
+    the detector loses, what it invents, and when it is not listening.
 link_budget
     Assembles the above into separable loss components and a noise rate.
 

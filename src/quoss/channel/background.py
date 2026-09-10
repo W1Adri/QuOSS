@@ -248,6 +248,7 @@ from scipy.special import erf
 
 from quoss.channel._validation import (
     MICROMETRES_PER_METRE,
+    validated_duration_s,
     validated_positive_length_m,
     validated_wavelength_m,
 )
@@ -503,17 +504,6 @@ def _validated_field_of_view_rad(field_of_view_full_angle_rad: float) -> float:
             "Ntanos et al. 2021 §4.1."
         )
     return field_of_view
-
-
-def _validated_duration_s(name: str, value: float) -> float:
-    """Return a strictly positive duration in seconds, named in the message."""
-    duration = float(value)
-    if not np.isfinite(duration) or duration <= 0.0:
-        raise DomainError(
-            f"{name} must be finite and positive, got {duration}. The unit is seconds: a 1 "
-            "nanosecond gate is 1e-9, and a 50 picosecond jitter is 50e-12."
-        )
-    return duration
 
 
 def _validated_rate_cps(photon_rate_cps: FloatArray | float) -> FloatArray:
@@ -1065,7 +1055,7 @@ def background_counts_per_gate(
     3.415
     """
     rate = _validated_rate_cps(photon_rate_cps)
-    gate_s = _validated_duration_s("gate_duration_s", gate_duration_s)
+    gate_s = validated_duration_s("gate_duration_s", gate_duration_s)
     counts: FloatArray = rate * gate_s
     return counts
 
@@ -1301,7 +1291,7 @@ def gate_signal_fraction(
             "gate_duration_s must be finite and positive, got a minimum of "
             f"{float(np.min(gate_s))}. The unit is seconds: a 1 nanosecond gate is 1e-9."
         )
-    jitter_s = _validated_duration_s("timing_jitter_fwhm_s", timing_jitter_fwhm_s)
+    jitter_s = validated_duration_s("timing_jitter_fwhm_s", timing_jitter_fwhm_s)
     sigma_s = jitter_s / _FWHM_PER_SIGMA
     fraction: FloatArray = erf(gate_s / (2.0 * np.sqrt(2.0) * sigma_s))
     return fraction
@@ -1378,5 +1368,5 @@ def gate_width_maximising_snr_s(timing_jitter_fwhm_s: float) -> float:
     >>> round(gate_width_maximising_snr_s(500e-12) * 1e12, 2)
     594.52
     """
-    jitter_s = _validated_duration_s("timing_jitter_fwhm_s", timing_jitter_fwhm_s)
+    jitter_s = validated_duration_s("timing_jitter_fwhm_s", timing_jitter_fwhm_s)
     return float(GATE_MAXIMISING_SNR_IN_JITTER_SIGMAS * jitter_s / _FWHM_PER_SIGMA)

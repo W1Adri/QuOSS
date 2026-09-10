@@ -1,7 +1,50 @@
 # QuOSS — Últimos cambios y cosas a considerar
 
 > Bitácora viva. Se actualiza al cerrar cada etapa del [`ROADMAP.md`](ROADMAP.md).
-> Última actualización: **2026-09-10** — **cuarto módulo de la Etapa 2.2**,
+> Última actualización: **2026-09-10** — **sexto módulo de la Etapa 2.2**,
+> `channel/detector.py` (§21): la cadena de eficiencia, las cuentas oscuras, el
+> afterpulsing y el tiempo muerto. Lo que el detector pierde, lo que se inventa,
+> y cuándo no está escuchando.
+>
+> **La regla que da forma al módulo:** las medias se suman y la exponencial se
+> hace una vez, al final — porque las **tres** formas publicadas que reproduce
+> son truncamientos a primer orden de eso (el `1 - 2 p_dc` de Lim et al., su
+> `D_k(1 + p_ap)`, y el `Y_0 = P_dc + P_noise` de la Ec. (A6) de Ntanos et al.),
+> excelentes en su punto de operación (7e-12, 0.16 % y 1.2e-6) y las tres por
+> encima de 1 en el barrido diurno de este proyecto (**1.93, 1.006 y 3.42**).
+>
+> **La trampa:** la cadena de eficiencia se aplica a todo lo que entró por la
+> apertura y a nada que naciera dentro del detector. Los fotones de fondo son
+> fotones; las cuentas oscuras se generan detrás de la óptica. Aplicarles la
+> cadena también a ellas —la frase natural, «aplica la eficiencia al ruido»—
+> esconde **0.94 dB de ruido** y mueve su peso del 7 % al 25 % del presupuesto
+> nocturno del receptor de referencia.
+>
+> **Y el hallazgo que pone una condición a `background.py`:** el gating no toca
+> el afterpulsing, porque escala con la tasa de clics y no con la puerta.
+> Estrechar de 1 ns a 100 ps vale **10 dB con el nanohilo de Ntanos et al. y
+> 0.22 dB con el APD de InGaAs de Lim et al.** Así que «estrecha la puerta» es
+> una frase condicional y la condición es qué detector hay dentro — el hueco 5
+> del [ADR 0009](../docs/adr/0009-citation-policy.md) pasa de declarado a
+> **medido**, con un sub-hueco de unidades nuevo (Lim publica una probabilidad
+> por puerta y **no declara ninguna puerta**) y una coincidencia asertada *como*
+> coincidencia, para que nadie lea los 6e-7 de los dos papers como dos fuentes
+> confirmándose.
+>
+> Una afirmación publicada que **sí** reproduce, por una vez: la §4.2 de Ntanos
+> et al. sobre no saturar por tiempo muerto es correcta con dos órdenes de
+> magnitud de margen (500 kcps contra un techo de 33.3 Mcps). Y el modelo
+> paralizable de tiempo muerto **no se puede invertir** —16.3 y 59.4 Mcps dan la
+> misma lectura de 10 Mcps— así que la ambigüedad es una función que falta en vez
+> de una suposición escondida.
+>
+> Entrada anterior del mismo día: **quinto módulo de la Etapa 2.2**,
+> `channel/background.py` (§20) — la luz que llega cuando no se envió nada, y la
+> Ec. (20) que llama «probability» a un número esperado de cuentas que con la luz
+> solar tabulada por la UIT vale 3.42. (La cabecera no se actualizó al cerrar esa
+> entrada; queda anotado aquí para que el orden de la bitácora no engañe.)
+>
+> Entrada anterior: **cuarto módulo de la Etapa 2.2**,
 > `channel/pointing.py` (§19): el desvanecimiento por jitter de apuntado, que es
 > el efecto que más castiga el enlace y que **devuelve una distribución, no un
 > número**. Jitter gaussiano en dos ejes → error radial Rayleigh → ley de
@@ -2809,3 +2852,291 @@ en él es del tipo de error que ese ADR existe para no cometer.
 `pointing.py`, `background.py` y el compartido `_validation.py`. Quedan
 `detector.py` y `link_budget.py`. La suite está en 1027 tests, y `channel/`
 entero al 100 % de cobertura de líneas y ramas.
+
+---
+
+## 21. `channel/detector.py` — lo que el detector pierde, lo que se inventa, y cuándo no está escuchando
+
+### Qué hace este módulo, para quien llegue nuevo
+
+Todo lo anterior de `channel/` pasa **fuera** del receptor: la atmósfera atenúa,
+el haz se abre, el cielo añade fotones. Este módulo es lo que pasa de la apertura
+hacia dentro, y un detector de fotón único le hace tres cosas distintas a un
+enlace — por eso las tres viven en un módulo y no en tres:
+
+1. **Pierde fotones de verdad.** No todo fotón que entra en el telescopio produce
+   una cuenta: la óptica absorbe, el filtro absorbe, y el detector convierte solo
+   una fracción de lo que le llega. Esa cadena es `receiver_efficiency`.
+2. **Se inventa cuentas que nunca fueron fotones.** Una **cuenta oscura** es un
+   clic sin luz: en un fotodiodo de avalancha un portador hace túnel o se libera
+   térmicamente y arranca la misma avalancha que arrancaría un fotón; en un
+   nanohilo superconductor es una fluctuación térmica. Un **afterpulse** es un
+   clic causado por el clic anterior — portadores atrapados durante una avalancha
+   que escapan un momento después y arrancan otra. Ninguno de los dos se
+   distingue de una cuenta de señal una vez ha salido del detector.
+3. **Se queda ciego después de cada cuenta.** El **tiempo muerto** es el
+   intervalo tras un clic en el que el detector no puede producir otro, porque
+   hay que apagar la avalancha o dejar que el nanohilo se enfríe por debajo de su
+   corriente crítica. Eso hace que la tasa que reporta sea una función que
+   satura de la tasa real.
+
+La primera es una pérdida como cualquier otra del presupuesto. Las otras dos no:
+una añade ruido que ningún filtro óptico quita, y la otra vuelve el instrumento
+no lineal justo en el régimen en el que un enlace rápido quiere trabajar.
+
+### 21.1 La regla que da forma al módulo — las medias se suman, la exponencial se hace una vez
+
+**Qué es.** Una **media** —el número esperado de cuentas en una puerta, `µ`— es
+un número no negativo sin cota superior. Una **probabilidad** está en `[0, 1]`.
+Procesos de Poisson independientes tienen medias que se suman, así que señal,
+fondo y cuentas oscuras se combinan como medias y se convierten **una sola vez**:
+
+```
+p_clic = 1 - exp(-(η (µ_señal + µ_fondo) + µ_oscuras))
+```
+
+**Por qué importa, y por qué es una regla y no un detalle.** Porque las **tres**
+formas publicadas que este módulo reproduce rompen esa regla de la misma manera,
+y las tres devuelven algo por encima de 1 dentro del espacio de parámetros que
+este proyecto barre:
+
+| Forma publicada | Qué trunca | Error en su punto de operación | Qué devuelve en el barrido diurno |
+|---|---|---|---|
+| `D_k = 1 - (1 - 2 p_dc) exp(-η_sys k)`, Lim et al. | la unión de las cuentas oscuras de sus **dos** detectores, cuya forma exacta es `(1 - p_dc)²` | 7e-12 con su `p_dc = 6e-7` | **1.93** con el `p_dc = 0.967` de fondo diurno; y `1 - 2 p_dc` se hace negativo por encima de 0.5 |
+| `R_k = D_k (1 + p_ap)`, Lim et al. | la cascada de afterpulses, cuya suma geométrica es `1/(1 - p_ap)`; y multiplica una **probabilidad** por un factor de cuentas | 0.16 % con su `p_ap = 4e-2` | **1.006** con el 0.967 de clic diurno |
+| `Y_0 = P_dc + P_noise`, Ec. (A6) de Ntanos et al. | la unión `1 - (1-P_dc)(1-P_noise)` | 1.2e-6 de noche, que es exactamente `µ/2` con `µ = 2.37e-6` | **3.42** con su propio fondo diurno, contra 0.967 |
+
+Las tres son excelentes donde sus autores las usaron. Ninguna sobrevive a un
+barrido, y un barrido es lo que hace este proyecto.
+
+**El ejemplo con números.** La reproducción de la `D_k` de Lim et al. a cuatro
+longitudes de fibra (µ = 0.5, 0.2 dB/km, sus dos APD de InGaAs):
+
+| Fibra | `η_sys` | `D_k` publicada | `D_k` exacta | Sobreestimación |
+|---|---|---|---|---|
+| 0 km | 1.0e-1 | 4.877172e-2 | igual | 7.0e-12 |
+| 50 km | 1.0e-2 | 4.988715e-3 | igual | 7.2e-11 |
+| 100 km | 1.0e-3 | 5.010744e-4 | igual | 7.2e-10 |
+| 200 km | 1.0e-5 | 6.199982e-6 | 6.199981e-6 | 5.8e-8 |
+
+La tolerancia del test es **derivada**, no elegida: el truncamiento es
+`p_dc²/(η_sys k + 2 p_dc)`, que está acotado por `p_dc/2 = 3e-7` y se alcanza
+solo en el límite en que las cuentas oscuras son toda la tasa de detección. Y la
+dirección importa: la forma impresa lee siempre **alto**, porque `1 - 2 p_dc` es
+menor que `(1 - p_dc)²` y resta menos.
+
+**Un detalle que hace posible la reproducción:** no hace falta la anchura de
+puerta que Lim et al. **nunca declaran**, porque su modelo solo usa la
+probabilidad por puerta y la puerta se cancela en el viaje
+probabilidad → tasa → probabilidad.
+
+### 21.2 La trampa — la cadena de eficiencia se aplica a los fotones y a nada más
+
+**Qué es.** «Aplicar la eficiencia del receptor al ruido» es la frase natural, y
+es incorrecta para una cuarta parte del ruido. Los fotones de fondo **son**
+fotones: la óptica y la eficiencia cuántica los atenúan exactamente igual que a
+la señal — por eso `background.py` se detiene deliberadamente en la apertura y no
+aplica ninguna cadena óptica. Las cuentas oscuras **no** son fotones: se generan
+*detrás* de la óptica, así que multiplicarlas por la cadena no es una decisión de
+modelado, es un término que falta.
+
+**Por qué importa.** Porque no se ve. Medido con el receptor de Ntanos et al.
+§4.1 (detectores al 85 %, filtro 3 dB, receptor 2.65 dB → cadena de 6.36 dB) y el
+telescopio de 2.3 m en su noche de estudio:
+
+| Cantidad | Cuentas por puerta | Peso en el ruido |
+|---|---|---|
+| Fondo de cielo en la apertura | 7.64e-6 | 92.7 % |
+| Fondo de cielo tras la cadena de 6.36 dB | 1.77e-6 | 74.7 % |
+| Cuentas oscuras, dos detectores a 300 cps | 6.00e-7 | 25.3 % |
+
+La cadena mueve las cuentas oscuras del 7 % del ruido al 25 %. Aplicarle la
+cadena también a ellas hace que el ruido total salga **1.242 veces menor**, que
+son **0.94 dB de ruido que desaparecen en silencio**, y el QBER sale un poco
+mejor de lo que es. El test no congela el 1.242: aserta la identidad algebraica
+`(η µ_fondo + µ_oscuras) / (η (µ_fondo + µ_oscuras))` de la que sale.
+
+**Y tiene una consecuencia de diseño**, que es la parte útil: el fondo escala con
+el área del telescopio y las cuentas oscuras no. La estación de 0.75 m está
+**por debajo de sus propios detectores** (1.9e-7 de cielo contra 6e-7 de oscuras),
+que es exactamente por qué la discrepancia nocturna entre las dos fuentes de
+`background.py` cuesta 1.24x a 0.75 m y 2.83x a 2.3 m.
+
+### 21.3 El hallazgo que pone una condición a `background.py` — el gating no toca el afterpulsing
+
+**Qué es.** La §20.4 midió que estrechar la puerta es lo más barato del canal: de
+1 ns a 100 ps cuesta 0.08 dB de señal y quita 10 dB de cielo. Las cuentas oscuras
+también escalan con la puerta, así que no le roban nada. **Los afterpulses no
+escalan con la puerta en absoluto**, porque un afterpulse lo dispara un *clic*
+anterior, no una duración: su tasa es proporcional a la tasa de cuentas, y la
+tasa de cuentas es lo que produce el enlace.
+
+**El ejemplo con números.** Con el `p_ap = 4e-2` de Lim et al. y una probabilidad
+de clic de 1e-3 por puerta (el centro del rango publicado: un enlace de 30 dB con
+µ = 0.5):
+
+| Puerta | Cielo | Oscuras | Afterpulses | Total |
+|---|---|---|---|---|
+| 1 ns | 1.77e-6 | 6.00e-7 | 4.00e-5 | 4.24e-5 |
+| 100 ps | 1.77e-7 | 6.00e-8 | 4.00e-5 | 4.02e-5 |
+
+Diez veces más estrecha compra **0.22 dB**, donde el cálculo de solo-cielo promete
+10. Así que los dos juegos de detectores publicados **no están de acuerdo en si
+el gating vale algo**, y el desacuerdo es un hecho de la tecnología y no del
+modelo: la §4.1 de Ntanos et al. escribe «and no after-pulsing effect» *literal*
+para sus nanohilos —un nanohilo no tiene avalancha, así que no tiene portadores
+atrapados que liberar— mientras el APD de InGaAs de Lim et al. tiene 4e-2.
+
+**Por qué esto es el hallazgo y no una curiosidad.** Porque «estrecha la puerta»
+es una frase condicional y hasta ahora estaba escrita sin condición. Este módulo
+es donde la condición queda anotada, y hay un test que compara los dos
+detectores con el mismo enlace y la misma noche para que no se pueda leer una de
+las dos conclusiones sin ver la otra.
+
+Y el mismo `p_ap` decide un segundo cruce, este dentro del modelo de error de Lim
+et al. (`e_k = p_dc + e_mis[1 - exp(-η_ch k)] + p_ap D_k/2`): el término de
+afterpulsing supera al de cuentas oscuras en cuanto `D_k > 2 p_dc/p_ap = 3e-5`,
+o sea **por debajo de 42 dB de pérdida total** con µ = 0.5. Los presupuestos
+publicados están entre 20 y 40 dB, así que con este detector el afterpulsing es
+el término dominante en todo el rango útil. El QBER es de `qkd/`; el cruce es del
+detector y está asertado aquí.
+
+### 21.4 Tiempo muerto — dos modelos, y uno no se puede invertir
+
+**Qué es.** Dos modelos, y la diferencia entre ellos es una propiedad del
+hardware, no una aproximación:
+
+- **No paralizable** (el defecto): la ventana muerta es fija tras cada cuenta
+  *registrada*, y los fotones que llegan dentro se pierden sin extenderla.
+  `m = R/(1 + R τ)`, que satura en `1/τ` = **33.3 Mcps** con los 30 ns de Ntanos.
+- **Paralizable** (extensible): *cada* llegada reinicia la ventana, se registre o
+  no. `m = R exp(-R τ)`, que tiene un **máximo** en `1/(e τ)` = 12.3 Mcps y
+  después *baja*.
+
+**Por qué llevar los dos.** Porque fallan en direcciones distintas. Pasado su
+máximo, el paralizable manda **dos** tasas incidentes a la misma lectura: 16.3 y
+59.4 Mcps se reportan las dos como 10 Mcps. Así que una medida no se puede
+corregir sin saber en qué rama está, y el no paralizable sí es invertible en todo
+`m < 1/τ`. Consecuencia en el código: `incident_count_rate_cps` existe **solo**
+para el no paralizable, y la ambigüedad es una **función que falta** en vez de una
+suposición escondida — hay un test que aserta que su firma no tiene un parámetro
+`paralysable`. Los dos coinciden a primer orden y se separan un 5 % en
+`R·τ = 0.3554` (umbral derivado, re-derivado con `brentq` en el test), que son
+11.8 Mcps a 30 ns, y ahí se registra un `WARNING` con las dos respuestas dentro.
+
+**Y una afirmación publicada que sí reproduce**, que merece decirse en un
+documento donde casi todas las demás no. La §4.2 de Ntanos et al. argumenta que
+«the photon loss due to link attenuation [...] prevents the detectors of Bob
+station to be saturated due to their dead time». Con sus propios números —fuente
+de 100 MHz, 30 ns, µ = 0.5 y su mejor caso de 20 dB de pérdida total, que es
+donde la saturación aparecería primero— entran 500 kcps y la pérdida por tiempo
+muerto es del **1.5 %** (0.043 dB en la forma con puerta). A 30 dB es del 0.15 %.
+Es correcta, y con dos órdenes de magnitud de margen.
+
+**La forma con puerta, que es la que usa un receptor QKD de verdad.** Un receptor
+con puertas no pierde segundos, pierde **puertas enteras**, así que el coste es un
+entero: `bloqueadas = ceil(τ/T_rep) - 1`, las aperturas estrictamente dentro de la
+ventana muerta. Con 30 ns y puertas cada 10 ns son **2**, no 3 — la última
+tercera parte del tiempo muerto expira entre dos puertas y no cuesta nada, así que
+la pérdida con puerta es 2/3 de la continua (1.0 % contra 1.5 %). Y la fracción de
+puertas vivas es `f = 1/(1 + b p)`, que es **exacta y no aproximada**: el reparo
+obvio —que dos clics cercanos solapen sus ventanas— no aplica, porque un clic solo
+puede ocurrir en una puerta viva y las `b` siguientes están bloqueadas, así que
+dos clics están separados por construcción. A 1 GHz con 30 ns son 29 puertas
+bloqueadas por clic, y con 1 % de probabilidad de clic eso son **1.1 dB** de lo
+que produce la fuente — que es la razón por la que un enlace satelital no compra
+tasa simplemente subiendo la frecuencia de repetición.
+
+Las tres leyes (las dos continuas y la de puertas) están verificadas **V1 contra
+Monte Carlo del proceso del que se derivan**, no contra otra fórmula: llegadas
+exponenciales con una ventana ciega de 30 ns para la no paralizable, la misma
+tirada con la ventana reiniciada en cada *llegada* para la paralizable, y una
+simulación puerta a puerta para `1/(1 + b p)`. La tolerancia de esa última es tres
+errores estándar **derivados del proceso**: el conteo de vivas es `n - b·clics`,
+así que su dispersión es `b` veces la de Poisson del número de clics,
+`b·sqrt(n f p)/n`. Leerla como binomial sobre la fracción viva la subestima cinco
+veces con `b = 29`, y eso es exactamente el tipo de tolerancia que falla una vez
+al año sin motivo.
+
+### 21.5 El hueco 5 del ADR 0009, ahora medido
+
+**Qué era.** «No se localizó fuente libre y autoritativa con una tabla de valores
+típicos de detector SPAD.» Sigue sin localizarse: cerrarlo es leer las hojas de
+datos de Excelitas e ID Quantique, que son públicas, y transcribirlas con su
+revisión.
+
+**Qué cambió.** Que el hueco está **medido**, y eso lo hace priorizable en vez de
+solo recordable. Los dos juegos publicados no son «valores típicos con
+dispersión», son **dos instrumentos** a 10 dB de eficiencia y a un factor
+infinito de afterpulsing, y la diferencia decide una conclusión de diseño
+(§21.3), no un dígito. Por eso cada constante lleva su fuente en el nombre
+(`NTANOS_*`, `LIM_*`) y hay un test que aserta que ninguna se llama en genérico:
+`DARK_COUNT_RATE_CPS` a secas se leería como «la» tasa de cuentas oscuras.
+
+**Y un sub-hueco nuevo, que es de unidades.** Las dos fuentes publican la cuenta
+oscura en convenciones distintas —Ntanos una **tasa** (300 cps), Lim una
+**probabilidad por puerta** (6e-7)— y **Lim et al. no declara ninguna anchura de
+puerta en todo el paper**, así que la conversión no se puede hacer con sus
+números. `dark_count_rate_from_probability_cps` pide la puerta como argumento y la
+suposición es del llamante, explícitamente. Leído a la puerta de 1 ns de Ntanos,
+el 6e-7 de Lim son 600 cps, el doble del nanohilo; leído a 10 ns son 60, la mitad.
+
+**La coincidencia que no es corroboración.** Los dos nanohilos de Ntanos a 300 cps
+en su propia puerta de 1 ns dan exactamente **6e-7** por puerta, el mismo número
+que Lim publica **por detector** para otra tecnología en otro paper. Por detector
+—la única forma en que las dos son comparables— difieren en un factor dos, y la
+igualdad existe solo a una puerta que una de las dos fuentes nunca declara. Está
+asertada *como coincidencia*, con el test que cambia la puerta supuesta y muestra
+que el «acuerdo» se mueve con ella, para que nadie la lea como dos fuentes
+independientes confirmándose. Es el mismo cuidado que la §20.8 con los 10 kcps de
+luna llena, en la dirección contraria: ahí un número publicado que no cierra, aquí
+uno que cierra demasiado bien.
+
+**Dos huecos nuevos, y no son valores sino modelos** (huecos 12 y 13 del ADR
+0009): si un afterpulse puede a su vez producir otro afterpulse —`1 + p_ap` contra
+`1/(1 - p_ap)`, 0.16 % con el valor publicado y 5 % en `p_ap = sqrt(1/21)`— y si
+el tiempo muerto es extensible (§21.4). Ninguna hoja de datos responde al primero.
+
+### 21.6 Decisiones menores que no lo son
+
+| Decisión | Por qué |
+|---|---|
+| **`AFTERPULSE_CASCADE_LIMIT` es `sqrt(1/21)` y se escribe con doce dígitos** | Es una forma cerrada: los dos modelos difieren en `1/(1 - p_ap²)`, así que el cruce del 5 % está donde `p_ap² = 1/21`. El test la re-deriva con un buscador de raíces y aserta que **no** es 0.22, por la misma razón que `GATE_MAXIMISING_SNR_IN_JITTER_SIGMAS` aserta que no es 2.8: para que nadie la «simplifique» |
+| **El 5 % es la misma tolerancia en los dos umbrales derivados, y en `background.py`** | Una convención de umbral en todo el presupuesto de ruido en vez de una por módulo. Está nombrada una vez (`_FIVE_PER_CENT`) para que las dos constantes y los tests que las re-derivan no puedan separarse |
+| **`receiver_efficiency` devuelve un escalar y no tiene eje temporal** | Todo lo que hay dentro es propiedad del instrumento: los recubrimientos, el filtro, la polarización del detector. Nada de eso varía a lo largo de un pase, y darle un eje invitaría a meter ahí un término dependiente de la elevación — que sería un término real, y sería de la atmósfera |
+| **La pérdida de polarización de 0.3 dB de Ntanos **no** está en la cadena del receptor** | Su propia frase la llama «the polarization decoherence loss of **the link**». Ponerla aquí se la aplicaría también al fondo de cielo, y la luz de fondo no está polarizada: no la decohera nada. Va a `link_budget.py` |
+| **`detector_count` es un `int` y `True` se rechaza** | «1.5 detectores» no es un receptor que exista, y el abuso que se quiere cazar —pasar una eficiencia, o la probabilidad de unión de dos detectores— lo caza el mismo chequeo. `True` es un `int` en Python y no es un detector, así que se rechaza explícitamente |
+| **Dos validadores separados para «cuentas por puerta» y «probabilidad»** | Y no uno con un flag. Todo el punto es que la cota de 1 se aplica a una y no a la otra, así que los dos chequeos no deben compartir un camino de código al que se le pueda pasar la cota equivocada. El mensaje de cada uno nombra el otro y la función que convierte |
+| **Se aceptan medias por encima de 1** | 3.42 cuentas por puerta es un punto de operación **real** —es lo que recoge el receptor de referencia con el cielo diurno de la UIT— y rechazarlo sería rechazar el caso que el módulo existe para hacer bien. Lo que no se acepta es una *probabilidad* por encima de 1 |
+| **`validated_duration_s` se sube a `_validation.py`** | Segunda copia (la primera está en `background.py`), y la regla del commit «Share the channel input validators before the third copy appears» es moverla antes de escribir la tercera. Los mensajes de `background.py` no cambian ni un byte, así que sus tests de validación son la prueba de que no cambió nada |
+| **La ley `erf` de la puerta **no** se duplica aquí** | La constante de jitter es una propiedad del detector y vive aquí; la ley que la convierte en fracción de señal conservada es de `background.py`, porque la puerta es contra lo que el jitter se cambia. Partir un intercambio de dos términos entre dos módulos es cómo se olvida uno de los dos. Hay un test que aserta la ausencia |
+
+### 21.7 Lo que `detector.py` deja fuera, declarado
+
+- **Rendimientos, QBER y cualquier cosa por base.** El `p_ap D_k/2` de Lim et al.
+  y el `1 - (1 - Y_0)(1 - η)^n` de un estado de `n` fotones son cantidades de
+  protocolo: `qkd/`. Lo que cruza la frontera desde aquí es una probabilidad de
+  clic y las medias que hay detrás.
+- **El resultado de doble clic.** Lim et al. nombran cuatro resultados de medida,
+  `{0, 1, vacío, ambos}`; contar el doble clic necesita saber qué detector
+  corresponde a qué valor de bit, que es un hecho de protocolo.
+- **Cuentas oscuras no poissonianas.** El afterpulsing las vuelve *agrupadas*, así
+  que la varianza es mayor que la media aunque la media esté bien. Importa para
+  una cota de clave finita, no para las tasas medias de aquí, y corregirlo
+  necesita una distribución temporal de afterpulses medida que ninguna fuente
+  verificada da.
+- **Temperatura, corriente de polarización, latching, crosstalk y transitorios de
+  recuperación.** La eficiencia de un SNSPD real depende de la corriente de
+  polarización; la tasa oscura de un APD real casi se duplica cada 10 K; los dos
+  pueden quedarse latcheados. Todo eso es de hoja de datos y lo cubre el hueco 5.
+- **La dependencia con la longitud de onda.** El 85 % está declarado «at 1550 nm»
+  y la eficiencia es una curva, no un número. Ninguna fuente verificada la da, así
+  que la eficiencia es un argumento y hay un test que aserta que **ninguna** firma
+  del módulo acepta una longitud de onda, una elevación ni una temperatura.
+- **Saturación no lineal más allá del tiempo muerto.** Un detector real cerca de
+  su techo tiene más cosas que un tiempo muerto constante.
+
+**Estado de la etapa 2.2:** hechos `atmosphere.py`, `turbulence.py`, `beam.py`,
+`pointing.py`, `background.py`, `detector.py` y el compartido `_validation.py`.
+Queda **`link_budget.py`**, que es el que ensambla. La suite está en 1131 tests, y
+`channel/` entero al 100 % de cobertura de líneas y ramas.

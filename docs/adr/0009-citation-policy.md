@@ -104,6 +104,8 @@ Todas comprobadas abriendo el documento y extrayendo el texto.
 | Rytov en camino inclinado; escintilación en régimen fuerte | **Ntanos et al. 2021**, *Photonics* 8(12):544 | (12), (13) |
 | Perfil HV modificado con la altitud de la estación | Ntanos et al. 2021 | (11) |
 | Potencia y cuentas de fondo | Ntanos et al. 2021 | (19), (20) |
+| Rendimiento y QBER a partir del canal | Ntanos et al. 2021 **Apéndice A** | (A4)–(A6) |
+| Tasa de detección, afterpulsing y tasa de error con detector real | **Lim et al. 2014**, §Evaluation | `D_k`, `R_k`, `e_k` (sin numerar en el paper) |
 | Fading por error de apuntado con jitter | **Farid & Hranilovic 2007**, *JLT* 25(7):1702 | (9), (10), (11) |
 | Extinción por visibilidad | **Kim, McArthur & Korevaar 2001**, *Proc. SPIE* 4214:26 | (6) |
 | Decoy vacuum+weak; tasa GLLP | **Ma, Qi, Zhao & Lo 2005**, *PRA* 72, 012326 | (1), (7)–(11), (34), (35), (37) |
@@ -141,8 +143,36 @@ Esta lista es la parte que hace que la de arriba signifique algo.
 5. **Valores típicos de detector SPAD.** No se localizó fuente libre y
    autoritativa con una tabla. Se usan los valores **publicados y verificados**
    de Ntanos et al. 2021 §4.1 (SNSPD: η 85 %, 300 cps, jitter 50 ps, tiempo
-   muerto 30 ns) y de Lim et al. 2014 §Evaluation (InGaAs: η 10 %,
-   p_dc 6e-7, p_ap 4e-2).
+   muerto 30 ns, y «no after-pulsing effect») y de Lim et al. 2014 §Evaluation
+   (InGaAs: η 10 %, p_dc 6e-7, p_ap 4e-2). Las dos frases se releyeron del PDF
+   al implementar `channel/detector.py` (2026-09-10), y las dos son literales.
+
+   **Lo que la implementación midió, que es lo que convierte el hueco en algo
+   accionable:** no son «valores típicos» con dispersión, son **dos
+   instrumentos** que difieren en 10 dB de eficiencia y en un factor infinito de
+   afterpulsing, y la diferencia decide una conclusión de diseño. Con el
+   nanohilo, estrechar la puerta de 1 ns a 100 ps quita 10 dB de ruido (lo que
+   promete `background.py`); con el APD de InGaAs quita **0.22 dB**, porque el
+   afterpulsing no escala con la puerta y a 1e-3 de probabilidad de clic es 67
+   veces las cuentas oscuras. Así que «estrecha la puerta» es una frase
+   condicional y la condición es qué detector hay dentro. Por eso los dos juegos
+   son constantes con el nombre de su fuente en el identificador, y hay un test
+   que aserta que ninguna constante del módulo se llama en genérico.
+
+   **Sub-hueco nuevo, y es de unidades:** las dos fuentes publican la cuenta
+   oscura en **convenciones distintas** —Ntanos una tasa (300 cps), Lim una
+   probabilidad por puerta (6e-7)— y **Lim et al. no declara ninguna anchura de
+   puerta en todo el paper**, así que la conversión entre las dos no se puede
+   hacer con sus números. `dark_count_rate_from_probability_cps` pide la puerta
+   como argumento y la suposición es del llamante. Leído a la puerta de 1 ns de
+   Ntanos, el 6e-7 de Lim son 600 cps, el doble del nanohilo; leído a 10 ns son
+   60, la mitad. Y hay una **coincidencia que no es corroboración**: los dos
+   nanohilos de Ntanos a 300 cps en su propia puerta de 1 ns dan exactamente
+   6e-7 por puerta, el mismo número que Lim publica **por detector** para otra
+   tecnología. Está asertada como coincidencia
+   (`TestAgainstNtanosEtAl::test_the_equality_with_lims_dark_count_probability_is_a_coincidence`)
+   precisamente para que nadie la lea como dos fuentes independientes
+   confirmándose.
 6. **Los coeficientes del viento de Bufton no coinciden entre fuentes.** ITU-R
    P.1621-2 Ec. (5) da `v_rms = sqrt(v_g² + 33.11·v_g + 360.31)`; la forma que se
    cita habitualmente de A&P usa 30.69 y 348.91. Las dos dan ≈21 m/s, pero con
@@ -186,6 +216,27 @@ Esta lista es la parte que hace que la de arriba signifique algo.
     nombre del argumento diciéndolo. Las dos lecturas equivocadas están medidas:
     **6.02 dB** leerlo como semiángulo, **41.05 dB** pasar el ángulo a la fórmula
     que quiere estereorradianes.
+12. **Si un afterpulse puede a su vez producir otro afterpulse.** Lim et al.
+    multiplican la tasa de detección por `1 + p_ap`: un afterpulse por clic
+    primario. Si el afterpulse cascadea —y es una avalancha real, que atrapa
+    portadores reales— el factor es la serie geométrica `1/(1 - p_ap)`. Ninguna
+    fuente verificada lo decide. La diferencia es `1/(1 - p_ap²)`: **0.16 % con
+    el 4e-2 publicado**, 5 % en `p_ap = sqrt(1/21) = 0.2182`. Se devuelve la
+    forma publicada y por encima de ese umbral se registra un `WARNING` que
+    lleva las dos cifras dentro, igual que la interpolación de radiancia lleva
+    la regla alternativa.
+13. **Si el tiempo muerto es extensible.** Es una propiedad del hardware —el
+    modelo no-paralizable supone una ventana fija tras cada cuenta *registrada*,
+    el paralizable la reinicia con cada llegada— y **ninguna de las dos fuentes
+    lo dice** de sus detectores. Los dos modelos coinciden a primer orden y se
+    separan un 5 % en `R·τ = 0.3554`, que con los 30 ns de Ntanos son 11.8 Mcps;
+    sus techos son `1/τ` = 33.3 Mcps y `1/(e·τ)` = 12.3 Mcps. Consecuencia de
+    diseño, no solo de precisión: el paralizable **no es invertible** pasado su
+    máximo (dos tasas incidentes dan la misma lectura, 16.3 y 59.4 Mcps dan
+    10 Mcps), así que `incident_count_rate_cps` existe solo para el otro y la
+    ambigüedad es una función que falta en vez de una suposición escondida. Para
+    los enlaces publicados el hueco no cuesta nada —a 500 kcps la pérdida es del
+    1.5 % con cualquiera de los dos— y eso también está medido.
 
 ### El caveat de Ntanos et al. 2021, que es la fuente V2 de punta a punta
 
@@ -209,6 +260,14 @@ numeradas, resultado publicado— y por eso hay que escribir lo que no cuadra:
   **3.42** (y 1.09 con su telescopio intermedio). QuOSS devuelve `1 - exp(-µ)` y
   avisa por encima de 0.1 cuentas por puerta, umbral **derivado**: es donde la
   lectura lineal sobreestima un 5 %.
+- Su Ec. (A6) escribe el rendimiento de fondo como `Y_0 = P_dc + P_noise`, una
+  **suma de probabilidades donde la unión es `1 - (1-P_dc)(1-P_noise)`**. De
+  noche las dos coinciden a 1.2e-6 relativo, y esa cifra no es una tolerancia
+  sino la respuesta: la suma sobreestima en `µ/2`, el segundo término de
+  `1 - exp(-µ)`, con `µ = 2.37e-6`. Con su propio fondo diurno (3.42 cuentas por
+  puerta) la suma da 3.42 y la unión 0.967. Es el mismo patrón que su Ec. (20),
+  y `detector.py` lo resuelve con una sola regla: **las medias se suman y la
+  exponencial se hace una vez, al final**.
 - Su afirmación de que «even in the case of full moon, the background radiance
   corresponds to 10 kcps in the photon counter at most» **no es reproducible**
   desde su propia Ec. (19) sin elegir cuál de sus tres telescopios: da 8.1 kcps a
@@ -219,6 +278,32 @@ Consecuencia para los tests: se aserta la **forma** de la curva y los **ratios**
 no la cifra absoluta, y el test dice por qué. Un V2 cuyo valor absoluto no cierra
 sigue siendo información — pero solo si se declara cuál de sus afirmaciones se
 está usando.
+
+**Y una afirmación suya que sí reproduce**, que merece decirse en un documento
+donde casi todas las demás no: su §4.2 argumenta que la atenuación del enlace
+impide que sus detectores se saturen por tiempo muerto. Con sus propios números
+—100 MHz, 30 ns, µ = 0.5 y su mejor caso de 20 dB— entran 500 kcps en un
+detector cuyo techo son 33.3 Mcps, y la pérdida es del **1.5 %** (1.0 % en la
+forma con puerta). Es correcta, y con dos órdenes de magnitud de margen.
+
+### El caveat de Lim et al. 2014, que es la fuente V2 del detector
+
+Es la primera vez que se usa su §Evaluation, y su forma impresa de la tasa de
+detección es una **linealización**: escribe `D_k = 1 - (1 - 2 p_dc) exp(-η_sys k)`,
+donde `2 p_dc` es la unión de las cuentas oscuras de sus dos detectores a primer
+orden y la unión exacta es `(1 - p_dc)²`. Con su `p_dc = 6e-7` las dos coinciden a
+7e-12 —nadie necesitaba esta corrección— pero `1 - 2 p_dc` **se hace negativo por
+encima de `p_dc = 0.5`**, y entonces la «probabilidad de detección» pasa de 1: con
+el 0.967 de fondo diurno que devuelve `background.py` para el receptor de Ntanos,
+la forma impresa da **1.93**. Las dos se separan un 5 % en `p_dc = 0.179`.
+
+QuOSS reproduce su `D_k` exactamente (a 3e-7 relativo, cota **derivada**: el
+truncamiento es `p_dc²/(η_sys k + 2 p_dc) ≤ p_dc/2`) sumando medias y
+exponenciando una vez, que es la misma regla que arregla la Ec. (A6) de Ntanos.
+Y la parte útil de su modelo de error es un cruce, no una fórmula: sus dos
+términos de ruido son `p_dc` y `p_ap·D_k/2`, así que el afterpulsing domina en
+cuanto `D_k > 2 p_dc/p_ap = 3e-5`, es decir **por debajo de 42 dB de pérdida
+total** con µ = 0.5 — o sea en todo el rango útil de un enlace satelital.
 
 ## Consecuencias
 
@@ -234,8 +319,17 @@ está usando.
 - **No cierra** el acceso a A&P. Si algún día se consigue el libro, las citas por
   ecuación se pueden añadir, y los huecos 1 y 2 se cierran. Hasta entonces el
   código no pierde nada: las fórmulas ITU-R son las mismas.
-- **No cierra** el hueco de los detectores. Cerrarlo es leer hojas de datos de
-  Excelitas e ID Quantique, que son públicas, y transcribirlas con su versión.
+- **No cierra** el hueco de los detectores (hueco 5). Cerrarlo es leer hojas de
+  datos de Excelitas e ID Quantique, que son públicas, y transcribirlas con su
+  versión. Lo que sí cambió al implementar `channel/detector.py` es que el hueco
+  está **medido**: se sabe qué decide (0.22 dB contra 10 dB al estrechar la
+  puerta), qué sub-hueco de unidades esconde (Lim no declara puerta) y qué
+  coincidencia no hay que leer como corroboración. Un hueco medido se puede
+  priorizar; uno declarado solo se puede recordar.
+- **No cierra** los huecos 12 y 13, que no son valores sino **modelos**: si un
+  afterpulse cascadea y si el tiempo muerto es extensible. Ninguna hoja de datos
+  de las de arriba responde al primero; el segundo suele estar en ellas, así que
+  se cierra con el mismo trabajo que el hueco 5.
 - **Coste de cambiar de fuente primaria:** bajo mientras los huecos estén
   declarados. Cada fórmula lleva su cita en su docstring, así que cambiar de
   fuente es un grep, no una auditoría.

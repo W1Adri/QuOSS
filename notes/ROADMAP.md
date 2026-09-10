@@ -266,7 +266,35 @@ de rellenados → [ADR 0009](../docs/adr/0009-citation-policy.md).
    declarado a **medido**: interpolar a 785 nm da 0.48 dB de diferencia entre
    reglas y **16-27 % de error** en un leave-one-out sobre la propia tabla, así
    que se interpola registrando un `DEGRADED`, nunca en silencio
-6. `channel/detector.py` — eficiencia, dark counts, dead time, afterpulsing
+6. ✅ `channel/detector.py` — cadena de eficiencia, cuentas oscuras,
+   afterpulsing y tiempo muerto. **La regla que da forma al módulo: las medias
+   se suman y la exponencial se hace una vez, al final** — porque las tres
+   formas publicadas que reproduce son truncamientos a primer orden de eso
+   (`1 - 2 p_dc` de Lim, su `D_k(1 + p_ap)`, y el `Y_0 = P_dc + P_noise` de la
+   Ec. (A6) de Ntanos), excelentes en su punto de operación (7e-12, 0.16 % y
+   1.2e-6) y las tres por encima de 1 en el barrido diurno de este proyecto
+   (1.93, 1.006 y 3.42). **La trampa que evita:** la cadena de eficiencia se
+   aplica a todo lo que entró por la apertura y a nada que naciera dentro del
+   detector — aplicársela también a las cuentas oscuras esconde **0.94 dB** de
+   ruido y mueve su peso del 7 % al 25 % del presupuesto nocturno. **El hallazgo
+   que condiciona a `background.py`:** el gating no toca el afterpulsing, porque
+   escala con la tasa de clics y no con la puerta, así que estrechar de 1 ns a
+   100 ps vale **10 dB con el nanohilo de Ntanos y 0.22 dB con el APD de InGaAs
+   de Lim** — «estrecha la puerta» es condicional y la condición es el detector
+   (hueco 5 del [ADR 0009](../docs/adr/0009-citation-policy.md), que pasa de
+   declarado a **medido**). Reproduce la `D_k` de Lim et al. a 3e-7 relativo con
+   cota **derivada** (`p_dc²/(η k + 2 p_dc) ≤ p_dc/2`) y sin necesitar la
+   anchura de puerta que ese paper nunca declara, porque se cancela. Dos
+   umbrales derivados: los modelos de tiempo muerto se separan un 5 % en
+   `R·τ = 0.3554` (11.8 Mcps a 30 ns) y los dos de afterpulsing en
+   `p_ap = sqrt(1/21)`, con `WARNING` y las dos cifras dentro. El paralizable
+   **no se invierte** (16.3 y 59.4 Mcps dan la misma lectura de 10 Mcps), así
+   que `incident_count_rate_cps` existe solo para el otro. Y una afirmación
+   publicada que **sí** reproduce: la §4.2 de Ntanos sobre no saturar por tiempo
+   muerto es correcta con dos órdenes de magnitud de margen (500 kcps contra un
+   techo de 33.3 Mcps, 1.5 % de pérdida). Las dos leyes de tiempo muerto y la
+   fracción de puertas vivas `1/(1 + b·p)` están verificadas V1 contra Monte
+   Carlo del proceso del que se derivan
 7. `channel/link_budget.py` — **ensambla** los anteriores en pérdida total y ruido total
 
 ### 2.3 `qkd/` — de canal a clave

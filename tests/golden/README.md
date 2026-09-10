@@ -243,10 +243,43 @@ be opened, written down so nobody has to rediscover it.
   and that is the convention QuOSS uses, spelled out in the parameter's name.
 - **Typical SPAD detector parameters.** No free authoritative table was located.
   What is used instead are values that *are* published and verified: Ntanos et
-  al. 2021 §4.1 (SNSPD: η 85 %, 300 cps, 50 ps jitter, 30 ns dead time) and Lim
-  et al. 2014 §Evaluation (InGaAs: η 10 %, p_dc 6e-7, p_ap 4e-2). Closing this
-  properly means reading the Excelitas and ID Quantique datasheets, which are
-  public, and transcribing them with their revision.
+  al. 2021 §4.1 (SNSPD: η 85 %, 300 cps, 50 ps jitter, 30 ns dead time, and "no
+  after-pulsing effect") and Lim et al. 2014 §Evaluation (InGaAs: η 10 %,
+  p_dc 6e-7, p_ap 4e-2). Closing this properly means reading the Excelitas and
+  ID Quantique datasheets, which are public, and transcribing them with their
+  revision.
+
+  **Now measured, which is what makes the gap actionable.** These are not
+  "typical values with a spread", they are **two instruments** 10 dB apart in
+  efficiency and infinitely apart in afterpulsing, and the difference decides a
+  design conclusion rather than a digit: narrowing the detection gate from 1 ns
+  to 100 ps removes **10 dB** of noise with the nanowire and **0.22 dB** with
+  the InGaAs diode, because afterpulses scale with the click rate and not with
+  the gate. So `channel/background.py`'s "narrow the gate" is conditional, and
+  the condition is which detector is in the receiver
+  (`tests/channel/test_detector.py::TestGatingCannotTouchAfterpulsing`).
+
+  **A sub-gap of units, inside it.** The two sources publish the dark count in
+  different conventions — a rate (300 cps) and a probability per gate (6e-7) —
+  and **Lim et al. state no gate width anywhere in the paper**, so the
+  conversion cannot be done from their numbers. Read at Ntanos et al.'s 1 ns
+  gate their value implies 600 cps, twice the nanowire; at 10 ns, 60 cps, half
+  of it. And Ntanos et al.'s two detectors at 300 cps in their own 1 ns gate
+  give **exactly** the 6e-7 per gate that Lim et al. publish per detector: a
+  coincidence, asserted as one, so that nobody reads it as two independent
+  sources agreeing.
+- **Whether an afterpulse can itself afterpulse, and whether the dead time
+  extends.** Two *model* gaps rather than value gaps, and neither source states
+  either. Both are priced and both are derived thresholds rather than chosen
+  ones: the one-afterpulse-per-click form of Lim et al. and the cascading
+  geometric sum differ by `1/(1 - p_ap²)`, which is 0.16 % at the published
+  4e-2 and 5 % at `p_ap = sqrt(1/21) = 0.2182`; the paralysable and
+  non-paralysable dead-time laws differ by 5 % at `R·τ = 0.3554` (11.8 Mcps at
+  30 ns) and their ceilings are `1/τ` = 33.3 Mcps and `1/(e·τ)` = 12.3 Mcps.
+  The second has a consequence beyond accuracy: the paralysable law is **not
+  invertible** past its maximum — 16.3 and 59.4 Mcps both report 10 Mcps — so
+  `incident_count_rate_cps` exists for the non-paralysable model only, and the
+  ambiguity is a missing function instead of a silent choice.
 - **Bufton wind coefficients disagree between sources.** ITU-R P.1621-2 Eq. (5)
   gives `v_rms = sqrt(v_g² + 33.11·v_g + 360.31)`; the form usually attributed to
   A&P uses 30.69 and 348.91. Both yield ≈21 m/s but from a different `v_g`
@@ -273,6 +306,25 @@ be opened, written down so nobody has to rediscover it.
   QuOSS uses the energy-conserving form;
   `tests/channel/test_beam.py::TestPublishedGainProduct` asserts both the
   identity and the factor of 8, so neither reading can be adopted by accident.
+
+  **And one of its claims that does reproduce**, recorded because this list is
+  otherwise a list of the ones that do not: its §4.2 argues that link
+  attenuation keeps its detectors out of dead-time saturation. With its own
+  100 MHz, 30 ns, µ = 0.5 and best-case 20 dB loss, 500 kcps enter a detector
+  whose ceiling is 33.3 Mcps, for a loss of 1.5 % — true with two orders of
+  magnitude of margin
+  (`tests/channel/test_detector.py::TestAgainstNtanosEtAl::test_their_dead_time_claim_reproduces`).
+- **Three published expressions that are first-order truncations of the same
+  rule**, and the rule that replaces them: **means add, and the exponential
+  happens once, at the end**. Lim et al.'s `D_k = 1 - (1 - 2 p_dc) exp(-η k)`
+  (the two-detector dark-count union to first order), Lim et al.'s
+  `R_k = D_k (1 + p_ap)` (a probability multiplied by a count factor), and
+  Ntanos et al.'s `Y_0 = P_dc + P_noise` (a union computed as a sum). All three
+  are excellent at their own operating points — 7e-12, 0.16 % and 1.2e-6
+  respectively — and all three return something above 1 inside this project's
+  daylight sweeps: 1.93, 1.006 and 3.42. `TestTheThreeLinearisations` asserts
+  each departure, and `TestScalingLaws` asserts that the module's own form
+  saturates at exactly 1 instead.
 - **No V3 oracle for the beam geometry.** `channel/beam.py` is closed against
   V2 (Ntanos et al. Eqs. (3)-(6), ITU-R P.1622 Eqs. (11a)/(11b)) and V1
   invariants only. A frozen table from an independent FSO link-budget tool would
