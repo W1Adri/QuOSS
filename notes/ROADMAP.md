@@ -237,7 +237,35 @@ de rellenados → [ADR 0009](../docs/adr/0009-citation-policy.md).
    sistema de referencia, y eso sale en `warnings[]` con la medida de lo que
    cuesta. Sin boresight (hueco 3 del ADR 0009) y sin correlación temporal (eso
    es `system/correlated_fading.py`)
-5. `channel/background.py` — radiancia de cielo, fondo solar/lunar, gating temporal
+5. ✅ `channel/background.py` — radiancia de cielo, fondo solar/lunar y gating
+   temporal. **Las dos ecuaciones publicadas son la misma ecuación** —la Ec. (1)
+   de P.1621-2 y la Ec. (19) de Ntanos et al.— y discrepan en las **unidades**
+   del campo de visión bajo el mismo nombre: pasar el ángulo a la forma que
+   quiere estereorradianes son **41.05 dB**, y leerlo como semiángulo en vez de
+   ángulo completo son **6.02 dB**. La convención va en el nombre del argumento.
+   **La trampa que da forma al módulo:** su Ec. (20) llama «probability» a
+   `t_gate × cps`, que es el **número esperado** de cuentas; con la luz solar
+   brillante que la propia UIT tabula a 850 nm, su receptor y su puerta de 1 ns,
+   esa «probabilidad» vale **3.42** (y 1.09 con su telescopio de 1.3 m). Se
+   devuelve `1 - exp(-µ)`, con aviso por encima de 0.1 cuentas por puerta —
+   umbral **derivado**: es donde la lectura lineal sobreestima un 5 %. El
+   **gating temporal** es el único parámetro libre del presupuesto de ruido, y se
+   cuantifica lo que la fuente solo nombra: el fondo escala lineal con la puerta
+   y la señal como `erf(T/2√2σ)`, así que pasar de 1 ns a 100 ps con el jitter de
+   50 ps declarado cuesta **0.08 dB de señal y quita 10 dB de fondo**, y el
+   óptimo de `S/√B` está en **2.80σ** (5.36 dB mejor que 1 ns, y ancho: 0.55 dB
+   entre 1.5σ y 5σ). **Cuatro huecos nuevos declarados y medidos**, todos en el
+   [ADR 0009](../docs/adr/0009-citation-policy.md): la Tabla 1 promete radiancia
+   **de la Tierra** en su título y no la trae, así que no hay fondo de subida; las
+   dos fuentes discrepan **un factor diez** de noche (1.24x de ruido total a
+   0.75 m, **2.83x** a 2.3 m contra 300 cps de cuentas oscuras); su «10 kcps con
+   luna llena» **no es reproducible** sin elegir telescopio (8.1 / 24.4 /
+   76.4 kcps); y la radiancia tabulada es **cenital**, sin dependencia angular
+   publicada (4.66 dB a 20° si siguiera a la masa de aire — no se aplica, y hay
+   un test que aserta que ninguna firma acepta una elevación). El hueco 4 pasa de
+   declarado a **medido**: interpolar a 785 nm da 0.48 dB de diferencia entre
+   reglas y **16-27 % de error** en un leave-one-out sobre la propia tabla, así
+   que se interpola registrando un `DEGRADED`, nunca en silencio
 6. `channel/detector.py` — eficiencia, dark counts, dead time, afterpulsing
 7. `channel/link_budget.py` — **ensambla** los anteriores en pérdida total y ruido total
 

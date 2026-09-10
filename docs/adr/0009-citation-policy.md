@@ -97,7 +97,7 @@ Todas comprobadas abriendo el documento y extrayendo el texto.
 | Viento de Bufton; HV 5/7; malla de integración | **ITU-R P.1621-2** (07/2015) | (5), (6), (7) |
 | Parámetro de Fried en camino inclinado | ITU-R P.1621-2 | (8a), (8b) |
 | Ángulo isoplanático; constante de tiempo τ₀ | ITU-R P.1621-2 | (14a), (19)–(21) |
-| Radiancia de cielo (tabla) y potencia de fondo | ITU-R P.1621-2 §4, Tabla 1 | (1) |
+| Radiancia de cielo (tabla) y potencia de fondo | ITU-R P.1621-2 **§3.1**, Tabla 1 y Fig. 3 | (1) |
 | Varianza de log-irradiancia; asimetría uplink/downlink | **ITU-R P.1622** (04/2003) | (4a)–(4c), (5) |
 | Promediado de apertura | ITU-R P.1622 | (6), (7), (8) |
 | Beam wander | ITU-R P.1622 | (11a), (11b) |
@@ -124,6 +124,20 @@ Esta lista es la parte que hace que la de arriba signifique algo.
 4. **Radiancia de cielo a 785 y 810 nm.** ITU-R P.1621-2 tabula 530, 850, 965,
    1060 y 1500 nm. Interpolar entre ellos y presentarlo como valor publicado
    sería inventar un V2.
+
+   **Medido al implementar `channel/background.py` (2026-09-10), que es lo que
+   convierte el hueco en una cifra:** dos reglas de interpolación defendibles
+   (ley de potencias en log-log, y lineal en λ) difieren **0.48 dB a 785 nm**, y
+   la precisión real es **peor que esa diferencia** — quitar un punto interior de
+   la tabla y predecirlo desde sus dos vecinos falla entre **16 % y 27 %** con la
+   regla en uso (2 % a 32 % con la lineal), porque la banda de vapor de agua de
+   940 nm cae dentro de la rejilla y la columna de sol normal **no es monótona**
+   ahí (25.12 a 965 nm y 25.32 a 1060 nm). Y la tabla **no tiene ningún punto
+   interior entre 530 y 850 nm**, así que el error *en* 785 nm no se puede medir
+   con ella, solo acotar por analogía. En el código son dos funciones:
+   `tabulated_sky_radiance_w_m2_um_sr` rechaza todo lo que no esté en la rejilla
+   e `interpolated_sky_radiance_w_m2_um_sr` interpola registrando un `DEGRADED`
+   que lleva dentro el valor de la otra regla.
 5. **Valores típicos de detector SPAD.** No se localizó fuente libre y
    autoritativa con una tabla. Se usan los valores **publicados y verificados**
    de Ntanos et al. 2021 §4.1 (SNSPD: η 85 %, 300 cps, jitter 50 ps, tiempo
@@ -135,6 +149,43 @@ Esta lista es la parte que hace que la de arriba signifique algo.
    `v_g` distinto (2.3 frente a 2.8 m/s). **Se elige la de ITU** porque es la que
    se puede abrir, y la otra queda escrita aquí para que la discrepancia no se
    redescubra desde cero.
+7. **Radiancia de la Tierra: la Tabla 1 la promete en su título y no la trae.**
+   El título es «Radiance, H (W/m²/µm/sr), of the sky **and Earth** for several
+   frequencies» y la tabla imprime solo las tres columnas de cielo — aunque la
+   §3.1 sí dice que «spacecraft pointed at the Earth will also encounter noise
+   from sunlight reflected from the Earth's surface». Consecuencia: **no hay
+   fondo de subida** en `channel/background.py`, porque no hay radiancia
+   publicada para una Tierra iluminada en ninguna de las dos fuentes (Ntanos et
+   al. consideran solo bajada).
+8. **Las dos fuentes discrepan por un factor diez en la radiancia nocturna.**
+   ITU-R P.1621-2 §3.1 da «(1-2)·10⁻⁶ W/m²/µm/sr for most frequencies of
+   interest»; Ntanos et al. §4.2.2 dan 1.5e-5 a 1550 nm para noche clara sin
+   luna. Mismo tratamiento que el hueco 6: las dos se exponen como constantes con
+   su fuente, **ninguna es un defecto**, y la discrepancia **se mide** — contra
+   las 300 cps de cuentas oscuras del mismo paper son 1.24x de ruido total con un
+   telescopio de 0.75 m y **2.83x** con uno de 2.3 m, así que resolverla solo
+   hace falta para el telescopio grande, que es justo el de su mejor presupuesto.
+9. **Ningún modelo de la dependencia angular de la radiancia.** La Tabla 1 es
+   radiancia **cenital** (lo dice su Fig. 3) y ninguna fuente publica dependencia
+   con elevación, azimut o ángulo solar; Ntanos et al. mantienen `H` constante a
+   lo largo de un pase entero y lo dicen. Tamaño de lo ignorado: a 20° de
+   elevación el camino de dispersión son 2.92 masas de aire, **4.66 dB** si la
+   radiancia siguiera a la masa de aire. No se aplica ese escalado, y un test de
+   `background.py` aserta *por ausencia* que ninguna función del módulo acepta
+   una elevación.
+10. **Fase lunar.** El único asidero publicado es un intervalo (1.5e-5 sin luna a
+    1.5e-3 con luna llena a 1550 nm, un factor 100), y es lo que se expone. Un
+    modelo de irradiancia lunar (ROLO o equivalente) no se localizó libre y
+    verificado.
+11. **Convención del campo de visión.** Las dos fuentes dan el FOV del receptor
+    **en unidades distintas bajo el mismo nombre** —ángulo en la Ec. (1) de la
+    UIT, estereorradianes en la Ec. (19) de Ntanos— y ninguna dice si el ángulo
+    es completo o semiángulo. La aritmética de la UIT lo resuelve (`π θ²/4` es el
+    ángulo sólido de pequeño ángulo de un cono de semiángulo `θ/2`, luego su
+    `θ_r` es el ángulo completo) y esa es la convención que usa QuOSS, con el
+    nombre del argumento diciéndolo. Las dos lecturas equivocadas están medidas:
+    **6.02 dB** leerlo como semiángulo, **41.05 dB** pasar el ángulo a la fórmula
+    que quiere estereorradianes.
 
 ### El caveat de Ntanos et al. 2021, que es la fuente V2 de punta a punta
 
@@ -148,6 +199,21 @@ numeradas, resultado publicado— y por eso hay que escribir lo que no cuadra:
   intensidades 4:1:16 que declara; lo consistente es 2/21.
 - Lo que **sí** se reprodujo son los ratios entre estaciones: publicado
   1 : 0.28 : 0.084, medido 1 : 0.29 : 0.10.
+- Su Ec. (5) **tal como está impresa** (`(8/w_0)²` donde la identidad exige
+  `8/w_0²`) es 8 veces mayor, **9.03 dB optimista**, y con sus propios parámetros
+  devuelve una transmitancia de 1.36. Encontrado al implementar
+  `channel/beam.py`.
+- Su Ec. (20) llama «probability» a `t_gate × cps`, que es el **número esperado**
+  de cuentas y no una probabilidad: con la luz solar brillante que la propia UIT
+  tabula a 850 nm, su receptor y su puerta de 1 ns, esa «probabilidad» vale
+  **3.42** (y 1.09 con su telescopio intermedio). QuOSS devuelve `1 - exp(-µ)` y
+  avisa por encima de 0.1 cuentas por puerta, umbral **derivado**: es donde la
+  lectura lineal sobreestima un 5 %.
+- Su afirmación de que «even in the case of full moon, the background radiance
+  corresponds to 10 kcps in the photon counter at most» **no es reproducible**
+  desde su propia Ec. (19) sin elegir cuál de sus tres telescopios: da 8.1 kcps a
+  0.75 m, 24.4 a 1.3 m y **76.4 a 2.3 m**. Con la cadena de pérdidas que la
+  misma sección declara, el de 2.3 m baja a 17.7 kcps, todavía 1.8x por encima.
 
 Consecuencia para los tests: se aserta la **forma** de la curva y los **ratios**,
 no la cifra absoluta, y el test dice por qué. Un V2 cuyo valor absoluto no cierra

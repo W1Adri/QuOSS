@@ -187,6 +187,60 @@ be opened, written down so nobody has to rediscover it.
 - **Sky radiance at 785 nm and 810 nm.** ITU-R P.1621-2 Table 1 tabulates 530,
   850, 965, 1060 and 1500 nm. Interpolating between them and presenting the
   result as a published value would be inventing a V2.
+
+  **Now measured, which is what makes the gap actionable**
+  (`tests/channel/test_background.py::TestTheInterpolationGap`): the two
+  defensible rules — a power law in log-log, and linear in λ — differ by
+  **0.48 dB at 785 nm**, and the real accuracy is *worse than that spread*.
+  Leave-one-out on the table's own interior points misses by **16 % to 27 %**
+  with the rule in use (2 % to 32 % with the linear one), because the 940 nm
+  water-vapour band falls inside the grid and the normal-sunshine column is not
+  even monotone across it (25.12 at 965 nm, 25.32 at 1060 nm). The table has **no
+  interior point between 530 and 850 nm**, so the error *at* 785 nm cannot be
+  measured with it at all, only bounded by analogy — and the test says so rather
+  than quoting the smaller number. `channel/background.py` therefore splits the
+  two: `tabulated_sky_radiance_w_m2_um_sr` refuses anything off the grid, and
+  `interpolated_sky_radiance_w_m2_um_sr` records a `DEGRADED` carrying the other
+  rule's answer.
+- **Earth radiance: Table 1 promises it in its title and prints none.** The title
+  reads "Radiance, H (W/m²/µm/sr), of the sky **and Earth** for several
+  frequencies" and only the three sky columns are there, though §3.1 does note
+  that "spacecraft pointed at the Earth will also encounter noise from sunlight
+  reflected from the Earth's surface". So there is **no uplink background** in
+  `channel/background.py`: neither source publishes a radiance for a sunlit
+  Earth, and Ntanos et al. model the downlink only.
+- **The two sources disagree by a factor of ten about the night sky.** ITU-R
+  P.1621-2 §3.1 gives "(1-2)·10⁻⁶ W/m²/µm/sr for most frequencies of interest";
+  Ntanos et al. §4.2.2 give 1.5e-5 at 1550 nm for a moonless clear night. Same
+  treatment as the Bufton coefficients — both exposed as named constants, neither
+  a default — plus a measurement of what the conflict costs: against the 300 cps
+  dark-count rate of the same paper's detectors, 1.24× in total noise on a 0.75 m
+  telescope and **2.83×** on a 2.3 m one. It needs resolving only for the large
+  telescope, which is the one that carries their best budget.
+- **Ntanos et al.'s "10 kcps at most" under a full moon is not reproducible.**
+  Their own equation (19) with their own parameters gives 8.1 kcps at 0.75 m,
+  24.4 kcps at 1.3 m and **76.4 kcps at 2.3 m**, and the sentence does not say
+  which telescope; "at most" argues for the largest, which misses by 7.6×.
+  Applying the loss chain the same section declares (3 dB filter insertion,
+  2.65 dB receiver, 85 % efficiency) brings the 2.3 m station to 17.7 kcps, still
+  1.8× above. Asserted as three candidate answers in `TestTheFullMoonClaim`
+  rather than reproduced.
+- **No published angular dependence of the sky radiance.** Table 1 is *zenith*
+  radiance (its Figure 3 says so), and neither source gives an elevation, azimuth
+  or sun-angle dependence — Ntanos et al. hold `H` constant across a whole pass
+  and say so. The size of what that ignores: at 20° elevation the scattering path
+  is 2.92 air masses, i.e. **4.66 dB** if the radiance simply followed the air
+  mass. That scaling is *not* applied, and `TestModuleSurface` asserts the
+  absence — no function in the module accepts an elevation — because a plausible
+  air-mass correction would look exactly like physics.
+- **The field-of-view convention is ambiguous in both sources**, in two
+  independent ways, and both are priced: they give the FOV **in different units
+  under the same name** (an angle in ITU-R equation (1), steradians in Ntanos et
+  al. equation (19)), which is **41.05 dB** if the angle is handed to the
+  steradian form; and neither says whether the angle is full or half, which is
+  **6.02 dB**. ITU-R's own arithmetic settles it — `π θ²/4` is the small-angle
+  solid angle of a cone of half-angle `θ/2`, so their `θ_r` is the full angle —
+  and that is the convention QuOSS uses, spelled out in the parameter's name.
 - **Typical SPAD detector parameters.** No free authoritative table was located.
   What is used instead are values that *are* published and verified: Ntanos et
   al. 2021 §4.1 (SNSPD: η 85 %, 300 cps, 50 ps jitter, 30 ns dead time) and Lim

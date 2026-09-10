@@ -2492,3 +2492,320 @@ error decrece monótonamente al crecer `W/a`, del 46 % en `W/a = 2` al 0.2 % en
   milisegundos, que es lo que decide cómo lo ve un bloque de post-proceso QKD.
   Eso es `system/correlated_fading.py`, el AR(1), y es el punto de novedad del
   roadmap — no un olvido de aquí.
+
+---
+
+## 20. `channel/background.py` — la luz que llega cuando no se envió nada
+
+### Qué hace este módulo, para quien llegue nuevo
+
+Un detector de fotón único no distingue un fotón de señal de un fotón de luz
+solar dispersada, ni ninguno de los dos de un clic térmico suyo. Todo lo que
+entrega son **cuentas**. El resto de `channel/` responde a «qué fracción de los
+fotones transmitidos llega»; este módulo responde a la otra mitad —**cuántas
+cuentas llegan que no son señal**— para la parte de ese ruido que viene del
+cielo y no del detector (el detector es `detector.py`).
+
+El cielo no es un término pequeño, y conviene ver la escala antes de nada. Un
+telescopio apuntado a un satélite está también apuntado a unos cuantos cientos
+de kilómetros cúbicos de aire iluminado, y ese aire dispersa luz solar hacia la
+apertura a lo largo de toda la línea de visión. Medido con el receptor que
+declara Ntanos et al. §4.1 (campo de visión 100 µrad, filtro de 0.2 nm,
+telescopio de 2.3 m): **7.6e3 cuentas por segundo** en una noche clara sin luna
+y **3.4e9 cuentas por segundo** con la luz solar brillante que tabula la
+UIT-R a 850 nm. Seis órdenes de magnitud, el mismo telescopio, la misma señal.
+Por eso los presupuestos QKD publicados de esta literatura son presupuestos
+**nocturnos**, y decirlo es parte del modelo y no una nota al pie.
+
+El módulo tiene tres cantidades en cadena: **radiancia** (lo brillante que está
+el cielo, que sale de una tabla y no de una fórmula), **potencia de fondo** (lo
+que el receptor recoge, que es la radiancia por las tres cosas que el receptor
+elige: ángulo sólido, área y ancho de filtro) y **cuentas por puerta** (la
+potencia dividida por la energía de un fotón, por el tiempo que el detector
+escucha).
+
+### 20.1 Las dos ecuaciones publicadas son la misma, y no dicen lo mismo
+
+**Qué es.** La Ec. (1) de la Rec. UIT-R P.1621-2 escribe
+
+```
+P_back = π θ_r² A_r Δλ H / 4        (θ_r en rad)
+```
+
+y la Ec. (19) de Ntanos et al. 2021 escribe
+
+```
+P_back = H_rad · Ω_FOV · A_r · Δλ   (Ω_FOV en sr)
+```
+
+Son **una sola ecuación**, porque `π θ²/4` *es* el ángulo sólido de un cono de
+ángulo completo `θ`. Los tests las transcriben por separado, desde los dos
+documentos, y comprueban que coinciden.
+
+**Por qué importa, y aquí está el hallazgo.** Las dos fuentes dan el campo de
+visión del receptor **en unidades distintas bajo el mismo nombre**, y Ntanos et
+al. declaran su valor como «a narrow FOV of 100 µrad» — un ángulo. Meter
+100 µrad en la fórmula que quiere estereorradianes multiplica el fondo por
+**1.27e4, que son 41.05 dB**, y produce un número que sigue teniendo pinta de
+tasa de cuentas. Y hay una segunda bifurcación más silenciosa: ninguna de las
+dos fuentes dice si el FOV es ángulo **completo** o **semiángulo**. Leerlo del
+otro modo es un factor cuatro exacto, **6.02 dB** de fondo.
+
+**Cómo se cierra.** El argumento se llama `field_of_view_full_angle_rad`, con la
+convención en el nombre y no en un comentario, y la convención se elige con la
+aritmética de la propia UIT: `π θ²/4` es el ángulo sólido de pequeño ángulo de
+un cono de **semiángulo** `θ/2`, luego su `θ_r` es el ángulo completo. Los dos
+errores están medidos en
+`tests/channel/test_background.py::TestTheTwoPublishedEquationsAreOne`, y el
+guarda de `2π` es lo que atrapa el caso grosero de pasar estereorradianes.
+
+### 20.2 La trampa que da forma al módulo — una media no es una probabilidad
+
+**Qué es.** La Ec. (20) de Ntanos et al. dice
+
+```
+P_noise = t_gate × cps_background
+```
+
+y llama al resultado «the probability of the detector firing due to a background
+noise photon». No es una probabilidad: es el **número esperado** de cuentas de
+fondo en la puerta, que solo es una probabilidad mientras sea mucho menor que
+uno. Las llegadas de fondo son Poisson, así que la probabilidad de que caiga al
+menos una es `1 - exp(-µ)`.
+
+**Por qué importa.** No es una esquina exótica. Con la radiancia de luz solar
+brillante que **la propia UIT-R tabula a 850 nm** (122.3 W/m²/µm/sr, la
+tabulada más cercana a la banda de 780-810 nm que le interesa a este proyecto),
+el receptor de Ntanos et al. y su puerta de 1 ns, la Ec. (20) devuelve una
+«probabilidad» de **3.42**. La respuesta correcta es 0.967. Su telescopio
+intermedio, el de 1.3 m, devuelve **1.09** — por encima de la unidad, con
+parámetros publicados, y sin que ningún paso intermedio parezca raro.
+
+**Cómo se cierra.** Dos funciones con dos nombres:
+`background_counts_per_gate` devuelve `µ` y está documentada como una media (es
+la cantidad correcta: es el parámetro de Poisson, y es lo que suma linealmente
+entre fuentes de ruido independientes antes de que ninguna sea una
+probabilidad); `background_click_probability` devuelve `1 - exp(-µ)`.
+
+Y el umbral del aviso **está derivado, no elegido**: leer la media como
+probabilidad sobreestima en un factor `µ/(1-exp(-µ))`, que llega al 5 % en
+`µ = 0.0984`; la constante `LINEAR_CLICK_PROBABILITY_LIMIT = 0.1` es esa raíz
+redondeada a un dígito (donde el exceso es 5.08 %). El test la vuelve a
+despejar con `brentq` en vez de creerse la constante.
+
+El aviso es **WARNING y no DEGRADED**, a propósito: no se ha sustituido ningún
+modelo, el número devuelto es el exacto. Lo que dice el aviso es el **punto de
+operación** — 0.1 cuentas de fondo por puerta es un fotón de ruido cada diez
+puertas, y de ahí no sale clave — así que un resultado con ese código en
+`warnings[]` describe un enlace que no funciona, no una fórmula que se ha
+quedado corta.
+
+### 20.3 El ángulo sólido exacto en vez de la forma publicada
+
+**Qué es.** `receiver_solid_angle_sr` devuelve `2π(1 - cos(θ/2))`, el ángulo
+sólido exacto de un cono, del que la forma de la UIT es el límite de ángulo
+pequeño.
+
+**Por qué, si la diferencia es invisible.** Porque lo es: a 100 µrad las dos
+coinciden a **6.1e-9 relativo**, doce dígitos más allá de lo medible. La razón
+de elegir la exacta es la misma que en `beam.py` con la integral de truncación
+frente al producto de ganancias: **la aproximación no tiene techo**. Es 1 % alta
+a 39.6° de ángulo completo, 5.3 % a 90°, y a 360° devuelve **31.0 sr para una
+esfera entera que tiene 4π = 12.6**. Una fórmula que puede informar de dos
+esferas y media de cielo no es una que se deje en el camino de un barrido de
+parámetros.
+
+### 20.4 El gating temporal — el único parámetro libre del presupuesto de ruido
+
+**Qué es.** Todo lo demás de un presupuesto de enlace lo fija el hardware. El
+ancho de la puerta de detección no, y son los decibelios más baratos del canal,
+porque los dos términos escalan distinto:
+
+- El **fondo escala linealmente** con la puerta. Mitad de puerta, mitad de
+  ruido. Y las cuentas oscuras del detector también, así que estrechar la puerta
+  no lo roba ninguna de las dos.
+- La **señal no**. Los fotones de señal llegan todos casi al mismo instante
+  —dispersados solo por el jitter temporal del detector y el sincronismo— así
+  que una puerta de varios jitters de ancho los conserva todos. Solo cuando la
+  puerta se acerca al jitter empieza a costar señal, y entonces cuesta como una
+  `erf`: `fracción = erf(T/(2√2 σ))`, con `σ = FWHM/2.3548`.
+
+**El ejemplo con números.** Con el jitter de 50 ps que declara Ntanos et al.,
+pasar de su puerta de 1 ns a 100 ps recorta el fondo **10.0 dB** y la señal
+**0.08 dB**. Si la figura de mérito es la relación limitada por ruido de
+disparo `S/√B`, el óptimo es una puerta de **2.80 desviaciones típicas de
+jitter** (1.19 FWHM, aquí 59.5 ps), que le gana 5.36 dB a la puerta de 1 ns:
+12.26 dB de fondo eliminado por 0.77 dB de señal. El propio paper nombra el
+remedio —«short detector gate time opening at Bob station»— sin cuantificarlo;
+esto es la cuantificación, y es una derivación V1 del modelo gaussiano de
+jitter, no algo publicado.
+
+**Lo que la constante no es.** El óptimo sale de la condición de
+estacionariedad `(4/√π) x e^{-x²} = erf(x)`, cuya raíz da
+`2√2 x* = 2.799970553756`. **No es 2.8**: difiere en la quinta decimal, el
+parecido es una casualidad de la notación decimal y no hay ninguna identidad
+detrás. Está escrito con todos los dígitos y hay un test que lo dice, porque un
+número casi redondo sin vigilancia se convierte en «el óptimo es exactamente
+2.8σ» en un docstring posterior, y en una derivación que nadie puede reproducir.
+
+**Y lo que la figura de mérito no dice.** `S/√B` es la figura de mérito de una
+medida limitada por su propio ruido de disparo, no de un protocolo QKD, cuyo
+objetivo es una tasa de clave secreta y vive en `qkd/`. Las dos afirmaciones que
+sobreviven al cambio de objetivo están asertadas: la **razón** fondo/señal
+`x/erf(x)` es monótona creciente (así que estrechar siempre mejora el QBER, y no
+hay óptimo interior para ese objetivo), y el óptimo de `S/√B` es **ancho** —
+cualquier puerta entre 1.5σ y 5σ está a 0.55 dB del mejor, medido.
+
+También está medida la trampa de unidades del jitter: leer los 50 ps de FWHM
+como si fueran `σ` da 0.4478 en vez de 0.8385 en la puerta óptima, **2.72 dB**
+de error en dirección **pesimista** — que es justo por lo que sobreviviría a una
+revisión, porque un presupuesto demasiado conservador parece cuidadoso.
+
+### 20.5 Las fuentes discrepan de noche por un factor diez, y se mide qué cuesta
+
+**Qué es.** La P.1621-2 §3.1 dice que «a reasonable value of H during
+night-time operations is (1-2)·10⁻⁶ W/m²/µm/sr for most frequencies of
+interest». Ntanos et al. ponen la noche clara sin luna en **1.5e-5** a 1550 nm.
+Misma cantidad, dos fuentes abiertas, un **factor diez**.
+
+**Cómo se cierra.** Igual que la discrepancia de los coeficientes de Bufton en
+`atmosphere.py`: las dos se exponen como constantes con nombre y con su fuente
+(`ITU_NIGHT_SKY_RADIANCE_RANGE_W_M2_UM_SR`,
+`NTANOS_MOONLESS_NIGHT_RADIANCE_W_M2_UM_SR`), **ninguna es un defecto**, y la
+discrepancia se mide en vez de promediarse.
+
+**Y lo que cuesta depende del telescopio**, que es la parte que sirve para
+decidir. Contra las 300 cps de cuentas oscuras que declara el mismo paper para
+sus detectores, las dos radiancias candidatas dan **1.24x** de ruido total a
+0.75 m —el cielo está por debajo del propio detector en los dos casos— y
+**2.83x** a 2.3 m, donde el cielo ya manda. Así que la discrepancia no hace
+falta resolverla para diseñar una estación de 0.75 m, y sí hace falta para
+fiarse de una de 2.3 m — que es exactamente la estación de la que ese paper
+reporta su mejor presupuesto.
+
+De día, en cambio, **las dos fuentes concuerdan**, y eso también se aserta: la
+columna de 1500 nm de la Tabla 1 da 6.00 (sol normal) y 4.44 (cubierto), y el
+rango de día despejado de Ntanos et al. a 1550 nm es 0.1 a 6.
+
+### 20.6 El hueco 4 del ADR 0009, ahora con la medida al lado
+
+**Qué era.** «Radiancia de cielo a 785 y 810 nm»: la Tabla 1 tabula 530, 850,
+965, 1060 y 1500 nm, e interpolar entre ellos y presentarlo como valor publicado
+sería inventar un V2.
+
+**Qué se ha hecho.** Dos funciones, no una:
+`tabulated_sky_radiance_w_m2_um_sr` **rechaza** cualquier longitud de onda que no
+esté en la rejilla (con un `DomainError` que nombra las cinco y la alternativa),
+y `interpolated_sky_radiance_w_m2_um_sr` interpola y **registra un DEGRADED**
+cuando lo hace, con el valor de la regla alternativa dentro del propio registro.
+Nada se registra si la longitud de onda sí está tabulada, porque entonces el
+valor **es** publicado y diluir la bandera la haría inútil.
+
+**Y el tamaño del hueco está medido, que es lo nuevo.** Dos reglas defendibles
+—ley de potencias en log-log y lineal en λ— difieren **0.48 dB a 785 nm** y
+0.33 dB a 810 nm. Pero lo que importa es que **la precisión medida es peor que
+esa diferencia**: quitar uno de los puntos interiores de la tabla y predecirlo
+desde sus dos vecinos falla entre **16 % y 27 %** con la regla que usa el módulo
+(y entre 2 % y 32 % con la lineal), porque dentro de la rejilla está la banda de
+vapor de agua de 940 nm y la columna de sol normal **ni siquiera es monótona**
+ahí (25.12 a 965 nm y 25.32 a 1060 nm; hay un test que lo aserta como control
+negativo de la transcripción). Así que una radiancia interpolada es un número
+con del orden de un decibelio de error no cuantificado: se puede usar, y no se
+puede llamar publicada.
+
+Con dos cautelas escritas en el propio test, porque callarlas sería la versión
+de segundo orden del mismo error: los tramos medidos son **más anchos** que el
+que contiene a 785 nm, y todos contienen la banda de 940 nm, que es el peor caso
+de la rejilla. La tabla **no tiene ningún punto interior entre 530 y 850 nm**,
+así que el error de interpolación *ahí* no se puede medir con la tabla — solo
+acotar por analogía.
+
+La extrapolación se **rechaza** en vez de saturarse, y ese guarda tiene un
+motivo concreto: `numpy.interp` devuelve el valor del extremo fuera de la
+rejilla **sin queja**, así que pedir 400 nm —donde el cielo es más brillante que
+en cualquier punto tabulado, porque el espectro solar tiene su máximo cerca de
+500 nm— devolvería el valor de 530 nm, en la dirección insegura y con pinta de
+consulta a tabla.
+
+### 20.7 Lo que la Tabla 1 promete y no trae: la radiancia de la Tierra
+
+**Qué es.** El título de la Tabla 1 es «Radiance, H (W/m²/µm/sr), of the sky
+**and Earth** for several frequencies», y la tabla imprime **solo** las tres
+columnas de cielo. Las columnas de Tierra que anuncia el título no están en la
+recomendación, aunque su §3.1 sí dice explícitamente que «spacecraft pointed at
+the Earth will also encounter noise from sunlight reflected from the Earth's
+surface».
+
+**Consecuencia, declarada y no rellenada.** Un receptor en el satélite mirando
+una Tierra iluminada **no tiene radiancia publicada** en ninguna de las dos
+fuentes, así que aquí no hay fondo de subida. Ntanos et al. consideran solo
+bajada. Es un hueco nuevo del ADR 0009, y es de la misma familia que la Ec. (3)
+de la misma recomendación que no vale 1 en sus propias condiciones de
+referencia: inconsistencias internas de una fuente que se ha abierto, que es lo
+que se encuentra cuando se abre.
+
+### 20.8 La afirmación de los 10 kcps, no reproducible
+
+**Qué es.** Ntanos et al. §4.2.2 añaden una consecuencia comprobable de su
+propia Ec. (19): «even in the case of full moon, the background radiance
+corresponds to 10 kcps in the photon counter at most».
+
+**Qué da la ecuación con sus propios parámetros.** 8.1 kcps con el telescopio de
+0.75 m, 24.4 kcps con el de 1.3 m y **76.4 kcps** con el de 2.3 m. La frase no
+dice cuál de sus tres telescopios, y «at most» apunta al grande, que es el que
+falla por **7.6x**. El rescate obvio tampoco cierra: aplicando las pérdidas que
+la misma sección declara (3 dB de inserción del filtro, 2.65 dB del receptor,
+85 % de eficiencia) el de 2.3 m da 17.7 kcps, todavía 1.8x por encima.
+
+**Cómo se cierra.** Declarada como hueco, con los tres candidatos asertados en
+`TestTheFullMoonClaim`, para que quien vuelva vea qué lectura necesitaría la
+frase. Es el mismo patrón que la Tabla I de Farid & Hranilovic en `pointing.py`:
+un V2 cuyo valor absoluto no cierra sigue siendo información, pero solo si se
+declara cuál de sus afirmaciones se está usando.
+
+### 20.9 Una corrección al propio ADR 0009
+
+La tabla de fuentes verificadas del [ADR 0009](../docs/adr/0009-citation-policy.md)
+situaba la radiancia de cielo y la potencia de fondo en «ITU-R P.1621-2 §4,
+Tabla 1». **Están en §3.1** (Rayleigh scattering); el §4 de esa recomendación es
+refracción. Corregido allí. Lo digo aquí porque el ADR 0009 es precisamente el
+documento que exige que una cita lleve al sitio exacto, y una sección equivocada
+en él es del tipo de error que ese ADR existe para no cometer.
+
+### 20.10 Decisiones menores que no lo son
+
+| Decisión | Por qué |
+|---|---|
+| **La radiancia va en W/m²/µm/sr y el ancho de filtro en metros** | Convención mixta a propósito. El ancho de filtro es una longitud óptica y va en metros por el [ADR 0001](../docs/adr/0001-unit-conventions.md); la radiancia es un **valor de tabla transcrito** y conserva la unidad en la que está publicada, para que un lector que compare 122.3 contra la página de la UIT vea el mismo número. La conversión ocurre en un solo sitio (`MICROMETRES_PER_METRE`, ya existente) y la unidad va en el nombre del argumento, así que la mezcla no puede ser silenciosa |
+| **La radiancia es el argumento vectorizado** | Es la única entrada que legítimamente varía a lo largo de un pase (el sol se mueve, la línea de visión barre el cielo). El FOV, la apertura y el filtro son propiedades del instrumento y son escalares |
+| **`SkyCondition` no tiene miembro `NIGHT`** | El valor nocturno tiene otra procedencia: es prosa, no tabla, no está resuelto en longitud de onda, y las dos fuentes discrepan por un factor diez. Un cuarto miembro haría que la misma llamada devolviera números de dos pedigríes distintos. Son constantes separadas, una por fuente, y así el llamante **elige** |
+| **La radiancia cero se acepta; la negativa es `DomainError`** | Cero es el límite exacto de «sin fondo» y no divide por nada. Una radiancia negativa no es un cielo oscuro, es un error de signo. El mensaje además nombra la trampa de unidades: por **micrómetro**, no por nanómetro, que es un factor 1000 |
+| **`-expm1(-µ)` y no `1 - exp(-µ)`** | Con la media nocturna de referencia (7.6e-6 cuentas por puerta) la forma ingenua cancela los dígitos de cabeza de dos números que coinciden en la sexta decimal y pierde unos diez bits. Hay un test que compara las dos contra la serie exacta |
+| **La cadena óptica no se aplica aquí** | La pérdida de inserción del filtro, la del receptor y la eficiencia cuántica atenúan el fondo **exactamente igual** que la señal, así que se cancelan en cualquier razón y se aplican una sola vez en `detector.py`/`link_budget.py`. Aplicarlas también aquí es el mismo error de doble cuenta que da forma a `pointing.py` |
+| **Ninguna función acepta una elevación** | Y hay un test que lo aserta *por ausencia*, recorriendo las firmas. La radiancia depende de a dónde apunte el telescopio —la Tabla 1 es radiancia **cenital** y a 20° de elevación el camino de dispersión son 2.92 masas de aire, que serían 4.66 dB si la radiancia siguiera a la masa de aire— pero **ninguna de las dos fuentes publica esa dependencia**. Así que la radiancia es un argumento y el módulo no inventa el escalado. Si algún día aparece una firma con elevación, debería llegar con una cita, y ese test es lo que lo va a notar |
+
+### 20.11 Lo que `background.py` deja fuera, declarado
+
+- **Fondo de subida** (§20.7): sin radiancia de Tierra publicada.
+- **La luna en función de fase o separación angular.** Lo único publicado es un
+  intervalo —1.5e-5 sin luna a 1.5e-3 con luna llena a 1550 nm, un factor 100— y
+  un intervalo es lo que se expone. Convertir «luna llena a 43° y dos días
+  pasada» en una radiancia necesitaría un modelo de irradiancia lunar (ROLO o
+  equivalente) que ninguna fuente libre verificada dio.
+- **Estrellas, planetas, luces de ciudad, aurora, airglow.** La §3.1 de la
+  P.1621-2 los lista y no tabula ninguno. Una estación cerca de una ciudad tiene
+  el cielo nocturno más brillante que cualquier número de aquí.
+- **La dependencia con la elevación, el azimut y el ángulo solar** (§20.10).
+- **Cuentas oscuras, afterpulsing, tiempo muerto**: `detector.py`.
+- **Un desplazamiento de sincronismo en la puerta.** El modelo de gating supone
+  la puerta **centrada** en la señal; un offset la convierte en una diferencia de
+  dos `erf`, que es barato de añadir y está ausente a propósito, porque el offset
+  es una cantidad de sistema (un modelo de reloj, una corrección de range-rate) y
+  no una propiedad del canal.
+- **Una serie temporal de radiancia.** El eje de array está ahí, pero nada aquí
+  la genera.
+
+**Estado de la etapa 2.2:** hechos `atmosphere.py`, `turbulence.py`, `beam.py`,
+`pointing.py`, `background.py` y el compartido `_validation.py`. Quedan
+`detector.py` y `link_budget.py`. La suite está en 1027 tests, y `channel/`
+entero al 100 % de cobertura de líneas y ramas.
