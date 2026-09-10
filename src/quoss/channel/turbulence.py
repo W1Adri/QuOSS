@@ -82,6 +82,12 @@ from typing import Final
 
 import numpy as np
 
+from quoss.channel._validation import (
+    MICROMETRES_PER_METRE,
+    validated_elevation,
+    validated_positive_length_m,
+    validated_wavelength_m,
+)
 from quoss.channel.atmosphere import (
     ITU_GROUND_CN2_M23,
     ITU_TURBULENCE_TOP_HEIGHT_M,
@@ -159,32 +165,10 @@ against the printed 1.1654e-8. ``tests/channel/test_turbulence.py`` asserts all
 three, which is what catches a mistyped digit in any of them.
 """
 
-_MICROMETRES_PER_METRE: Final[float] = 1.0e6
-
-
-def _validated_elevation(elevation_rad: FloatArray | float) -> FloatArray:
-    """Return the elevation as an array, rejecting anything not above the horizon."""
-    elevation = np.asarray(elevation_rad, dtype=np.float64)
-    if not np.all(np.isfinite(elevation)):
-        raise DomainError("elevation_rad contains non-finite values.")
-    if np.any(elevation <= 0.0) or np.any(elevation > 0.5 * np.pi):
-        raise DomainError(
-            "elevation_rad must lie in (0, pi/2]: a slant path through the atmosphere needs a "
-            "target above the horizon, and every formula here carries a sec(zenith) that "
-            "diverges at zero. Range given: "
-            f"[{float(np.min(elevation))}, {float(np.max(elevation))}] rad. The unit is "
-            "radians, not degrees; and quoss.orbits.geometry.look_angles reports elevation "
-            "below the horizon without filtering, so segment the pass before calling this."
-        )
-    return elevation
-
 
 def _validated_wavelength_um(wavelength_m: float) -> float:
     """Return the wavelength in micrometres, which is what the closed forms use."""
-    wavelength = float(wavelength_m)
-    if not np.isfinite(wavelength) or wavelength <= 0.0:
-        raise DomainError(f"wavelength_m must be finite and positive, got {wavelength}.")
-    return wavelength * _MICROMETRES_PER_METRE
+    return validated_wavelength_m(wavelength_m) * MICROMETRES_PER_METRE
 
 
 def cn2_path_moment(
@@ -351,7 +335,7 @@ def log_irradiance_variance(
     >>> round(float(low / variance), 1)
     23.2
     """
-    elevation = _validated_elevation(elevation_rad)
+    elevation = validated_elevation(elevation_rad)
     wavelength_um = _validated_wavelength_um(wavelength_m)
     moment = cn2_path_moment(
         5.0 / 6.0,
@@ -495,14 +479,13 @@ def aperture_averaging_factor(
     >>> round(float(small), 3)
     0.996
     """
-    elevation = _validated_elevation(elevation_rad)
+    elevation = validated_elevation(elevation_rad)
     wavelength_um = _validated_wavelength_um(wavelength_m)
-    diameter = float(aperture_diameter_m)
-    if not np.isfinite(diameter) or diameter <= 0.0:
-        raise DomainError(
-            f"aperture_diameter_m must be finite and positive, got {diameter}. The unit is "
-            "metres: an aperture given in centimetres would understate the averaging."
-        )
+    diameter = validated_positive_length_m(
+        "aperture_diameter_m",
+        aperture_diameter_m,
+        hint="The unit is metres: an aperture given in centimetres would understate the averaging.",
+    )
     scale_height = turbulence_scale_height_m(
         station_height_m=station_height_m,
         rms_wind_speed_m_s=rms_wind_speed_m_s,
@@ -705,7 +688,7 @@ def fried_parameter_m(
     >>> round(float(fried_parameter_m(deg_to_rad(90.0), wavelength_m=5.32e-07)), 3)
     0.053
     """
-    elevation = _validated_elevation(elevation_rad)
+    elevation = validated_elevation(elevation_rad)
     wavelength_um = _validated_wavelength_um(wavelength_m)
     moment = cn2_path_moment(
         0.0,
@@ -781,7 +764,7 @@ def isoplanatic_angle_rad(
     >>> round(float(overhead / low), 1)
     5.6
     """
-    elevation = _validated_elevation(elevation_rad)
+    elevation = validated_elevation(elevation_rad)
     wavelength_um = _validated_wavelength_um(wavelength_m)
     moment = cn2_path_moment(
         5.0 / 3.0,
