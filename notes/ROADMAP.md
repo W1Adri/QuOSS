@@ -218,9 +218,25 @@ de rellenados → [ADR 0009](../docs/adr/0009-citation-policy.md).
    `D_T^(5/6)`: un transmisor de 1 m pasea su haz **3.15 anchos de haz**, así
    que estrechar el haz deja de ayudar. El ensanchamiento por turbulencia queda
    fuera por autoridad de P.1622 §4.4, no por olvido
-4. `channel/pointing.py` — pérdida de apuntado, fading PAT. Hereda de `beam.py`
-   el equivalente de bajada del vaivén (P.1622 Ec. (10), ángulo de llegada),
-   porque lo que perturba es el lazo de seguimiento y no el ancho del haz
+4. ✅ `channel/pointing.py` — pérdida de apuntado y **desvanecimiento** por
+   jitter. La salida no es un número, es una **distribución**: jitter gaussiano
+   en dos ejes → error radial Rayleigh → la transmitancia relativa sigue una
+   **ley de potencias** `F(x) = x^(gamma²)` con un solo parámetro,
+   `gamma = w_zeq/(2 sigma_s)`, el radio del haz medido en jitters (derivación
+   de tres líneas en el docstring). **La trampa que da forma al módulo:** la
+   Ec. (9) de Farid & Hranilovic lleva un factor `A_0` que **es** el
+   acoplamiento geométrico de `beam.py`, así que multiplicar «pérdida
+   geométrica × pérdida de apuntado» tal como está publicada cuenta `A_0` dos
+   veces — **17.5 dB inventados** en la geometría de referencia. Todas las
+   funciones devuelven el factor **relativo**, normalizado a 1 con apuntado
+   perfecto. **Dos fuentes independientes concuerdan** en el exponente
+   (`gamma² = 19.42` de Farid & Hranilovic contra `beta_p = 19.23` de Ntanos et
+   al.: 0.01 dB en la pérdida al 1 % de outage), y el residuo está **atribuido**
+   a la corrección de apertura finita, no tolerado. La condición de validez que
+   los autores publican (`W/a > 6`) **falla** para el telescopio de 2.3 m del
+   sistema de referencia, y eso sale en `warnings[]` con la medida de lo que
+   cuesta. Sin boresight (hueco 3 del ADR 0009) y sin correlación temporal (eso
+   es `system/correlated_fading.py`)
 5. `channel/background.py` — radiancia de cielo, fondo solar/lunar, gating temporal
 6. `channel/detector.py` — eficiencia, dark counts, dead time, afterpulsing
 7. `channel/link_budget.py` — **ensambla** los anteriores en pérdida total y ruido total

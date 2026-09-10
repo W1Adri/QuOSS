@@ -145,7 +145,45 @@ be opened, written down so nobody has to rediscover it.
   Phillips, *Opt. Eng.* 40(8):1554 (2001), paywalled and unverified. The relation
   `σ²_I = (1+1/α)(1+1/β) − 1` is **not verified against a source**.
 - **Beckmann/Hoyt pointing model with non-zero boresight** (a systematic aim
-  offset rather than zero-mean jitter): no verified source.
+  offset rather than zero-mean jitter): no verified source. `channel/pointing.py`
+  therefore models **zero-mean jitter only**, and says so: a *known* boresight
+  offset can go through `pointing_transmittance` as a deterministic
+  displacement, which is exact, but the fading *distribution* under a boresight
+  offset is absent rather than approximated.
+- **Farid & Hranilovic 2007 is openable, at the authors' copy.** The version of
+  record (*J. Lightwave Technol.* 25(7):1702, via IEEE or Optica) is paywalled,
+  but the authors host the accepted manuscript at
+  `ece.mcmaster.ca/~hranilovic/publications/articles/07/jlt06IEEEFinal.pdf`, and
+  that is where equations (7)-(11) and Table I were read. Recorded because
+  ADR 0009 requires knowing *which* copy a citation was checked against: if that
+  URL rots, the citations in `channel/pointing.py` become unverified again, and
+  the honest response would be to say so rather than to keep them.
+- **Table I of Farid & Hranilovic is not reproducible.** It prints the NMSE
+  between their exact equation (8) and their closed form (9) at six values of
+  `W/a`, but states neither the averaging range over the displacement nor the
+  normalisation. No plausible convention reproduces the printed values —
+  attempts land 100 to 1000 times lower — and the last two entries (0.159e-3 and
+  0.153e-3) barely differ, which looks like a floor in their own computation
+  rather than a trend. What `tests/channel/test_pointing.py` asserts instead is
+  the *claim* the table supports: the error shrinks monotonically as `W/a` grows,
+  measured against equation (8) integrated numerically (46 % at `W/a` = 2 down
+  to 0.2 % at 12).
+- **The pointing model's own validity condition fails for the reference
+  system's largest telescope**, and that is reported rather than smoothed over.
+  Farid & Hranilovic state "good agreement when `w_z/a > 6`"; a 2.3 m telescope
+  at 600 km — the configuration Ntanos et al. report their best link budget for
+  — gives `W/a = 3.4`. `equivalent_beam_radius_m` records a WARNING there.
+  Measured against their exact integral, the closed form is still within 0.36 %
+  over the displacements a 0.75 µrad jitter produces, and only diverges beyond
+  about two beam radii of offset (8 %) — reached with probability ~1e-17 at that
+  jitter. So the warning carries the condition *and* the measurement, because
+  "outside the published range" and "wrong" are different claims.
+- **`A_0 = erf(v)²` is itself an approximation**, and QuOSS does not use it.
+  Farid & Hranilovic's zero-offset coefficient is a Gaussian-form fit chosen so
+  that the pointing dependence collapses into one exponential; the exact value is
+  `1 − exp(−2a²/W²)`, which is what `beam.geometric_transmittance` returns and
+  what their own equation (8) integrates to. The two differ by −4.2e-4 (0.0018 dB)
+  at the reference geometry and by −3.6e-3 at the 2.3 m station.
 - **Sky radiance at 785 nm and 810 nm.** ITU-R P.1621-2 Table 1 tabulates 530,
   850, 965, 1060 and 1500 nm. Interpolating between them and presenting the
   result as a published value would be inventing a V2.

@@ -1,7 +1,33 @@
 # QuOSS — Últimos cambios y cosas a considerar
 
 > Bitácora viva. Se actualiza al cerrar cada etapa del [`ROADMAP.md`](ROADMAP.md).
-> Última actualización: **2026-09-10** — **tercer módulo de la Etapa 2.2**,
+> Última actualización: **2026-09-10** — **cuarto módulo de la Etapa 2.2**,
+> `channel/pointing.py` (§19): el desvanecimiento por jitter de apuntado, que es
+> el efecto que más castiga el enlace y que **devuelve una distribución, no un
+> número**. Jitter gaussiano en dos ejes → error radial Rayleigh → ley de
+> potencias `F(x) = x^(gamma²)` con un solo parámetro: el radio del haz medido
+> en jitters. Medido: la pérdida **media** son 0.22 dB y la que se supera 1 vez
+> de cada 100 son **1.03 dB**; con 2 µrad de jitter, 1.35 dB y **7.32 dB**.
+> Diseñar con la media es diseñar para un enlace que no existe.
+>
+> **La trampa que da forma al módulo:** el `A_0` de la Ec. (9) de Farid &
+> Hranilovic **es** el acoplamiento geométrico de `beam.py`, así que multiplicar
+> «pérdida geométrica × pérdida de apuntado» tal como está publicada cuenta
+> `A_0` dos veces — **17.5 dB inventados de la nada**, y un total de 35 dB es
+> tan plausible a la vista como el correcto de 17.6 dB. Todas las funciones
+> devuelven el factor **relativo**, normalizado a exactamente 1 con apuntado
+> perfecto.
+>
+> Y dos cosas que el oráculo exacto (su Ec. (8), integrada numéricamente) dijo:
+> **la fórmula de `beam.py` tiene ahora una segunda fuente publicada
+> independiente** —concuerdan a ocho dígitos, una por ganancias de antena y otra
+> por integral de superficie— y **la condición de validez que los propios
+> autores publican (`W/a > 6`) falla para el telescopio de 2.3 m del sistema de
+> referencia**, que es justo la configuración de su mejor presupuesto de enlace.
+> Sale en `warnings[]`, con la medida de lo que cuesta al lado: 0.36 % donde el
+> jitter pone el haz de verdad, 35 % a tres radios de haz.
+>
+> Entrada anterior del mismo día: **tercer módulo de la Etapa 2.2**,
 > `channel/beam.py` (§18), y con él la etapa entra en la bitácora: §18 recoge
 > también lo que la verificación cazó en `atmosphere.py` y `turbulence.py`, que
 > hasta ahora vivía solo en los docstrings y en el
@@ -85,27 +111,27 @@
 | | |
 |---|---|
 | Etapa cerrada | **1 — `core/`** y **2.1 — `orbits/`** |
-| En curso | **2.2 — `channel/`**, tres módulos de siete: `atmosphere.py`, `turbulence.py`, `beam.py` (§18). Es donde el proyecto se juega la credibilidad, porque aquí nadie detecta a ojo que 45 dB debería ser 39 dB: ver la política de citas ([ADR 0009](../docs/adr/0009-citation-policy.md)) y §18 |
-| Física implementada | Marcos y escalas de tiempo · dos cuerpos · gravedad zonal J2/J3/J4 y teoría secular de J2 · propagación sobre una rejilla temporal, con época y método explícitos · **el tipo de elemento (osculador/medio) como parte del tipo, no como aviso** · **parseo de TLE y propagación SGP4**, con época propia y sin construir jamás un `ClassicalElements` medio · **ángulos de visión, distancia oblicua, velocidad de rango y point-ahead** desde una `Trajectory` en TEME · Walker-Delta, SSO y traza repetida (escrito, aparcado) · **perfil `C_n²(h)` y refracción · escintilación, promediado de apertura, `r0` y ángulo isoplanático · divergencia, acoplamiento geométrico y vaivén del haz** |
-| Novedad de esta entrada | **`channel/beam.py`** (§18), y la etapa 2.2 entra en la bitácora. La Ec. (5) de Ntanos et al. 2021 es **9.03 dB optimista** tal como está impresa, y se demuestra sin discutir: con los parámetros del propio paper devuelve una transmitancia de **1.36**. QuOSS usa la integral de truncación gaussiana, que satura en 1. Y el vaivén de subida crece frente a la divergencia como `D_T^(5/6)`, así que un transmisor de 1 m pasea su haz **3.15 anchos de haz** |
-| Novedad de la entrada anterior | **Los dos últimos módulos de 2.1.** `geometry.py` (§16): una sola rotación TEME→ITRF dentro de `look_angles`, así que no hay un segundo sitio donde una mezcla de marcos se cuele; point-ahead **con factor 2**, medido en 50.6 µrad; Doppler deliberadamente fuera, como función aparte que consume `range_rate_km_s`. `constellations.py` (§17): espaciado en anomalía **media**, no verdadera, con su control negativo que demuestra por qué |
-| Novedad de dos entradas atrás | **Las siete inconsistencias abiertas, cerradas** (§14): el marco que se guardaba como cadena, la inmutabilidad que no lo era en los tres contenedores, el aliasing de `relabelled_as`, tres arreglos documentales, y **C1 — los 219 km, que resultaron falsos** |
+| En curso | **2.2 — `channel/`**, cuatro módulos de siete: `atmosphere.py`, `turbulence.py`, `beam.py` (§18) y `pointing.py` (§19). Es donde el proyecto se juega la credibilidad, porque aquí nadie detecta a ojo que 45 dB debería ser 39 dB: ver la política de citas ([ADR 0009](../docs/adr/0009-citation-policy.md)), §18 y §19 |
+| Física implementada | Marcos y escalas de tiempo · dos cuerpos · gravedad zonal J2/J3/J4 y teoría secular de J2 · propagación sobre una rejilla temporal, con época y método explícitos · **el tipo de elemento (osculador/medio) como parte del tipo, no como aviso** · **parseo de TLE y propagación SGP4**, con época propia y sin construir jamás un `ClassicalElements` medio · **ángulos de visión, distancia oblicua, velocidad de rango y point-ahead** desde una `Trajectory` en TEME · Walker-Delta, SSO y traza repetida (escrito, aparcado) · **perfil `C_n²(h)` y refracción · escintilación, promediado de apertura, `r0` y ángulo isoplanático · divergencia, acoplamiento geométrico y vaivén del haz · desvanecimiento por jitter de apuntado, como distribución** |
+| Novedad de esta entrada | **`channel/pointing.py`** (§19). El desvanecimiento por apuntado es una **ley de potencias con un solo parámetro**, derivada en tres líneas del jitter Rayleigh, y su cola es lo que decide el enlace: 0.22 dB de media contra 1.03 dB al 1 % de outage. **17.5 dB** es lo que cuesta contar `A_0` dos veces, y la forma del API lo impide. Dos fuentes independientes concuerdan en el exponente a **0.01 dB**, con el residuo atribuido a la corrección de apertura y no tolerado |
+| Novedad de la entrada anterior | **`channel/beam.py`** (§18), y la etapa 2.2 entra en la bitácora. La Ec. (5) de Ntanos et al. 2021 es **9.03 dB optimista** tal como está impresa, y se demuestra sin discutir: con los parámetros del propio paper devuelve una transmitancia de **1.36**. QuOSS usa la integral de truncación gaussiana, que satura en 1. Y el vaivén de subida crece frente a la divergencia como `D_T^(5/6)`, así que un transmisor de 1 m pasea su haz **3.15 anchos de haz** |
+| Novedad de dos entradas atrás | **Los dos últimos módulos de 2.1.** `geometry.py` (§16): una sola rotación TEME→ITRF dentro de `look_angles`, así que no hay un segundo sitio donde una mezcla de marcos se cuele; point-ahead **con factor 2**, medido en 50.6 µrad; Doppler deliberadamente fuera, como función aparte que consume `range_rate_km_s`. `constellations.py` (§17): espaciado en anomalía **media**, no verdadera, con su control negativo que demuestra por qué |
 
-Verificación ejecutada **el 2026-09-10, con `channel/beam.py` en el árbol**
+Verificación ejecutada **el 2026-09-10, con `channel/pointing.py` en el árbol**
 (estos números sí se han vuelto a correr, por la misma regla que costó los
 «219 km» de §14.1):
 
 ```bash
 uv run ruff check .          # All checks passed!
-uv run ruff format --check . # 44 files already formatted
-uv run mypy                  # Success: no issues found in 44 source files
-uv run pytest                # 895 passed in 32.74s
-uv run pytest --cov          # 99 % global (1627 sentencias, 344 ramas, 8 sin cubrir)
+uv run ruff format --check . # 46 files already formatted
+uv run mypy                  # Success: no issues found in 46 source files
+uv run pytest                # 937 passed in 22.18s
+uv run pytest --cov          # 99 % global (1697 sentencias, 358 ramas, 8 sin cubrir)
 ```
 
-Cobertura de `channel/`: `atmosphere`, `turbulence`, `beam` y `_validation` al
-**100 %**, ramas incluidas. Las 8 sentencias sin cubrir del total siguen siendo
-las mismas de `orbits/constellations.py`, que está aparcado.
+Cobertura de `channel/`: `atmosphere`, `turbulence`, `beam`, `pointing` y
+`_validation` al **100 %**, ramas incluidas. Las 8 sentencias sin cubrir del total siguen
+siendo las mismas de `orbits/constellations.py`, que está aparcado.
 
 Cobertura por módulo de `orbits/`: `frames`, `kepler`, `perturbations`,
 `propagator`, `geometry`, `tle` y `_validation` al **100 %**, ramas incluidas.
@@ -2273,3 +2299,196 @@ cuando aparece la segunda copia y la tercera ya está a la vista
 (`pointing.py`). `turbulence.py` pasa a usarlo sin cambiar **ni un byte** de
 sus mensajes, que es lo que hace que sus tests de validación sigan siendo la
 prueba de que no cambió nada.
+
+---
+
+## 19. `channel/pointing.py` — el desvanecimiento por jitter, que es una distribución y no un número
+
+### Qué hace este módulo, para quien llegue nuevo
+
+`beam.py` calcula cuánta potencia entra en el telescopio cuando el haz apunta
+**exactamente** a él. Nada apunta exactamente. Un terminal de satélite sigue una
+estación en movimiento con cardanes y un espejo rápido contra un sensor de
+estrellas, y lo que queda cuando el lazo de control ha hecho lo que puede es un
+error angular residual de un microradián y pico, que **se mueve en el tiempo**.
+
+Y ahí está la razón de que este módulo devuelva una distribución y no una
+cifra: el error es aleatorio, así que el enlace pasa una fracción de su tiempo
+mucho más desapuntado que su media — y un enlace QKD se juzga por sus malos
+momentos, no por su promedio. Medido en la geometría de referencia de este repo
+(0.75 µrad de jitter, 600 km): la pérdida **media** son 0.22 dB y la pérdida
+que se supera 1 vez de cada 100 son **1.03 dB**, casi cinco veces más. Con
+2 µrad la media pasa a 1.35 dB y la cola a **7.32 dB**. Diseñar con la media es
+diseñar para un enlace que no existe.
+
+**Apuntado no es vaivén**, y por eso están en módulos distintos: el vaivén
+(`beam.uplink_beam_wander_angle_rad`) es la **turbulencia** inclinando el haz, lo
+manda `C_n²` y solo ocurre de subida; el error de apuntado es el **terminal**
+apuntando mal, es una propiedad del hardware y ocurre en las dos direcciones. Se
+suman en cuadratura si son independientes, y por eso el módulo toma el jitter
+**total** como argumento en vez de calcularlo: el que quiera los dos pasa la
+raíz de la suma de cuadrados y lo dice.
+
+### 19.1 La trampa que da forma al módulo — 17.5 dB contados dos veces
+
+**Qué es.** La Ec. (9) de Farid & Hranilovic escribe la fracción recogida con un
+desplazamiento `r` como
+
+```
+h_p(r) = A_0 · exp(-2 r² / w_zeq²)
+```
+
+y ese `A_0` —el valor en `r = 0`— **es** el acoplamiento geométrico, la misma
+cantidad que devuelve `beam.geometric_transmittance`.
+
+**Por qué importa.** Un presupuesto de enlace que multiplica «la pérdida
+geométrica» por «la pérdida de apuntado», tomando la de apuntado como el `h_p`
+publicado, cuenta `A_0` **dos veces**. En la geometría de referencia `A_0` vale
+0.0179, así que son **17.5 dB de pérdida inventados de la nada** — y el total
+equivocado (35 dB) es tan plausible a la vista como el correcto (17.6 dB). Es
+exactamente el modo de fallo que el README describe: un número plausible y
+equivocado.
+
+**Cómo se cierra.** No con un comentario, con la forma del API: **todas** las
+funciones del módulo devuelven el factor **relativo**, el `exp` solo,
+normalizado a exactamente 1 con apuntado perfecto. La regla queda escrita en el
+docstring como una línea:
+
+```
+total = beam.geometric_transmittance(...) × pointing.<lo que sea>
+```
+
+y `tests/channel/test_pointing.py::TestTheDoubleCountingTrap` mide los 17.48 dB
+que la forma del API impide, más la aserción de que el apuntado perfecto
+devuelve **exactamente** 1.0 (no 0.9999), que es lo que hace seguro
+multiplicar.
+
+### 19.2 Por qué la ley de desvanecimiento es una ley de potencias
+
+**Qué es.** La derivación completa cabe en tres líneas y está en el docstring
+del módulo, porque la forma del resultado no es obvia y saberla de memoria no
+sirve. Con `x = h_p/A_0` el factor relativo:
+
+1. `x = exp(-2r²/w_zeq²)`, luego `r² = -(w_zeq²/2)·ln x`.
+2. El error radial `r` es el módulo de un vector con dos componentes gaussianas
+   independientes de media cero (una en elevación, otra en cruz-elevación), y eso
+   es **Rayleigh**: `P(r ≥ R) = exp(-R²/2σ_s²)` (Ec. (10) de la fuente).
+3. Como `x` decrece con `r`, «estar por debajo de `x`» y «estar más allá del
+   radio correspondiente» son el mismo suceso:
+
+```
+F(x) = P(r ≥ r(x)) = exp( (w_zeq²/4σ_s²)·ln x ) = x^(gamma²),  gamma = w_zeq/(2σ_s)
+```
+
+**Por qué importa.** Un solo parámetro adimensional, y es interpretable: `gamma`
+es **el radio del haz medido en jitters**. Todo lo demás del módulo sale de esa
+línea — la media es `gamma²/(gamma²+1)`, el cuantil es `p^(1/gamma²)` — así que
+si esa línea está mal, todo lo está, y por eso tiene su propio test: un sorteo
+Monte Carlo de 200 000 pares de gaussianas empujados por la Ec. (9), contra la
+ley analítica, con **tolerancia derivada y no elegida** (cuatro errores estándar
+binomiales, `sqrt(p(1-p)/n)`, que escala sola sobre los cinco niveles
+comprobados aunque sus probabilidades vayan de 4.9e-5 a 0.82). Poner `gamma` en
+vez de `gamma²` en el exponente falla por cientos de sigmas, y **pasa todos los
+tests contra valores publicados**.
+
+### 19.3 Dos fuentes independientes, y concuerdan
+
+| Fuente | Cómo lo escribe | Variables |
+|---|---|---|
+| Farid & Hranilovic 2007, Ec. (11) | `gamma² = (w_zeq/2σ_s)²` | **longitudes** en el plano del receptor |
+| Ntanos et al. 2021, Ec. (9) | `beta_p = (theta_div/2σ_p)²` | **ángulos** |
+
+Son la misma razón dividida arriba y abajo por la distancia, salvo que Ntanos
+usa la divergencia lisa donde Farid usa la equivalente, que lleva la corrección
+por el tamaño finito de la apertura receptora.
+
+**Medido:** `gamma² = 19.42` contra `beta_p = 19.23`. Un 1 %, que son **0.01 dB**
+en la pérdida al 1 % de outage (1.030 dB contra 1.040 dB). Dos papers, catorce
+años y dos notaciones aparte, concordando a la centésima de decibelio.
+
+Y el residuo está **atribuido, no tolerado**: el test aserta que el cociente
+`gamma²/beta_p` es *exactamente* `(w_zeq/(theta_div·z))²`, la corrección de
+apertura, con `rel=1e-12`. Un 1 % de acuerdo se podría haber conseguido con dos
+fórmulas distintas que casualmente casan; que el residuo sea exactamente la
+corrección de apertura no.
+
+### 19.4 El oráculo exacto, y lo que dijo
+
+El paper imprime **las dos**: la fracción recogida exacta (Ec. (8), una integral
+doble sobre el área del detector desplazado) y la forma cerrada que el módulo
+usa (Ec. (9)). Así que la aproximación central del módulo es comprobable en vez
+de heredada: `tests/channel/test_pointing.py::TestAgainstTheExactIntegral`
+integra la Ec. (8) numéricamente con `scipy.integrate.quad` —oráculo en proceso
+que no hace falta congelar, mismo argumento que el DOP853 de
+`perturbations.py`— y mide la cerrada contra ella. Tres cosas salieron:
+
+1. **La Ec. (8) en `r = 0` es exactamente la fórmula de `beam.py`.** Concuerdan
+   a ocho dígitos, porque son la misma integral. Es una **segunda fuente
+   publicada e independiente** para el acoplamiento geométrico: la primera fue
+   el producto de ganancias de Ntanos, por la ruta de las ganancias de antena;
+   esta llega por una integral de superficie. Dos papers, catorce años, el mismo
+   número.
+2. **El `A_0 = erf(v)²` publicado es él mismo una aproximación**, y QuOSS no la
+   usa. El valor exacto es `1 − exp(−2a²/W²)`; se diferencian en **−4.2e-4**
+   (0.0018 dB) en la geometría de referencia y −3.6e-3 en la estación de 2.3 m.
+   Se queda el exacto, así que los dos módulos multiplican al acoplamiento
+   exacto en `r = 0` y no al ajuste.
+3. **La condición de validez que los autores publican falla para el telescopio
+   grande del sistema de referencia.** Dicen «good agreement when `w_z/a > 6`»;
+   un telescopio de 2.3 m a 600 km da `W/a = 3.4`. Y es justo la configuración
+   para la que Ntanos reporta su mejor presupuesto de enlace, así que un modelo
+   que se callara ahí se callaría exactamente donde importa. `warnings[]`, no
+   silencio.
+
+   **Con la medida al lado, porque «fuera del rango publicado» y «equivocado» no
+   son la misma afirmación:** contra la integral exacta, la forma cerrada sigue
+   dentro del **0.36 %** sobre los desplazamientos que un jitter de 0.75 µrad
+   produce de verdad (más allá de cuatro sigmas queda 3.4e-4 de la
+   distribución), dentro del 0.7 % hasta un radio de haz entero, y solo se
+   rompe en la cola profunda — 8 % a dos radios, 35 % a tres. Esa cola se
+   alcanza con probabilidad ~1e-17 al jitter de referencia. O sea: **importa
+   cuando el jitter se acerca al radio del haz, y no importa cuando no**. El
+   mensaje del aviso dice cómo distinguir los dos casos.
+
+**Lo que no se reprodujo, declarado:** la **Tabla I** del paper, que imprime el
+NMSE entre sus Ecs. (8) y (9) para seis valores de `W/a`. No declara ni el rango
+de promediado sobre el desplazamiento ni la normalización, y ninguna convención
+plausible reproduce las cifras impresas —los intentos caen entre 100 y 1000
+veces por debajo—, además de que sus dos últimas entradas (0.159e-3 y 0.153e-3)
+casi no se diferencian, que es a lo que se parece un suelo numérico y no una
+tendencia. Lo que sí se aserta es **la afirmación que la tabla sostiene**: el
+error decrece monótonamente al crecer `W/a`, del 46 % en `W/a = 2` al 0.2 % en
+12, medido contra la Ec. (8).
+
+### 19.5 Decisiones menores que no lo son
+
+| Decisión | Por qué |
+|---|---|
+| **El jitter entra en radianes, no en metros** | La fuente usa `σ_s` como desplazamiento en el plano del receptor; la especificación de un terminal es angular. Se convierte en la entrada (`σ_s = jitter_rad × distancia`), y como el radio del haz también crece con la distancia, **`gamma` es casi constante a lo largo de un pase** — 0.5 % de variación sobre un factor cuatro en distancia, contra un factor 3 del acoplamiento geométrico. Es el único término del canal que no depende del pase, y saberlo antes de graficarlo ahorra buscar un bug que no existe |
+| **`jitter_rad = 0` es un `DomainError`, no «apuntado perfecto»** | El exponente `gamma²` diverge ahí. Y la respuesta que el llamante quiere en ese caso ya existe con otro nombre: es `beam.geometric_transmittance`, el valor de este modelo en desplazamiento cero. El mensaje lo dice |
+| **`probability` es escalar, no array** | Es una decisión de diseño («¿qué outage estoy dispuesto a aceptar?»), no una cantidad por muestra. Aceptar un array invitaría a indexarlo contra el eje temporal, con el que no comparte nada |
+| **La media existe, con su advertencia escrita** | Es la cantidad correcta para una tasa media en una sesión larga y la equivocada para un presupuesto QKD. La distribución está sesgada a la izquierda, así que la media (0.218 dB) queda **por debajo** de la mediana (0.155 dB) y muy por encima de la cola: «peor que lo típico» no es lo mismo que «conservador», y solo el cuantil lo es. El test aserta el orden completo `cola < media < mediana < 1` |
+| **No hay generador aleatorio en el módulo** | La función cuantil **es** el muestreador: darle una uniforme es un sorteo exacto por transformada inversa. Así `system/monte_carlo.py` se queda con el único `RandomSource` inyectable del proyecto y este módulo no necesita saber que existe. El test lo comprueba **sobre los imports** (AST), no sobre el texto, porque el docstring nombra `RandomSource` a propósito —para decir dónde vive la aleatoriedad— y un grep marcaría justo la frase que documenta la regla |
+
+### 19.6 Lo que `pointing.py` deja fuera, declarado
+
+- **Boresight distinto de cero.** El modelo supone jitter de media cero: el
+  terminal apunta bien en promedio y tiembla alrededor. Un desvío
+  **sistemático** (un sensor de estrellas mal calibrado, un sesgo térmico) hace
+  que `r` sea Rice y no Rayleigh (Beckmann o Hoyt en la literatura FSO), y **no
+  se localizó fuente libre verificada** — es el hueco 3 del
+  [ADR 0009](../docs/adr/0009-citation-policy.md). No se aproxima: un boresight
+  **conocido** se puede pasar a `pointing_transmittance` como desplazamiento
+  determinista, que es exacto, pero la **distribución** con boresight está
+  ausente en vez de adivinada.
+- **La convolución con la turbulencia.** El estado completo del canal es el
+  producto del desvanecimiento por turbulencia y el de apuntado, y su
+  distribución es la Ec. (14) de la fuente. Combinarlos es una decisión de
+  presupuesto de enlace (qué modelo de turbulencia, qué régimen) y va donde se
+  ensamblan los términos.
+- **Correlación temporal.** Todo aquí es una distribución **marginal**: dice qué
+  fracción del tiempo el enlace está desvanecido, no cuánto rato seguido. El
+  error de apuntado tiene tiempos de correlación de milisegundos a decenas de
+  milisegundos, que es lo que decide cómo lo ve un bloque de post-proceso QKD.
+  Eso es `system/correlated_fading.py`, el AR(1), y es el punto de novedad del
+  roadmap — no un olvido de aquí.

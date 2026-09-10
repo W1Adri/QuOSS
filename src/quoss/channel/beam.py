@@ -131,6 +131,12 @@ Quantum Communication Infrastructure Paradigm", *Photonics* **8**(12):544, 2021,
 Recommendation ITU-R P.1622 (04/2003), *Prediction methods required for the
 design of Earth-space systems operating between 20 THz and 375 THz*, §4.3
 (equations (11a), (11b)) and §4.4 (beam spreading).
+
+A. A. Farid and S. Hranilovic, "Outage Capacity Optimization for Free-Space
+Optical Links With Pointing Errors", *J. Lightwave Technol.* **25**(7):1702,
+2007, §III-C equation (7) for the Gaussian irradiance profile and equation (8)
+for the collected fraction. The rest of that paper is
+:mod:`quoss.channel.pointing`.
 """
 
 from __future__ import annotations
@@ -443,9 +449,11 @@ def geometric_transmittance(
 
     The beam is a Gaussian of total power ``P`` and radius ``W``, so its
     irradiance at a distance ``r`` from the axis is
-    ``I(r) = (2P / (pi W^2)) exp(-2 r^2 / W^2)``. Integrating that over a
-    circular aperture of radius ``a`` centred on the axis is elementary — the
-    substitution ``u = 2 r^2 / W^2`` turns it into ``exp(-u) du`` — and gives::
+    ``I(r) = (2P / (pi W^2)) exp(-2 r^2 / W^2)`` — Farid & Hranilovic 2007
+    equation (7), which is where the ``2 / pi W^2`` normalisation can be checked
+    rather than rederived. Integrating that over a circular aperture of radius
+    ``a`` centred on the axis is elementary — the substitution
+    ``u = 2 r^2 / W^2`` turns it into ``exp(-u) du`` — and gives::
 
         eta_geo = 1 - exp(-2 a^2 / W^2) = 1 - exp(-D_r^2 / (2 W^2))
 
@@ -461,6 +469,17 @@ def geometric_transmittance(
     3. **It errs the safe way.** Where the two differ, this one is the smaller:
        at 2.3 m and 600 km it gives 8.07 dB of loss against the linearised
        7.70 dB.
+
+    And it has a **second, independent published source**, which is the strongest
+    thing that can be said for a formula in this project. Farid & Hranilovic
+    2007 equation (8) writes the same collected fraction as an explicit double
+    integral over the detector area, for the general case of a beam displaced
+    from the aperture centre. At zero displacement that integral is this
+    expression, and
+    ``tests/channel/test_pointing.py::TestAgainstTheExactIntegral`` evaluates it
+    numerically and finds agreement to eight digits. Two papers fourteen years
+    apart, one via antenna gains and one via a surface integral, arriving at the
+    same number.
 
     What it assumes, and therefore what it is not: perfect pointing (the beam is
     centred on the receiver), no central obstruction in the receiving telescope,
