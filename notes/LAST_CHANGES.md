@@ -1,9 +1,32 @@
 # QuOSS — Últimos cambios y cosas a considerar
 
 > Bitácora viva. Se actualiza al cerrar cada etapa del [`ROADMAP.md`](ROADMAP.md).
-> Última actualización: **2026-09-10** — **la Etapa 2.1 (`orbits/`) queda
-> cerrada** con sus dos últimos módulos, `geometry.py` (§16) y
-> `constellations.py` (§17).
+> Última actualización: **2026-09-10** — **tercer módulo de la Etapa 2.2**,
+> `channel/beam.py` (§18), y con él la etapa entra en la bitácora: §18 recoge
+> también lo que la verificación cazó en `atmosphere.py` y `turbulence.py`, que
+> hasta ahora vivía solo en los docstrings y en el
+> [ADR 0009](../docs/adr/0009-citation-policy.md).
+>
+> `beam.py` es el término más grande del presupuesto de enlace —decenas de dB
+> contra un par de dB de todo lo demás— y sale de algo muy simple: un haz que
+> sale de un telescopio de 15 cm mide 8 m de ancho tras 600 km, y un telescopio
+> de 0.75 m en tierra intercepta menos del 2 % de él. **El hallazgo de esta
+> entrada:** la Ec. (5) de Ntanos et al. 2021 imprime la ganancia de transmisión
+> como `(8/w_0)²` cuando la forma que cierra la identidad con la integral
+> gaussiana es `8/w_0²` — 8 veces, **9.03 dB optimista**. No hace falta discutir
+> qué lectura se quiso: con los propios parámetros del paper (2.3 m a 600 km) la
+> forma impresa devuelve una transmitancia de **1.36**, más luz recogida que
+> transmitida. QuOSS usa la integral exacta, que satura en 1.
+>
+> Y la conclusión de diseño que no era obvia: agrandar el telescopio transmisor
+> estrecha el haz como `1/D_T` pero reduce el vaivén por turbulencia solo como
+> `D_T^(-1/6)`, así que **la razón vaivén/divergencia crece como `D_T^(5/6)`**.
+> Un transmisor de subida de 1 m pasea su haz **3.15 anchos de haz**: estrechar
+> el haz no ayuda a una subida más allá del punto en que el haz es más fino que
+> su propio temblor.
+>
+> Entrada anterior del mismo día: **la Etapa 2.1 (`orbits/`) queda cerrada** con
+> sus dos últimos módulos, `geometry.py` (§16) y `constellations.py` (§17).
 >
 > `geometry.py` es el módulo que convierte una órbita en lo que un telescopio ve:
 > elevación, azimut, distancia oblicua («slant range», la línea recta
@@ -62,23 +85,27 @@
 | | |
 |---|---|
 | Etapa cerrada | **1 — `core/`** y **2.1 — `orbits/`** |
-| En curso | **2.2 — `channel/`**. El canal óptico, que es donde el proyecto se juega la credibilidad: ver la decisión de alcance y la política de citas abajo |
-| Física implementada | Marcos y escalas de tiempo · dos cuerpos · gravedad zonal J2/J3/J4 y teoría secular de J2 · propagación sobre una rejilla temporal, con época y método explícitos · **el tipo de elemento (osculador/medio) como parte del tipo, no como aviso** · **parseo de TLE y propagación SGP4**, con época propia y sin construir jamás un `ClassicalElements` medio · **ángulos de visión, distancia oblicua, velocidad de rango y point-ahead** desde una `Trajectory` en TEME · Walker-Delta, SSO y traza repetida (escrito, aparcado) |
-| Novedad de esta entrada | **Los dos últimos módulos de 2.1.** `geometry.py` (§16): una sola rotación TEME→ITRF dentro de `look_angles`, así que no hay un segundo sitio donde una mezcla de marcos se cuele; point-ahead **con factor 2**, medido en 50.6 µrad; Doppler deliberadamente fuera, como función aparte que consume `range_rate_km_s`. `constellations.py` (§17): espaciado en anomalía **media**, no verdadera, con su control negativo que demuestra por qué |
-| Novedad de la entrada anterior | **Las siete inconsistencias abiertas, cerradas** (§14): el marco que se guardaba como cadena, la inmutabilidad que no lo era en los tres contenedores, el aliasing de `relabelled_as`, tres arreglos documentales, y **C1 — los 219 km, que resultaron falsos** |
-| Novedad de dos entradas atrás | **La bandera osculador/medio, con sus tres subdecisiones cerradas.** `ClassicalElements` lleva un `ElementType` igual que lleva su `Frame`; `coe_to_rv` exige osculadores y `secular_rates_j2` exige medios, los dos con `DomainError`. No hay conversión: Brouwer-Lyddane sigue sin existir, así que la bandera es hoy **una puerta cerrada que marca dónde haría falta**, no un paso más |
+| En curso | **2.2 — `channel/`**, tres módulos de siete: `atmosphere.py`, `turbulence.py`, `beam.py` (§18). Es donde el proyecto se juega la credibilidad, porque aquí nadie detecta a ojo que 45 dB debería ser 39 dB: ver la política de citas ([ADR 0009](../docs/adr/0009-citation-policy.md)) y §18 |
+| Física implementada | Marcos y escalas de tiempo · dos cuerpos · gravedad zonal J2/J3/J4 y teoría secular de J2 · propagación sobre una rejilla temporal, con época y método explícitos · **el tipo de elemento (osculador/medio) como parte del tipo, no como aviso** · **parseo de TLE y propagación SGP4**, con época propia y sin construir jamás un `ClassicalElements` medio · **ángulos de visión, distancia oblicua, velocidad de rango y point-ahead** desde una `Trajectory` en TEME · Walker-Delta, SSO y traza repetida (escrito, aparcado) · **perfil `C_n²(h)` y refracción · escintilación, promediado de apertura, `r0` y ángulo isoplanático · divergencia, acoplamiento geométrico y vaivén del haz** |
+| Novedad de esta entrada | **`channel/beam.py`** (§18), y la etapa 2.2 entra en la bitácora. La Ec. (5) de Ntanos et al. 2021 es **9.03 dB optimista** tal como está impresa, y se demuestra sin discutir: con los parámetros del propio paper devuelve una transmitancia de **1.36**. QuOSS usa la integral de truncación gaussiana, que satura en 1. Y el vaivén de subida crece frente a la divergencia como `D_T^(5/6)`, así que un transmisor de 1 m pasea su haz **3.15 anchos de haz** |
+| Novedad de la entrada anterior | **Los dos últimos módulos de 2.1.** `geometry.py` (§16): una sola rotación TEME→ITRF dentro de `look_angles`, así que no hay un segundo sitio donde una mezcla de marcos se cuele; point-ahead **con factor 2**, medido en 50.6 µrad; Doppler deliberadamente fuera, como función aparte que consume `range_rate_km_s`. `constellations.py` (§17): espaciado en anomalía **media**, no verdadera, con su control negativo que demuestra por qué |
+| Novedad de dos entradas atrás | **Las siete inconsistencias abiertas, cerradas** (§14): el marco que se guardaba como cadena, la inmutabilidad que no lo era en los tres contenedores, el aliasing de `relabelled_as`, tres arreglos documentales, y **C1 — los 219 km, que resultaron falsos** |
 
-Verificación ejecutada **el 2026-09-10, con la etapa 2.1 entera en el árbol**
+Verificación ejecutada **el 2026-09-10, con `channel/beam.py` en el árbol**
 (estos números sí se han vuelto a correr, por la misma regla que costó los
 «219 km» de §14.1):
 
 ```bash
 uv run ruff check .          # All checks passed!
-uv run ruff format --check . # 35 files already formatted
-uv run mypy                  # Success: no issues found in 35 source files
-uv run pytest                # 740 passed in 32.28s
-uv run pytest --cov          # 99 % global (1357 sentencias, 288 ramas, 8 sin cubrir)
+uv run ruff format --check . # 44 files already formatted
+uv run mypy                  # Success: no issues found in 44 source files
+uv run pytest                # 895 passed in 32.74s
+uv run pytest --cov          # 99 % global (1627 sentencias, 344 ramas, 8 sin cubrir)
 ```
+
+Cobertura de `channel/`: `atmosphere`, `turbulence`, `beam` y `_validation` al
+**100 %**, ramas incluidas. Las 8 sentencias sin cubrir del total siguen siendo
+las mismas de `orbits/constellations.py`, que está aparcado.
 
 Cobertura por módulo de `orbits/`: `frames`, `kepler`, `perturbations`,
 `propagator`, `geometry`, `tle` y `_validation` al **100 %**, ramas incluidas.
@@ -2004,3 +2031,245 @@ una coincidencia de punto flotante que forzarla a propósito exigiría resolver
 primero qué combinación de entradas la produce, y el propio código ya trata
 ese caso (asigna el extremo y sigue) en vez de dejarlo caer a `brentq`, así
 que no es una rama sin guardia, solo una difícil de alcanzar por accidente.
+
+---
+
+## 18. Etapa 2.2 — `channel/`: `atmosphere.py`, `turbulence.py`, `beam.py`
+
+### Qué hace este paquete, para quien llegue nuevo
+
+`orbits/` termina en la pregunta «¿dónde está el satélite y en qué dirección se
+ve?». `channel/` empieza en la siguiente: **de los fotones que salen del
+satélite, ¿cuántos llegan al detector, y cuántas cuentas que no son señal
+llegan con ellos?**. Y hay una razón por la que este paquete se construye con
+más ceremonia que `orbits/`: aquí **nadie puede detectar a ojo que 45 dB
+debería ser 39 dB**. En órbitas, un error de marco de referencia produce un
+satélite en Australia cuando debía estar en Cataluña; en el canal produce un
+número plausible.
+
+Tres módulos escritos hasta ahora, en orden de dependencia:
+
+- **`atmosphere.py`** — el perfil `C_n²(h)`: cuánta turbulencia hay a cada
+  altura, más la malla de integración de la ITU y la refracción. Todo lo que el
+  canal dice sobre turbulencia sale de integrales de este perfil.
+- **`turbulence.py`** — qué le hace ese perfil a un haz que lo cruza en
+  diagonal: escintilación (el centelleo, y la razón de que el enlace se
+  desvanezca), promediado de apertura, parámetro de Fried `r0`, ángulo
+  isoplanático.
+- **`beam.py`** — la pregunta plana que hay debajo: **cuánta potencia llega**,
+  en el vacío, con apuntado perfecto. Es el término más grande del presupuesto
+  de enlace, decenas de dB, frente a un par de dB de absorción y otro par de
+  escintilación.
+
+La política de citas que gobierna los tres es el
+[ADR 0009](../docs/adr/0009-citation-policy.md), y su decisión de fondo es que
+**la referencia canónica del canal (Andrews & Phillips) no se cita por número
+de ecuación porque no se pudo abrir**. Las fuentes primarias son ITU-R P.1621-2
+y P.1622 (gratuitas, numeradas, con tablas de valores) y Ntanos et al. 2021
+(*Photonics* 8(12):544, acceso abierto).
+
+### 18.1 Lo que la verificación cazó en `atmosphere.py` y `turbulence.py`
+
+Tres cosas, y son el argumento de por qué esta etapa va despacio. Ninguna la
+habría detectado una aserción de rango: las tres devuelven números del tamaño
+correcto.
+
+| # | Qué | Por qué es silencioso |
+|---|---|---|
+| 1 | La **Ec. (7) de P.1621-2 da grosores de capa, no altitudes**. La recomendación es explícita («layer thickness or integration step size in height should increase exponentially, from 0.001 km at the lowest layer to 1 km at an altitude of 20 km»), y las altitudes son la suma acumulada | Leerlas como altitudes pone el techo de la atmósfera en **992 m** en vez de 20 km. El perfil sigue siendo decreciente, el integral sigue siendo positivo, y ningún número resultante parece raro |
+| 2 | La **Ec. (3) de P.1621-2 no vale 1 en sus propias condiciones de referencia** — se desvía **140 ppm**. Es una inconsistencia interna de la recomendación, no un error de transcripción | Es demasiado pequeña para verse y demasiado grande para ser redondeo. Ahora está documentada y **fijada por un test**, así que si alguien «arregla» la fórmula el test dice que la fuente dice otra cosa |
+| 3 | Un bug propio: el coeficiente **1.1e7 de la Ec. (7) de P.1622 está escrito para micrómetros**, no metros, porque `(1e6)^(7/6) = 1e7` exactamente | Con metros, un telescopio de 1 m suprimía la escintilación por un factor **2e9** — físicamente imposible — y devolvía un número entre 0 y 1 que ninguna aserción de rango habría cuestionado. Lo cazó un doctest, y lo fija ahora la **escala de Fresnel**: el promediado tiene que arrancar cuando la apertura supera `sqrt(lambda L)` ≈ 11 cm |
+
+El V2 más fuerte del canal hasta ahora sigue siendo la **Tabla 2 de P.1622**:
+sus ocho varianzas de log-irradiancia (cuatro longitudes de onda × dos vientos)
+se reproducen a la precisión impresa, con todas las condiciones que la
+recomendación declara.
+
+### 18.2 `beam.py` — qué hace y con qué se cierra
+
+Tres cantidades:
+
+- **`divergence_half_angle_rad`** — cuánto se abre el haz. La luz no se
+  colima perfectamente: la difracción en la apertura de transmisión fuerza una
+  apertura angular de «longitud de onda partido por diámetro», así que un
+  transmisor **más grande** da un haz **más estrecho**.
+- **`geometric_transmittance`** — la fracción de la potencia transmitida que
+  entra en la apertura de recepción. Estas son las decenas de dB.
+- **`uplink_beam_wander_*`** — el vaivén («beam wander»): la turbulencia cerca
+  del transmisor inclina el haz **entero**, así que su centro pasea alrededor
+  del punto de mira en vez de quedarse en él. Es **solo de subida**, por una
+  razón que P.1622 §4.3 dice literalmente, y los nombres lo llevan escrito.
+
+V2 contra Ntanos et al. Ecs. (3)–(6) y P.1622 Ecs. (11a)/(11b); V1 en
+exponentes, cotas y monotonías; **sin V3** (declarado en
+`tests/golden/README.md`).
+
+### 18.3 Decisión 1 — la integral de truncación gaussiana, no el producto de ganancias publicado
+
+**Qué es.** La literatura de FSO escribe el acoplamiento geométrico como un
+producto de tres factores de radio: ganancia de transmisión × ganancia de
+recepción × pérdida de espacio libre (Ntanos et al. Ecs. (3) y (5)). QuOSS no
+lo usa. Usa la integral exacta de una gaussiana sobre un círculo:
+
+```
+eta_geo = 1 - exp(-2 a^2 / W^2) = 1 - exp(-D_r^2 / (2 W^2))
+```
+
+donde `W` es el radio del haz a `1/e²` (el radio donde la irradiancia ha caído
+al 13.5 % del valor en el eje; dentro va el 86.5 % de la potencia) y `a` el
+radio de la apertura receptora.
+
+**Por qué así.** Las dos formas **son la misma física**, y eso está asertado,
+no supuesto: el producto de ganancias es exactamente el **límite de apertura
+pequeña** de la integral, hasta el último dígito. La diferencia es qué pasa
+cuando la apertura *no* es pequeña. El producto linealizado **pasa de 1 sin
+protestar** — es decir, promete recoger más luz de la que se transmitió — y la
+integral satura en 1, que es lo que hace un telescopio que ya captó todo el
+haz. Además la integral es la conservadora: donde difieren, da más pérdida.
+
+**Y aquí la verificación encontró algo, que es el tercer «no cuadra» de este
+paper** (los otros dos ya estaban en el ADR 0009). Ntanos et al. Ec. (5)
+imprime la ganancia de transmisión como `G_t = (8/w_0)²`. Con la forma estándar
+de antena óptica, `G_t = 8/w_0²`, el producto reproduce la integral gaussiana
+al último dígito. **Tal como está impresa es 8 veces mayor: 9.03 dB
+optimista.** Y no hace falta un presupuesto de enlace ni una opinión para saber
+cuál de las dos lecturas se quiso: con los propios parámetros del paper — 0.15 m
+de transmisor, 2.3 m de receptor, 600 km, 1550 nm — la forma impresa devuelve
+una transmitancia de **1.36**, más luz recogida que transmitida.
+
+**Medido en este repo** (`tests/channel/test_beam.py::TestPublishedGainProduct`,
+y el enlace de referencia del propio paper):
+
+| Receptor | `eta_geo` (esta forma) | Pérdida | Producto impreso `(8/w_0)²` |
+|---|---|---|---|
+| 0.75 m | 0.01788 | **17.48 dB** | 0.144 → 8.41 dB |
+| 1.3 m | 0.05278 | 12.78 dB | 0.434 → 3.63 dB |
+| 2.3 m | 0.15610 | **8.07 dB** | **1.36 → −1.33 dB (imposible)** |
+
+Corroboración indirecta, etiquetada como tal porque el paper no tabula sus
+términos: su §4.2.1 dice que la pérdida total a 600 km «can get as low as 20 dB
+in total» con un telescopio grande. Sumando solo las pérdidas fijas que el
+propio paper declara (detectores al 85 %, receptor 2.65 dB, filtro 3 dB,
+polarización 0.3 dB = 6.66 dB) más los 8.07 dB de esta forma, salen 14.7 dB y
+quedan ~5 dB para absorción, escintilación y apuntado — que el paper sí modela.
+Con la forma impresa el término geométrico es **negativo** y no hay atmósfera
+que cierre un hueco de 15 dB.
+
+### 18.4 Decisión 2 — `W(z)` gaussiano exacto, no el atajo de campo lejano
+
+**Qué es.** Todo el mundo escribe `W = theta_div · z`. `beam_radius_m` usa la
+hipérbola exacta, `W(z) = w_t sqrt(1 + (z/z_R)²)`, donde `z_R = pi w_t²/lambda`
+es la **distancia de Rayleigh**: donde el haz ha crecido `sqrt(2)` veces su
+cintura, y la frontera entre «el haz todavía mide como el telescopio» (campo
+cercano) y «el haz crece proporcional a la distancia» (campo lejano).
+
+**Por qué así.** No porque el atajo esté mal en este régimen — está bien — sino
+porque cuesta una raíz cuadrada y convierte una afirmación («campo lejano,
+obviamente») en un número comprobable. Y el signo del error importa: la
+hipérbola está **siempre por encima** de su asíntota, así que el atajo siempre
+sobreestima la potencia recogida.
+
+**Medido en este repo** (`TestBeamRadiusInvariants`, terminal de 15 cm a
+1550 nm): el atajo se queda corto **1.8e-4 relativo a 600 km**, 6.5e-3 a
+100 km, y un factor `sqrt(2)` en la propia distancia de Rayleigh (11.4 km),
+donde ya no describe un haz. 1.8e-4 en radio son 3.6e-4 en potencia, 0.0016 dB
+— el atajo habría sido defendible; lo que cambia es que ahora la cifra está en
+un test y no en la memoria de nadie.
+
+Como subproducto, la simetría de campo lejano «da igual doblar el transmisor o
+el receptor, el acoplamiento depende del producto `D_T·D_r`» **se rompe al
+5.4e-3** cambiando 0.30 m de transmisor por 0.10 m de receptor — y ese número
+no es holgura de la tolerancia: es exactamente el término de campo cercano,
+`(z_R/z)²`, que crece como `D_T²` y por tanto es dieciséis veces mayor para el
+transmisor de 0.30 m. El test predice la desviación desde las dos distancias de
+Rayleigh en vez de ensanchar la tolerancia hasta que pase.
+
+### 18.5 Decisión 3 — el vaivén es solo de subida, y la apertura tira para los dos lados
+
+**Qué es.** P.1622 §4.3, literal: «Beam wander is significant in the
+Earth-to-space direction and can be on the order of a beamwidth», y «Beam
+wander is not a significant problem in the space-to-Earth direction. Beams
+travelling in this direction only propagate through turbulence in the final 10
+to 20 km of the path». Un haz de bajada llega ya con varios metros de ancho, así
+que inclinar los últimos 20 km de su camino lo mueve centímetros.
+
+**Por qué así (la forma del API).** Misma disciplina que
+`uplink_log_irradiance_variance` en `turbulence.py`: los nombres llevan
+`uplink_`, y `geometric_transmittance` **no acepta elevación, ni turbulencia,
+ni un término de vaivén** — no hay dónde meterlo, así que colarlo en un
+presupuesto de bajada tendría que ser una línea nueva y visible en el diff, no
+un parámetro por defecto (`test_the_downlink_functions_have_nowhere_to_put_a_wander`).
+
+**La conclusión de diseño que no es obvia, y que sí se mide aquí.** Agrandar el
+telescopio transmisor estrecha el haz como `1/D_T`, que es toda la razón para
+querer un telescopio grande. Pero reduce el vaivén solo como `D_T^(-1/6)`,
+porque el vaivén es la inclinación del frente de onda promediada sobre la
+apertura, y promediar sobre más apertura quita inclinación despacio. Así que la
+razón **vaivén/divergencia crece como `D_T^(5/6)`**: estrechar el haz no ayuda
+a una subida más allá del punto en que el haz es más fino que su propio
+temblor.
+
+Medido a 1550 nm, perfil ITU nominal, cenit
+(`TestTheTransmitApertureCutsBothWays`):
+
+| `D_T` | divergencia (semiángulo) | vaivén r.m.s. | vaivén/divergencia |
+|---|---|---|---|
+| 5 cm | 19.7 µrad | 5.12 µrad | 0.26 |
+| 15 cm | 6.58 µrad | 4.27 µrad | 0.65 |
+| 1 m | 0.99 µrad | 3.11 µrad | **3.15** |
+
+Un transmisor de subida de clase metro se pasa la mayor parte del tiempo
+apuntando su haz a otro sitio, y ninguna cantidad de apertura extra lo arregla.
+Es también la frase en prosa de la ITU («on the order of a beamwidth»)
+convertida en número: 2.56 m de desplazamiento r.m.s. a 600 km contra un radio
+de haz de 3.95 m, o sea 0.65 anchos de haz al cenit, cruzando el ancho de haz a
+20° de elevación.
+
+Por eso existe `uplink_wander_to_divergence_ratio`, que es la única función del
+módulo que toma un `DegradationLog`: al pasar de 1, el enlace ha dejado de ser
+un nivel y es un proceso de desvanecimiento, y `geometric_transmittance` —que
+supone el haz centrado en el receptor— está contestando una pregunta que nadie
+hizo. La cifra devuelta no cambia; lo que cambia es que el llamante se entera.
+
+### 18.6 Lo que `beam.py` deja fuera, declarado
+
+- **Ensanchamiento por turbulencia**, y por autoridad de la propia fuente:
+  P.1622 §4.4 dice que «is typically very small with respect to divergence and
+  does not account for an appreciable loss of signal in either the
+  Earth-to-space or space-to-Earth directions». El radio del haz es por tanto
+  el de difracción en vacío, y eso es una decisión citada, no un término
+  olvidado.
+- **Los 0.63 dB del truncamiento en el transmisor.** Tomar la cintura del haz
+  como `w_t = D_T/2` (lo que implica la Ec. (6) de Ntanos et al.) significa que
+  la propia apertura del transmisor recorta las colas de la gaussiana: sale el
+  `1 - exp(-2) = 86.5 %`. Toda transmitancia de este módulo es una fracción **de
+  la potencia que hay en el haz**, no de la que hay en el láser. Es un número
+  fijo, va donde se juntan las pérdidas fijas, y ese sitio es `link_budget.py`.
+- **Error de apuntado y su desvanecimiento** → `pointing.py`, el módulo
+  siguiente. El vaivén es la turbulencia moviendo el haz; el error de apuntado
+  es el terminal apuntándolo mal. Y el equivalente de bajada del vaivén —la
+  turbulencia moviendo el frente de onda **que llega**, P.1622 Ec. (10)— también
+  va ahí, porque lo que perturba es el lazo de seguimiento, no el ancho del haz.
+- **La discrepancia interna de P.1622 que no se toca.** Su Ec. (10) da la
+  varianza del ángulo de llegada como `2.914·mu·D_R^(-1/3)/sin(theta)`; elevar
+  al cuadrado el 2.08 de la Ec. (11b) da `4.326·mu·D_T^(-1/3)/sin(theta)` — la
+  misma forma con una constante **1.485 veces mayor**. La explicación plausible
+  (la Ec. (10) es una onda plana llenando la apertura, la (11b) un haz estrecho
+  saliendo de ella) **no está escrita en la recomendación**, así que las dos se
+  transcriben tal cual y ninguna se usa para «corregir» a la otra.
+
+### 18.7 `channel/_validation.py` — por qué aparece ahora
+
+Tres argumentos se repiten en todo el paquete (elevación, longitud de onda,
+apertura) y cada uno tiene **su** forma característica de llegar mal: la
+elevación llega en grados o por debajo del horizonte (`look_angles` la reporta
+sin filtrar, a propósito), la longitud de onda llega en nanómetros, la apertura
+en centímetros. Los mensajes de error son la documentación en el punto de
+fallo, así que tenerlos idénticos en todas partes es el objetivo, y para eso
+hay un solo sitio donde se escriben.
+
+Mismo patrón y misma justificación que `orbits/_validation.py`: se extrae
+cuando aparece la segunda copia y la tercera ya está a la vista
+(`pointing.py`). `turbulence.py` pasa a usarlo sin cambiar **ni un byte** de
+sus mensajes, que es lo que hace que sus tests de validación sigan siendo la
+prueba de que no cambió nada.

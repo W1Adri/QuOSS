@@ -184,10 +184,43 @@ la bandera es hoy una puerta cerrada que marca dónde haría falta. Ver
 [ADR 0006](../docs/adr/0006-osculating-vs-mean-elements.md).
 
 ### 2.2 `channel/` — el canal óptico
-1. `channel/atmosphere.py` — perfiles Cn² (HV5/7, Bufton, HV modificado), airmass
-2. `channel/turbulence.py` — r₀, Rytov, índice de escintilación (débil y fuerte), frecuencia de Greenwood, ángulo isoplanático
-3. `channel/beam.py` — divergencia, acoplamiento geométrico/difracción, beam wander
-4. `channel/pointing.py` — pérdida de apuntado, fading PAT
+
+**Decisión que gobierna toda la etapa, tomada antes de escribir física:** la
+referencia canónica del canal (Andrews & Phillips) **no se cita por número de
+ecuación porque no se pudo abrir**. Fuentes primarias: ITU-R P.1621-2, P.1622 y
+Ntanos et al. 2021, todas gratuitas y numeradas. Siete huecos declarados en vez
+de rellenados → [ADR 0009](../docs/adr/0009-citation-policy.md).
+
+1. ✅ `channel/atmosphere.py` — perfil Cn² (HV 5/7), viento de Bufton, malla de
+   integración de 139 capas y refracción. **Corregido al implementarlo:** la
+   Ec. (7) de P.1621-2 da **grosores de capa, no altitudes** — leerlas como
+   altitudes pone el techo de la atmósfera en 992 m en vez de 20 km, y ningún
+   número resultante parece raro. Y su Ec. (3) **no vale 1 en sus propias
+   condiciones de referencia** (se desvía 140 ppm): inconsistencia interna de la
+   recomendación, documentada y fijada por un test
+2. ✅ `channel/turbulence.py` — varianza de log-irradiancia, promediado de
+   apertura, r₀ y ángulo isoplanático, todo sobre momentos del perfil.
+   **Asimetría subida/bajada como parte del API**, no como nota: el uplink no
+   recibe promediado de apertura (P.1622 §4.1.1) y su función no tiene dónde
+   aceptar un diámetro. El V2 más fuerte del canal: las **ocho** varianzas
+   publicadas de la Tabla 2 de P.1622, reproducidas a la precisión impresa.
+   Rytov en régimen fuerte y frecuencia de Greenwood **siguen fuera** — pendientes
+   con su fuente, no implementadas a medias
+3. ✅ `channel/beam.py` — divergencia, acoplamiento geométrico y vaivén del haz.
+   **Se aparta de la forma publicada, con la razón medida:** el producto de
+   ganancias de Ntanos et al. Ecs. (3) y (5) es el límite de apertura pequeña de
+   la integral de truncación gaussiana `1 − exp(−D_r²/2W²)`, y esa integral es
+   la que se usa porque satura en 1 en vez de prometer más luz de la que se
+   transmitió. La Ec. (5) **tal como está impresa** (`(8/w_0)²` en vez de
+   `8/w_0²`) es 8 veces mayor, **9.03 dB optimista**, y con los parámetros del
+   propio paper devuelve una transmitancia de **1.36**. El vaivén es
+   **solo de subida** (P.1622 §4.3), y la razón vaivén/divergencia crece como
+   `D_T^(5/6)`: un transmisor de 1 m pasea su haz **3.15 anchos de haz**, así
+   que estrechar el haz deja de ayudar. El ensanchamiento por turbulencia queda
+   fuera por autoridad de P.1622 §4.4, no por olvido
+4. `channel/pointing.py` — pérdida de apuntado, fading PAT. Hereda de `beam.py`
+   el equivalente de bajada del vaivén (P.1622 Ec. (10), ángulo de llegada),
+   porque lo que perturba es el lazo de seguimiento y no el ancho del haz
 5. `channel/background.py` — radiancia de cielo, fondo solar/lunar, gating temporal
 6. `channel/detector.py` — eficiencia, dark counts, dead time, afterpulsing
 7. `channel/link_budget.py` — **ensambla** los anteriores en pérdida total y ruido total

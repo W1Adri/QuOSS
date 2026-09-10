@@ -169,6 +169,45 @@ be opened, written down so nobody has to rediscover it.
   (2/21 is what follows). What *does* reproduce are the inter-station ratios
   (published 1 : 0.28 : 0.084). Tests therefore assert the **shape and the
   ratios**, not the absolute figure, and say so at the assertion.
+
+  **Third thing that does not add up, found while writing `channel/beam.py`:**
+  its Eq. (5) prints the transmitter gain as `G_t = (8/w_0)²`. The product
+  `G_t·G_r·L_fsl` of its Eqs. (3) and (5) *is* the geometric coupling, and with
+  `G_t = 8/w_0²` — the standard optical-antenna form — that product reproduces
+  the Gaussian truncation integral `1 − exp(−D_r²/2W²)` in its small-aperture
+  limit to the last digit. As printed it is **8× larger, i.e. 9.03 dB
+  optimistic**, and at the paper's own largest station (2.3 m at 600 km) it
+  returns a transmittance of **1.36** — more light collected than transmitted.
+  QuOSS uses the energy-conserving form;
+  `tests/channel/test_beam.py::TestPublishedGainProduct` asserts both the
+  identity and the factor of 8, so neither reading can be adopted by accident.
+- **No V3 oracle for the beam geometry.** `channel/beam.py` is closed against
+  V2 (Ntanos et al. Eqs. (3)-(6), ITU-R P.1622 Eqs. (11a)/(11b)) and V1
+  invariants only. A frozen table from an independent FSO link-budget tool would
+  be worth having, and none was located that states its beam-waist convention —
+  which is the one thing that would have to match for the comparison to mean
+  anything (see the next entry).
+- **The beam-waist convention is a choice, not a citation.** Identifying the
+  Gaussian `1/e²` waist radius with the transmitter's aperture *radius*
+  (`w_t = D_T/2`) is what Ntanos et al. Eq. (6) implies, and it is what QuOSS
+  uses — but it means the transmitting aperture clips 13.5 % of its own beam
+  (`1 − exp(−2)`), a flat **0.63 dB** that `beam.py` does not apply and
+  `link_budget.py` will. Optimum-truncation conventions (`w_t = D_T/2.2` and
+  similar) differ by tens of percent in on-axis intensity, so any external
+  comparison has to declare which one it uses.
+- **Turbulence-induced beam spreading is not modelled**, on the source's own
+  authority rather than by omission: ITU-R P.1622 §4.4 states it "is typically
+  very small with respect to divergence and does not account for an appreciable
+  loss of signal in either the Earth-to-space or space-to-Earth directions".
+  Recorded here because "the beam radius is the vacuum-diffraction one" is a
+  modelling decision that would otherwise look like a forgotten term.
+- **P.1622's own two tilt coefficients disagree by 1.485× and it does not say
+  why.** Eq. (10) gives the angle-of-arrival variance as
+  `2.914·μ·D_R^(−1/3)/sin θ`; squaring the 2.08 of Eq. (11b) gives
+  `4.326·μ·D_T^(−1/3)/sin θ` — the same shape, a different constant. The
+  plausible explanation (Eq. (10) is a plane wave filling the aperture, Eq. (11b)
+  a narrow beam leaving it) is **not stated in the recommendation**, so both are
+  transcribed as printed and neither is used to "correct" the other.
 - **SatQuMA as an independent V3 oracle for finite-key** (github.com/cnqo-qcomms/SatQuMA,
   **MIT licence**, pure Python, implements Lim et al. 2014 with its own numbered
   equations in arXiv:2109.01686). Not yet frozen into `data/`. It fails condition
