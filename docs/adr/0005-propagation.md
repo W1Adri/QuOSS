@@ -129,6 +129,14 @@ añadir uno hace fallar el test, que es el momento de actualizar también este A
 y otro está **parametrizado sobre el enum**, de modo que un miembro añadido sin
 implementar falla inmediatamente en vez de caer en una rama muerta.
 
+> **Actualizado con `orbits/tle.py`** ([ADR 0007](0007-tle-and-sgp4-propagation.md)):
+> el enum ganó un tercer miembro, `SGP4`, que es un caso distinto de este —
+> presente y correcto, pero no cableado *aquí* porque SGP4 toma un `Satrec`
+> parseado, no `ClassicalElements`. El test parametrizado de arriba ahora solo
+> recorre los miembros que `propagate()` sabe ejecutar; `SGP4` tiene su propio
+> test, que confirma que pedírselo a `propagate()` falla con
+> `NotImplementedError` en vez de con un `KeyError` de nombre desconocido.
+
 ### Por qué la condición inicial son elementos y no un estado
 
 Es lo que escribe el escenario de la etapa 4, lleva su `Frame` dentro —que el

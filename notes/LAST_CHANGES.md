@@ -1,14 +1,46 @@
 # QuOSS — Últimos cambios y cosas a considerar
 
 > Bitácora viva. Se actualiza al cerrar cada etapa del [`ROADMAP.md`](ROADMAP.md).
-> Última actualización: **2026-08-04** — **las siete entradas de
+> Última actualización: **2026-09-10** — **la Etapa 2.1 (`orbits/`) queda
+> cerrada** con sus dos últimos módulos, `geometry.py` (§16) y
+> `constellations.py` (§17).
+>
+> `geometry.py` es el módulo que convierte una órbita en lo que un telescopio ve:
+> elevación, azimut, distancia oblicua («slant range», la línea recta
+> estación↔satélite, que no es la altitud), velocidad de acercamiento, y el
+> **ángulo de point-ahead** — cuánto hay que apuntar por delante de donde se ve
+> el satélite, porque en el tiempo que la luz tarda en ir y volver el satélite se
+> ha movido. La corrección al roadmap la dio la medición: ese ángulo lleva
+> **factor 2**, no el `v_perp/c` de una sola vía, porque un terminal monostático
+> transmite adelantado y a la vez recibe por donde la luz realmente viene.
+> Medido para un paso a 67.1° de elevación sobre Castelldefels en la SSO de
+> 700 km de este repo: **50.6 µrad**, contra los 35 µrad que el roadmap citaba
+> antes de tener la cuenta hecha.
+>
+> `constellations.py` (Walker-Delta, inclinación heliosíncrona, traza repetida)
+> **queda escrito y aparcado**: la decisión de alcance del 2026-09-10 es hacer un
+> solo satélite, así que no se construye nada encima de él por ahora.
+>
+> Entrada anterior del mismo día: **quinto módulo de la Etapa 2.1**
+> (`orbits/tle.py`): parseo de TLE («Two-Line Element set») y propagación con
+> SGP4 (`sgp4` de PyPI, sin reimplementar) → [ADR 0007](../docs/adr/0007-tle-and-sgp4-propagation.md).
+> `PropagationMethod` gana un tercer miembro, `SGP4`, que `propagate()`
+> **deliberadamente no sabe ejecutar** — pedírselo da `NotImplementedError`, no un
+> resultado plausible. `tle.py` no construye ningún `ClassicalElements`: la
+> disciplina que el ADR 0006 dejó preparada (`MEAN_KOZAI_SGP4`, aún sin usar) se
+> cumple por no escribir esa línea, no por una guarda de tipos. Y `parse_tle`
+> valida dos trampas reales de `sgp4.api.Satrec.twoline2rv` que la librería deja
+> pasar en silencio: un checksum corrupto y una entrada basura, las dos
+> verificadas a mano contra el paquete instalado antes de decidir la guarda.
+>
+> Entrada anterior: **2026-08-04** — **las siete entradas de
 > [`INCONSISTENCIAS.md`](INCONSISTENCIAS.md), cerradas** (§14). La grande no era una
 > de las seis inconsistencias sino la consideración C1: los «219 km» citados en
 > quince sitios, incluido un mensaje de error, **no se reproducían** — la cifra real
 > es 5.9 veces mayor, y además no existe una cifra única porque el coste depende de
 > en qué punto de la órbita se declaren los elementos.
 >
-> Entrada anterior: **2026-08-01** — **la bandera osculador/medio**, que no es
+> Entrada anterior a esa: **2026-08-01** — **la bandera osculador/medio**, que no es
 > un módulo nuevo sino la pieza que faltaba entre los tres que ya hay. Con sus
 > tres subdecisiones resueltas y medidas (→ [ADR 0006](../docs/adr/0006-osculating-vs-mean-elements.md)).
 > El aviso que llevaba tres documentos escrito pasa a ser un `DomainError`, y en
@@ -29,33 +61,37 @@
 
 | | |
 |---|---|
-| Etapa cerrada | **1 — `core/`** |
-| En curso | **2.1 — `orbits/`**. Hecho: `frames.py`, `kepler.py`, `perturbations.py`, `propagator.py`. Siguiente: `tle.py` |
-| Física implementada | Marcos y escalas de tiempo · dos cuerpos · gravedad zonal J2/J3/J4 y teoría secular de J2 · propagación sobre una rejilla temporal, con época y método explícitos · **el tipo de elemento (osculador/medio) como parte del tipo, no como aviso** |
-| Novedad de esta entrada | **Las siete inconsistencias abiertas, cerradas** (§14): el marco que se guardaba como cadena, la inmutabilidad que no lo era en los tres contenedores, el aliasing de `relabelled_as`, tres arreglos documentales, y **C1 — los 219 km, que resultaron falsos** |
-| Novedad de la entrada anterior | **La bandera osculador/medio, con sus tres subdecisiones cerradas.** `ClassicalElements` lleva un `ElementType` igual que lleva su `Frame`; `coe_to_rv` exige osculadores y `secular_rates_j2` exige medios, los dos con `DomainError`. No hay conversión: Brouwer-Lyddane sigue sin existir, así que la bandera es hoy **una puerta cerrada que marca dónde haría falta**, no un paso más |
-| Novedad de dos entradas atrás | Se envía un enum incompleto a propósito: `PropagationMethod` tiene dos miembros y el modo analítico de J2 **no existe** en vez de existir roto |
+| Etapa cerrada | **1 — `core/`** y **2.1 — `orbits/`** |
+| En curso | **2.2 — `channel/`**. El canal óptico, que es donde el proyecto se juega la credibilidad: ver la decisión de alcance y la política de citas abajo |
+| Física implementada | Marcos y escalas de tiempo · dos cuerpos · gravedad zonal J2/J3/J4 y teoría secular de J2 · propagación sobre una rejilla temporal, con época y método explícitos · **el tipo de elemento (osculador/medio) como parte del tipo, no como aviso** · **parseo de TLE y propagación SGP4**, con época propia y sin construir jamás un `ClassicalElements` medio · **ángulos de visión, distancia oblicua, velocidad de rango y point-ahead** desde una `Trajectory` en TEME · Walker-Delta, SSO y traza repetida (escrito, aparcado) |
+| Novedad de esta entrada | **Los dos últimos módulos de 2.1.** `geometry.py` (§16): una sola rotación TEME→ITRF dentro de `look_angles`, así que no hay un segundo sitio donde una mezcla de marcos se cuele; point-ahead **con factor 2**, medido en 50.6 µrad; Doppler deliberadamente fuera, como función aparte que consume `range_rate_km_s`. `constellations.py` (§17): espaciado en anomalía **media**, no verdadera, con su control negativo que demuestra por qué |
+| Novedad de la entrada anterior | **Las siete inconsistencias abiertas, cerradas** (§14): el marco que se guardaba como cadena, la inmutabilidad que no lo era en los tres contenedores, el aliasing de `relabelled_as`, tres arreglos documentales, y **C1 — los 219 km, que resultaron falsos** |
+| Novedad de dos entradas atrás | **La bandera osculador/medio, con sus tres subdecisiones cerradas.** `ClassicalElements` lleva un `ElementType` igual que lleva su `Frame`; `coe_to_rv` exige osculadores y `secular_rates_j2` exige medios, los dos con `DomainError`. No hay conversión: Brouwer-Lyddane sigue sin existir, así que la bandera es hoy **una puerta cerrada que marca dónde haría falta**, no un paso más |
 
-Verificación ejecutada:
+Verificación ejecutada **el 2026-09-10, con la etapa 2.1 entera en el árbol**
+(estos números sí se han vuelto a correr, por la misma regla que costó los
+«219 km» de §14.1):
 
 ```bash
 uv run ruff check .          # All checks passed!
-uv run ruff format --check . # all files already formatted
-uv run mypy                  # Success: no issues found in 28 source files
-uv run pytest                # 625 passed  (586 + 36 tests + 3 doctests nuevos, §14)
-uv run pytest --cov          # 99 % global · frames/kepler/perturbations/propagator 100 %
+uv run ruff format --check . # 35 files already formatted
+uv run mypy                  # Success: no issues found in 35 source files
+uv run pytest                # 740 passed in 32.28s
+uv run pytest --cov          # 99 % global (1357 sentencias, 288 ramas, 8 sin cubrir)
 ```
 
-La suite sigue en ~20 s: la bandera no añade integraciones, solo comparaciones de
-etiqueta y tests de forma de API. La cobertura de los cuatro módulos de `orbits/`
-se mantiene en 100 %, ramas incluidas — las dos guardas nuevas se ejercitan por
-los dos lados.
+Cobertura por módulo de `orbits/`: `frames`, `kepler`, `perturbations`,
+`propagator`, `geometry`, `tle` y `_validation` al **100 %**, ramas incluidas.
+`constellations.py` se queda en **96 %** — las cuatro sentencias sin cubrir son
+las ramas de fallo de `brentq` en la traza repetida, y quedan así a propósito
+porque el módulo está aparcado.
 
-La suite está en ~20 s. Todo el coste son integraciones DOP853: son el oráculo de
-`perturbations.py` y no hay forma barata de tenerlo. `propagator.py` añade poco
-—casi todos sus casos son una revolución— salvo el único caso de un día, marcado
-`slow`. Si llega a molestar, el sitio donde recortar es el número de revoluciones,
-no las tolerancias.
+La suite pasa de ~20 s a **32 s**. Todo el coste añadido son las integraciones de
+`constellations.py` y los 24 casos de `geometry.py` contra la referencia
+congelada de astropy. Todo el coste base siguen siendo integraciones DOP853: son
+el oráculo de `perturbations.py` y no hay forma barata de tenerlo. Si llega a
+molestar, el sitio donde recortar es el número de revoluciones, no las
+tolerancias.
 
 ---
 
@@ -1281,3 +1317,690 @@ Documentos: ADR 0004, 0005 y 0006; `CLAUDE.md`; `ROADMAP.md`;
 
 Verificación: `ruff`, `ruff format`, `mypy` (28 ficheros), **625 tests en 12 s**,
 99 % de cobertura global.
+
+---
+
+## 15. `orbits/tle.py` — las decisiones (→ [ADR 0007](../docs/adr/0007-tle-and-sgp4-propagation.md))
+
+> Esta sección va al final, como la 14, y por la misma razón: no invalidar las
+> referencias `§N` que el resto del fichero y `ROADMAP.md` ya hacen entre sí.
+
+### Qué es un TLE, para quien llegue nuevo
+
+Un TLE («Two-Line Element set», juego de dos líneas de elementos) es el formato
+con el que casi toda la comunidad de seguimiento de satélites publica una
+órbita: dos líneas de texto de 69 caracteres, columnas fijas. No son seis
+números cualesquiera — son los parámetros de entrada de un modelo analítico
+concreto, **SGP4**, y solo tienen sentido físico si se interpretan con ese
+modelo. Este módulo envuelve el paquete `sgp4` de PyPI (que ahora es
+dependencia **del núcleo** en `pyproject.toml`, no un extra: un TLE sin
+propagador para leerlo no sirve de nada) en vez de reimplementar SGP4, tal como
+pedía `notes/ROADMAP.md` §2.1.5.
+
+### Las tres piezas que ya estaban decididas, y que este módulo solo cumple
+
+1. **No entra por `propagate()`.** Ya lo decía el ADR 0005: SGP4 devuelve
+   estado en TEME directamente, así que el camino TLE → posición no pasa por
+   `coe_to_rv` ni por `secular_rates_j2`. Hay una función propia,
+   `propagate_tle`, con su propia firma.
+2. **Nunca se construye un `ClassicalElements` con los elementos medios de un
+   TLE.** Son de Brouwer con la corrección de Kozai, referidos a WGS-72 — no
+   los osculadores de `rv_to_coe`, y mezclarlos es el error de kilómetros que
+   `ElementType` (ADR 0006) existe para prevenir. `tle.py` no construye
+   ningún `ClassicalElements`, así que no hace falta una guarda de tipos: la
+   disciplina es no escribir esa línea. `MEAN_KOZAI_SGP4`, el miembro que el
+   ADR 0006 dejó previsto para este momento exacto, **sigue sin usarse** —
+   correctamente, porque nada lo necesita todavía.
+3. **`PropagationMethod` gana `SGP4`.** Es la decisión de diseño de esta
+   entrada que más defensa necesita, y se desarrolla abajo.
+
+### La decisión de esta entrada: `SGP4` en el enum, y `propagate()` sin rama para él
+
+`Trajectory.method` está tipado como `PropagationMethod` porque es el campo
+que responde a «¿cómo se produjo esta trayectoria?», y esa pregunta la tiene
+que poder responder cualquier `Trajectory` — también las que salen de
+`propagate_tle`, no solo las de `propagate()`.
+
+La alternativa obvia era **no** tocar `PropagationMethod` (que hasta ahora
+documentaba estrictamente «qué modelo sabe correr `propagate()`») e inventar
+un tipo de campo distinto para `Trajectory.method`, o una clase de trayectoria
+aparte para SGP4. Se descartó por dos razones:
+
+- Habría dos formas de decir «cómo se hizo esto» en el mismo proyecto.
+- El test `test_the_enum_holds_exactly_the_implemented_modes` de
+  `test_propagator.py` (ADR 0005) ya trata el enum como **el registro completo
+  de procedencias**, no solo «lo que sabe ejecutar `propagate()`». Una segunda
+  taxonomía paralela lo habría hecho mentir sobre lo que mide.
+
+**La consecuencia que hay que aceptar por escrito:**
+`propagate(elements, grid, method=PropagationMethod.SGP4)` **no funciona**.
+`propagate()` sigue sin rama para `SGP4` —no tiene sentido que la tenga: SGP4
+no toma un `ClassicalElements`, toma un `Satrec`— y su `else: raise
+NotImplementedError` de cierre, que ya existía comentado `# pragma: no cover -
+unreachable until the enum grows` (ADR 0005), pasa a ser **alcanzable y
+correcto**: pedirle a `propagate()` el modo `SGP4` falla alto y claro, no en
+silencio. El test `test_every_declared_member_actually_propagates` se divide
+en dos: uno que sigue iterando solo sobre los miembros que `propagate()` sabe
+ejecutar, y uno nuevo que confirma que `SGP4` da `NotImplementedError` ahí y
+solo se produce vía `propagate_tle`.
+
+**Dos categorías de «por qué un miembro no corre en `propagate()`», y por qué
+no hay que confundirlas** — el mismo argumento que ya sostiene el enum
+incompleto del ADR 0005, aplicado ahora a un caso distinto:
+
+| Miembro | Categoría | Qué significa |
+|---|---|---|
+| `J2_SECULAR_ANALYTIC` | **Ausencia total** | Ni siquiera existe como nombre. No hay ningún sitio donde buscarlo, porque construirlo hoy exigiría alimentarlo con osculadores (ADR 0005, ADR 0006) |
+| `SGP4` | **Presencia con ruta propia** | Existe, es correcto, y vive en `propagate_tle`, no en `propagate()`. `NotImplementedError` en vez de un nombre desconocido es la pista de que hay que buscar, no de que el nombre está mal escrito |
+
+### `parse_tle` valida lo que `Satrec.twoline2rv` no valida — verificado, no asumido
+
+Comprobado en un entorno de comprobación aparte (pip install `sgp4`, probado a
+mano), con la línea real de la ISS
+(`1 25544U 98067A   20029.91700964  .00001177  00000-0  29466-4 0  9996` /
+`2 25544  51.6446  29.6162 0004826 145.9021 214.2494 15.49332174212781`):
+
+- **El checksum no se comprueba.** Corrompiendo el último carácter de la
+  línea 1 (el propio dígito de checksum) y llamando a `Satrec.twoline2rv`:
+  **se acepta sin error**. El checksum de un TLE es la suma de las columnas
+  1-68 (cada `-` cuenta 1, cualquier otro carácter no numérico cuenta 0)
+  módulo 10, comparada con la columna 69 — y `sgp4` no lo mira.
+- **La entrada basura no lanza excepción.**
+  `Satrec.twoline2rv("garbage", "more garbage")` no lanza nada: devuelve un
+  objeto con `satnum=0` y deja, **en silencio**, `satrec.error == 2` (código
+  de `sgp4.api.SGP4_ERRORS`, «nm is less than zero») — nadie lo ve si no se
+  comprueba a propósito.
+
+`parse_tle` hace tres cosas que `Satrec.twoline2rv` no hace, las tres con
+`DomainError`: valida longitud (69) y prefijo de cada línea, recalcula y
+compara el checksum, y comprueba `satrec.error` tras la llamada. Es el mismo
+principio de la tabla de decisión del ADR 0005 («un default silencioso es
+peor que un nombre ausente»), aplicado a una dependencia de terceros: una
+librería que no avisa es, para quien la envuelve y no lo comprueba,
+indistinguible de un `except: pass` propio.
+
+### WGS-72 explícito, aunque ya sea el defecto
+
+Verificado: `Satrec.twoline2rv(line1, line2)` sin tercer argumento usa WGS-72
+por defecto (`mu = 398600.8 km³/s²`, igual que pasando `WGS72` explícito, y
+distinto de `WGS84`, que da `mu = 398600.5`). `parse_tle` lo pasa explícito de
+todos modos: una TLE **se define** respecto a WGS-72 —parte de la
+especificación de SGP4, no una elección de quien la usa— y confiar en que el
+defecto de una dependencia siga siendo el mismo mañana es el acoplamiento
+implícito que el ADR 0005 ya rechazó para `method` en `propagate()`. El
+proyecto ya tiene la distinción hecha explícita:
+`quoss.core.constants.WGS72_MU_KM3_S2` (= 398 600.8), con su comentario «*Note:
+not the WGS-84 value*», y `WGS72_RADIUS_EQUATORIAL_KM` (= 6378.135 km) —
+distinto de `EGM96_RADIUS_EQUATORIAL_KM` (6378.1363 km) y de
+`WGS84_RADIUS_EQUATORIAL_KM`, la misma disciplina de tres radios para tres
+propósitos que documenta §8.
+
+### La época del TLE es la única época posible
+
+`propagate_tle(satrec, t_s)` construye internamente
+`TimeGrid(epoch_jd=tle_epoch_jd(satrec), t_s=t_s)` en vez de aceptar un
+`TimeGrid` ya construido por el llamante. Un `ClassicalElements` no lleva
+época propia —por eso `propagate()` la exige dentro del `TimeGrid`—, pero un
+`Satrec` **ya la lleva dentro** (`satrec.jdsatepoch + satrec.jdsatepochF`).
+Aceptar una época externa distinta abriría la puerta a una `Trajectory` cuyo
+`grid.epoch_jd` mintiera sobre a qué instante están referidos los elementos —
+el mismo espíritu que «unos elementos en un marco que rota no son unos
+elementos» del ADR 0002, o el propio `ElementType` del ADR 0006: la forma de
+la API cierra el error por construcción, no con una comprobación que alguien
+podría olvidar.
+
+### La conversión JD/segundos parte `fr` para no perder precisión
+
+SGP4 recibe el tiempo como `(jd, fr)` —parte entera y fraccionaria del día
+juliano— porque, literalmente según `sgp4.conveniences.jday_datetime`, `fr`
+«can, unlike the first float, be accurate down to very small fractions of a
+second» mientras se mantenga pequeño (un `float64` en torno a JD ≈ 2 460 000
+ya gasta siete dígitos de mantisa en la parte entera). `propagate_tle` calcula,
+por muestra:
+
+```
+whole_days = floor(satrec.jdsatepochF + t_s / 86400)
+jd = satrec.jdsatepoch + whole_days
+fr = satrec.jdsatepochF + t_s / 86400 - whole_days
+```
+
+de modo que `fr` se queda en `[0, 1)` sin importar cuántos días de `t_s` hayan
+pasado, en vez de dejar crecer `fr = satrec.jdsatepochF + t_s/86400` sin
+límite — que empezaría a competir otra vez por los mismos bits de mantisa que
+partir el tiempo en dos pretendía liberar.
+
+**Medido en `tests/orbits/test_tle.py::TestJdFrSplitPrecision`:** propagando la
+misma TLE a `t_s` = 30 días por las dos vías, la diferencia en posición y en
+velocidad es **exactamente cero, hasta el último bit**. Esto no dice que
+partir `fr` sea innecesario: dice que esta build concreta de `sgp4` (la
+extensión C, `vallado_cpp.abi3.so`) ya reduce `jd + fr` en doble precisión por
+dentro, así que ninguna versión futura de la dependencia está obligada a
+seguir haciéndolo. Partir `fr` sigue siendo lo correcto por higiene y por
+ceñirse al contrato que documenta el propio paquete — no porque este test
+pueda medir hoy un error que no existe. Exactamente el tipo de hallazgo que la
+norma 1 de `CLAUDE.md` pide reportar tal cual sale, sin forzarlo a sonar como
+una corrección que no fue.
+
+### La verificación V3 llega gratis
+
+El paquete `sgp4` trae, en su propio directorio instalado, `SGP4-VER.TLE` y
+`tcppver.out` — los datos de verificación oficiales del caso AIAA 2006-6753
+(Vallado, Crawford, Hujsak, Kelso, *Revisiting Spacetrack Report #3*, 2006),
+la referencia estándar de la industria. Cumple las tres condiciones de
+`tests/golden/README.md` para un oráculo V3 que no necesita congelarse aparte
+—dependencia del núcleo, determinista, comparado muy por encima de su propio
+error—, el mismo argumento que ya vale para el integrador DOP853 de
+`perturbations.py` (§8).
+
+**Medido en `tests/orbits/test_tle.py::TestAgainstVallado2006VerificationData`**,
+sobre cuatro regímenes (LEO de bajo y de moderado arrastre, Molniya con
+`e = 0.6877`, y un caso de decaimiento fuerte): el peor residuo es **7.3e-9 km**
+en posición y **7.7e-10 km/s** en velocidad — consistente con el redondeo a 8
+decimales que imprime el propio `tcppver.out` (1e-8 km de resolución), no con
+una diferencia física, porque las dos rutas evalúan la misma teoría SGP4. Las
+tolerancias del test quedan un orden de magnitud por encima de lo medido. Esto
+sí es una medición de este repo, distinta de la cita de §2 sobre el acuerdo de
+0.1 mm entre la versión Python pura de `sgp4` y su referencia C++ — esa cita
+sigue sin tener test propio y no debe confundirse con esta.
+
+### Las decisiones, en tabla
+
+| Decisión | Razón | Coste de cambiarla |
+|---|---|---|
+| **`tle.py` no entra por `propagate()`; `propagate_tle` en su propio módulo** | Un TLE se propaga con SGP4, que devuelve estado en TEME directamente. Forzar la entrada por `propagate()` reabriría la confusión medio/osculador por otra puerta (ADR 0005) | Alto |
+| **`tle.py` nunca construye un `ClassicalElements`** | Los elementos medios de un TLE son de Brouwer-Kozai/WGS-72, no los osculadores de `kepler.py`. La disciplina es no escribir la línea, no una guarda de tipos — no hace falta un tipo nuevo hoy | Medio |
+| **`PropagationMethod` gana `SGP4`, y `propagate()` no lo ejecuta** | `Trajectory.method` es «cómo se produjo esto» para cualquier `Trajectory`, no solo las de `propagate()`. Dos taxonomías paralelas habrían hecho mentir al test que ya trata el enum como registro completo de procedencias | Alto |
+| **`parse_tle` valida checksum, forma de línea y `satrec.error`** | `Satrec.twoline2rv` acepta un checksum corrupto sin error y deja `satrec.error` puesto en silencio ante entrada basura — verificado a mano, no asumido. Callar sobre ello es indistinguible de un `except: pass` propio | Bajo |
+| **WGS-72 explícito en `Satrec.twoline2rv`, aunque ya sea el defecto** | Una TLE se define respecto a WGS-72; confiar en el defecto de una dependencia es el mismo acoplamiento implícito que el ADR 0005 ya rechazó para `method` | Trivial |
+| **`propagate_tle` construye su propio `TimeGrid`, no acepta uno externo** | Un `Satrec` ya lleva su época dentro (`jdsatepoch + jdsatepochF`). Aceptar otra abriría la puerta a una `Trajectory` cuyo `epoch_jd` mintiera sobre a qué elementos se refiere | Medio |
+| **`fr` se reduce a `[0, 1)` en cada muestra en vez de dejarlo crecer** | SGP4 solo preserva precisión de sub-segundo en `fr` mientras se mantenga pequeño; dejarlo crecer con `t_s` vuelve a gastar los mismos bits de mantisa que partir el tiempo pretendía liberar. Medido a 30 días: diferencia cero con esta build de `sgp4` — higiene y contrato documentado, no una corrección de un error medible hoy | Trivial |
+| **La verificación V3 usa `SGP4-VER.TLE`/`tcppver.out` del propio paquete, sin congelar aparte** | Cumple las tres condiciones de `tests/golden/README.md`: dependencia del núcleo, determinista, muy por encima de su propio error | — |
+
+### Alternativas descartadas
+
+**Un cuarto argumento en `propagate()` para SGP4.** Habría exigido que
+`propagate()` aceptara dos tipos de primer argumento distintos
+(`ClassicalElements` o `Satrec`) según `method`, rompiendo la firma que el ADR
+0005 fija con un test sobre `inspect.signature`.
+
+**`Trajectory.method` con un tipo distinto para las trayectorias de SGP4.**
+Habría dado dos formas de decir «cómo se hizo esto» en el mismo proyecto —ver
+arriba.
+
+**Confiar en que los TLE de producción (CelesTrak, Space-Track) ya vienen bien
+formados y no comprobar checksum.** El README no admite excepciones de «la
+mayoría de los casos»: un checksum que falla en silencio es, desde fuera,
+indistinguible del `except: pass` que el README prohíbe.
+
+**Confiar en el defecto WGS-72 de `Satrec.twoline2rv` sin pasarlo explícito.**
+Es un acoplamiento implícito con la versión instalada de una dependencia — el
+mismo patrón que el ADR 0005 ya rechazó para `method` sin default.
+
+### Lo que queda abierto de este módulo
+
+- **`MEAN_KOZAI_SGP4` sigue sin usarse**, correctamente: nada en el proyecto
+  construye hoy un `ClassicalElements` a partir de los elementos medios de un
+  TLE.
+- **Brouwer-Lyddane sigue sin existir**, y este módulo no la necesita: SGP4
+  hace su propia conversión medio→osculador por dentro, con las convenciones
+  de Kozai/WGS-72. El acoplamiento «BL ↔ `tle.py`» que §13 ya corrigió por
+  escrito («El acoplamiento BL ↔ `tle.py` que el roadmap afirma está
+  sobredimensionado») queda confirmado, no reabierto.
+- **`geometry.py`**, el siguiente módulo del roadmap (2.1.6): elevación,
+  azimut, slant range, Doppler y el ángulo de point-ahead. `propagate_tle`
+  deja lista una `Trajectory` con `frame=Frame.TEME`, indistinguible en forma
+  de las que produce `propagate()`, así que `geometry.py` no tendrá que
+  ramificar según de dónde vino la trayectoria.
+
+Verificación ejecutada:
+
+```bash
+uv run ruff check .          # All checks passed!
+uv run ruff format --check . # 30 files already formatted
+uv run mypy                  # Success: no issues found in 30 source files
+uv run pytest                # 656 passed
+uv run pytest --cov          # 99 % global · orbits/tle.py 100 %
+```
+
+De 655 a 656 tests: 27 nuevos en `tests/orbits/test_tle.py` más uno añadido
+después para cerrar la única rama sin cubrir de `_validate_tle_line` (columna
+69 presente pero no numérica — ninguno de los casos anteriores la alcanzaba,
+porque el de longitud incorrecta y el de basura fallan antes, en la
+comprobación de longitud o de prefijo).
+
+---
+
+## 16. `orbits/geometry.py` — de trayectoria a lo que ve un telescopio
+
+### Qué hace este módulo, para quien llegue nuevo
+
+Todo lo anterior en `orbits/` responde «dónde está el satélite» — un vector en
+un marco que gira con las estrellas, no con la Tierra (TEME, ver ADR 0002).
+Una estación en tierra necesita otra pregunta: hacia dónde giro el telescopio
+(**azimut**, medido desde el norte geográfico, en sentido horario), cuánto lo
+inclino (**elevación**, 0° en el horizonte, 90° en el cenit), y a qué
+distancia está (**slant range**, la línea recta, no la distancia sobre el
+suelo). Las tres se miden contra la **vertical local** — la dirección de una
+plomada, que en una Tierra achatada *no* apunta al centro del planeta — y ese
+marco topocéntrico (ENU, East-North-Up) ya existía: `frames.enu_from_itrf` lo
+construye desde la normal geodésica WGS-84. Lo único que faltaba era
+alimentarlo con el vector correcto (satélite menos estación, expresados en el
+mismo marco) y leer elevación/azimut/rango de sus tres componentes — eso es
+`look_angles`.
+
+### Por qué hay que rotar a ITRF antes de restar nada
+
+Una `Trajectory` vive en TEME (inercial); una estación vive fija sobre la
+Tierra, que gira. Restar la posición ITRF de la estación de la posición TEME
+del satélite mezclaría dos vectores de marcos distintos y daría un número que
+no significa nada: la estación parecería barrer el cielo a la velocidad de
+rotación de la Tierra incluso para un satélite parado. `look_angles` rota
+primero (`frames.teme_to_itrf_state`, la misma rotación por GMST que ya existía)
+y todo lo que devuelve —elevación, azimut, rango, tasa de rango, ángulo de
+point-ahead— sale de ese único vector ya rotado. Un solo sitio donde un error
+de marco podría esconderse, no cinco.
+
+### La velocidad de la estación no hace falta sumarla — y por qué
+
+Tasa de rango y ángulo de point-ahead necesitan una velocidad *relativa*. La
+velocidad de la estación en ITRF es exactamente cero por construcción —eso es
+lo que significa «fijo sobre la Tierra»—, así que «relativo a la estación» y
+«la velocidad ITRF del satélite» son el mismo vector. Hacerlo en TEME en
+cambio obligaría a sumar aparte el término `omega x r` de la estación (el
+mismo que `teme_to_itrf_state` ya documenta para el satélite) — exactamente el
+tipo de término que una implementación con prisa olvida.
+
+### El ángulo de point-ahead, y el factor de 2 que es fácil perder
+
+La luz tarda un tiempo `tau = R/c` en cruzar el rango `R`. En ese tiempo el
+satélite se mueve, así que apuntar a su posición *aparente* (la que se observa
+ahora) no apunta a donde estará cuando llegue el haz transmitido — ni un haz
+transmitido hacia esa posición aparente vuelve por la misma línea a un
+terminal coubicado, porque esa señal también se habrá movido para cuando
+regrese. Solo importa la componente de velocidad relativa **transversal** a la
+línea de visión (un acercamiento o alejamiento puramente radial no cambia
+hacia dónde hay que apuntar, solo el rango), así que el módulo proyecta la
+velocidad relativa sobre el plano perpendicular a esa línea.
+
+Para una sola vía (un telescopio en tierra que dispara hacia un satélite que
+recibirá los fotones tras `tau`), el blanco se ha movido `v_perp * tau =
+v_perp * R / c`, un ángulo `v_perp / c` visto desde el emisor. Este módulo
+devuelve **el doble** de eso, `PAA = 2 v_perp / c`, porque un segmento QKD en
+tierra no es un emisor de una sola vía: es un terminal monostático que tiene
+que transmitir adelantado por una vía y a la vez recibir por la vía que la luz
+realmente sigue, y esas dos vías divergen el mismo ángulo en sentidos
+opuestos — el mismo factor 2 que aparece en la literatura de enlaces ópticos
+inter-satélite para un terminal bidireccional [2].
+
+**Medido, no afirmado:** para un paso que alcanza 67.1° de elevación sobre
+Castelldefels (estación propia del CTTC, 41.2750° N, 1.9875° E, 30 m) en la
+SSO de 700 km que ya usa este repo (los mismos números del ejemplo de
+`secular_rates_j2` en `perturbations.py`), `tests/orbits/test_geometry.py::TestPointAheadAngle`
+encuentra un ángulo de point-ahead de **50.6 µrad** en ese punto de máxima
+elevación — mayor que los 35 µrad que citaba antes `notes/ROADMAP.md`, porque
+esa cifra no llevaba el factor 2. Las dos cifras siguen siendo mayores que el
+jitter de apuntado que este proyecto modelará más adelante, que es la única
+afirmación que hacía la nota del roadmap.
+
+### El Doppler, deliberadamente fuera de este módulo
+
+`look_angles` se detiene en `range_rate_km_s` — una cantidad puramente
+geométrica, km/s, que no sabe a qué longitud de onda transmite un terminal.
+`doppler_shift_hz` convierte una tasa de rango en un desplazamiento de
+frecuencia dada una portadora, y es una función aparte de una línea en vez de
+un campo de `LookAngles`, por la misma razón que `propagator.Trajectory` no
+guarda un modelo de gravedad (ver el docstring de ese módulo): la frecuencia
+portadora pertenece al terminal óptico, un concepto de la capa channel/system
+que todavía no existe (`notes/ROADMAP.md` etapa 2.2), y meterlo en un tipo de
+la capa `orbits/` afirmaría una dependencia que no existe.
+
+### Las decisiones, en tabla
+
+| Decisión | Razón | Coste de cambiarla |
+|---|---|---|
+| **`look_angles` exige `Trajectory.frame is Frame.TEME`** | Es el único marco que producen los propagadores de este paquete (`propagate` y `propagate_tle` por igual); aceptar otro sin comprobarlo repetiría el error de marco que la rotación de este módulo existe para cerrar | Medio |
+| **La rotación a ITRF ocurre una sola vez, dentro de `look_angles`** | Elevación, azimut, rango, tasa de rango y point-ahead salen todos del mismo vector ya rotado — un solo sitio donde un error de marco podría esconderse en vez de cinco | Alto |
+| **La velocidad relativa se calcula como la velocidad ITRF del satélite, sin sumar un término de estación** | La velocidad ITRF de un punto fijo en tierra es cero por construcción; sumar un término que vale cero no cambia el resultado pero sí abre un sitio para un error de signo | Bajo |
+| **El ángulo de point-ahead lleva factor 2** | Un terminal monostático transmite adelantado y recibe por la vía real a la vez; las dos vías divergen el mismo ángulo en sentidos opuestos — perder el factor 2 subestima el ángulo a la mitad | Alto (es exactamente el error que un lector apurado comete) |
+| **`doppler_shift_hz` es una función aparte, no un campo de `LookAngles`** | La frecuencia portadora es un parámetro del terminal óptico (capa channel/system, `notes/ROADMAP.md` 2.2), no de la geometría orbital — la misma separación que ya aplica `Trajectory` para el modelo de gravedad | Medio |
+| **Las coordenadas de la estación son escalares, no vectorizables a varias estaciones** | Seleccionar o agregar entre estaciones es `system/multi_ogs.py` (etapa 3); vectorizarlo aquí adelantaría una decisión que no le toca a este módulo | Bajo |
+
+### Alternativas descartadas
+
+**Devolver el desplazamiento Doppler directamente desde `look_angles`.**
+Habría obligado a esta función a recibir una frecuencia portadora que no tiene
+nada que ver con la geometría orbital, y a inventar un valor por defecto (o
+exigirlo siempre) para una cantidad que hoy no tiene dueño en el proyecto —
+ver `notes/ROADMAP.md` etapa 2.2.
+
+**Point-ahead sin el factor 2, como en un enlace de una sola vía.** Es la
+lectura más simple de la fórmula del retraso de luz, y es la que da la cifra
+de 35 µrad que este roadmap citaba antes de tener la cuenta hecha. Un
+terminal QKD en tierra transmite y recibe a la vez por vías que divergen
+geométricamente, así que la cifra de una sola vía subestima el ángulo real a
+la mitad — el tipo de error que «funciona» hasta que alguien mide el pase real.
+
+**Filtrar por visibilidad (elevación mínima) dentro de `look_angles`.** Es la
+etapa 3 del roadmap (`system/passes.py`), una decisión distinta de «qué
+elevación tiene el satélite ahora». Mezclar las dos habría obligado a este
+módulo a inventar un umbral que no le corresponde.
+
+### Verificación V3: el hueco de `tests/golden/README.md` para look angles, cerrado parcialmente
+
+`tests/golden/README.md` nombraba explícitamente «GMAT o Orekit cross-checks
+para look angles, para `orbits/geometry.py`» como hueco sin llenar.
+`tests/golden/generators/gen_geometry_reference.py` lo cierra con `astropy`
+en vez de GMAT/Orekit (ya es dependencia del grupo `reference`, el mismo que
+usa `gen_frames_reference.py`): construye un marco `TEME` de astropy, lo
+transforma a `AltAz` en la `EarthLocation` de la estación con refracción
+atmosférica desactivada (`pressure=0`, el valor por defecto de astropy —la
+misma cantidad puramente geométrica que calcula `look_angles`) y registra
+elevación, azimut y rango. Medido sobre 24 combinaciones estación × estado ×
+época (4 estaciones ya usadas en `gen_frames_reference.py`, 3 estados TEME
+plausibles, 2 épocas): elevación y azimut concuerdan a milésimas de grado,
+rango a 2.2e-4 relativo — muy por debajo de lo que produciría un bug de forma,
+de signo o de mezcla de marcos (decenas de grados, o un rango de signo
+equivocado).
+
+**Lo que sigue sin oráculo independiente:** `range_rate_km_s` y el ángulo de
+point-ahead. `AltAz` es una función solo de la posición, así que no dice nada
+de una velocidad. Quedan como V1 — comprobados contra una diferencia finita
+del propio `range_km` que este módulo también calcula (que valida que la
+fórmula analítica es realmente la derivada de ese rango, no que ambas sean
+físicamente correctas) y contra geometrías construidas a mano donde el
+resultado se conoce por construcción (velocidad puramente radial → point-ahead
+cero; velocidad puramente transversal → point-ahead exactamente `2v/c`). Un
+hueco declarado, per el README, es mejor que un V2 o V3 inventado.
+
+### Lo que queda abierto de este módulo
+
+- **`system/multi_ogs.py`** (etapa 3) es quien decide entre varias estaciones;
+  `look_angles` solo acepta una.
+- **`system/passes.py`** (etapa 3) es quien decide qué elevación cuenta como
+  visible; este módulo no filtra ni avisa, solo informa (incluida la
+  elevación negativa).
+- El siguiente módulo del roadmap, **2.1.7 `orbits/constellations.py`**
+  (Walker-Delta, SSO, traza repetida), no depende de este: genera conjuntos de
+  `ClassicalElements`, no ángulos de visión.
+
+Verificación ejecutada:
+
+```bash
+uv run ruff check .                                  # All checks passed!
+uv run ruff format --check .                         # 35 files already formatted
+uv run mypy                                            # Success: no issues found in 34 source files
+uv run pytest tests/orbits/test_geometry.py -q         # 27 passed
+uv run pytest tests/orbits/test_geometry.py --cov=quoss.orbits.geometry --cov-report=term-missing
+                                                        # 100 % (82/82 sentencias, 18/18 ramas)
+uv run pytest -q --deselect \
+  tests/unit/test_conventions.py::TestUnitConventionIsEnforced::test_angle_conversion_only_at_the_boundary \
+  --ignore=tests/orbits/test_constellations.py         # 688 passed
+```
+
+La deselección de `test_angle_conversion_only_at_the_boundary` y el
+`--ignore` de `test_constellations.py` son por el módulo 2.1.7, en desarrollo
+en paralelo en el momento de escribir esta entrada — no por nada en
+`geometry.py`, cuyo propio `ruff check`/`mypy`/`pytest` están limpios sin
+ninguna exclusión.
+
+## 17. `orbits/constellations.py` — Walker-Delta, SSO y traza repetida (→ [ADR 0008](../docs/adr/0008-constellation-design.md))
+
+### Qué hace este módulo, para quien llegue nuevo
+
+`kepler.py` sabe describir una órbita; `perturbations.py` sabe cómo deriva bajo
+J2. Ninguno de los dos responde la pregunta que un escenario real hace:
+«¿cuántos satélites, en qué planos, y con qué inclinación/altitud, para cubrir
+la Tierra con el calendario que quiero?». Este módulo responde tres versiones
+de esa pregunta, cada una con una forma de problema distinta — geometría pura,
+álgebra cerrada, y una raíz numérica — y las tres se apoyan en lo que ya
+existía en vez de reimplementar nada:
+
+- **`walker_delta(...)`**: reparte `T` satélites en `P` planos con la notación
+  estándar `i:T/P/F` (Walker, 1977) y devuelve **un** `ClassicalElements` de
+  longitud `T` — nunca una lista ni un bucle que el llamante tenga que correr,
+  porque ese es exactamente el contrato de array que
+  `notes/GUIA_REIMPLEMENTACION.md` fija para todo el proyecto.
+- **`sun_synchronous_inclination_rad(a, e)`**: despeja la inclinación que hace
+  que el nodo regrese exactamente al ritmo del Sol medio — invierte en forma
+  cerrada la propia fórmula de `secular_rates_j2`, sin volver a escribirla.
+- **`repeat_ground_track_semi_major_axis_km(orbitas, días, i, e)`**: despeja el
+  semieje que hace que la traza sobre tierra se repita cada `orbitas`
+  revoluciones en `días` — aquí sí hace falta una raíz numérica
+  (`scipy.optimize.brentq`), porque `a` aparece a los dos lados de la
+  ecuación.
+
+Las tres decisiones no triviales de esta entrada están desarrolladas en el
+[ADR 0008](../docs/adr/0008-constellation-design.md); aquí van con los números
+que las miden, en el estilo de la norma 1 de `CLAUDE.md`: qué es, por qué así,
+y un ejemplo medido por un test que corre.
+
+### Decisión 1 — el espaciado dentro de plano es en anomalía media, no verdadera
+
+**Qué es.** Un patrón Walker-Delta reparte `T/P` satélites por plano a
+intervalos iguales de un ángulo. Hay dos candidatos: la anomalía verdadera
+`nu` (el ángulo real, medido desde el periastro, que casi todo libro de texto
+usa para dibujar el patrón) y la anomalía media `M` (un ángulo que avanza a
+ritmo constante `n = sqrt(mu/a^3)` y que **no** es la posición real del
+satélite salvo en una órbita circular).
+
+**Por qué así.** Dos satélites que comparten semieje comparten movimiento
+medio `n`, así que `M_1(t) = M_{1,0} + n t` y `M_2(t) = M_{2,0} + n t`: su
+diferencia `M_2 - M_1` es **exactamente constante**, para cualquier `t`, bajo
+movimiento kepleriano puro. La anomalía verdadera no tiene esa propiedad —
+`d(nu)/dt` no es constante en una órbita excéntrica, es más rápida cerca del
+periastro — así que un patrón espaciado en anomalía verdadera se deforma y se
+reconstruye en cada vuelta: es el mismo bamboleo que le da a la traza de una
+órbita excéntrica su forma de analema. Para las excentricidades casi nulas que
+vuela casi cualquier constelación real la diferencia es casi nula (concuerdan
+a `O(e)`), pero como el módulo acepta cualquier `e < 1`, la elección se hace
+explícita en vez de dejarla al azar de cuál anomalía resultara cómoda de
+escribir.
+
+**Medido en este repo.** Construyendo un patrón `12:12/3/1` con `e = 0.3`
+(`tests/orbits/test_constellations.py::TestWalkerDeltaInvariants`):
+
+- El espaciado en anomalía **media**, recuperado con `kepler.mean_from_true_anomaly`
+  a partir de lo que el módulo realmente almacena (anomalía verdadera), es
+  `360/4 = 90°` entre satélites consecutivos del mismo plano, **exacto a
+  1e-12 rad** (`test_mean_anomaly_spacing_within_plane_is_exact`).
+- El espaciado en anomalía **verdadera** del mismo patrón **no** es constante
+  — los pasos difieren entre sí en más de `1e-6` rad, muy por encima del ruido
+  de redondeo (`test_true_anomaly_spacing_is_not_exact_once_eccentric`, el
+  control negativo).
+
+### Decisión 2 — el sentido de `F`, y qué se hizo al no encontrar un ejemplo Vallado citable
+
+**Qué es.** `F` (con `0 <= F < P`) desplaza cada plano un múltiplo de
+`360/T` respecto al plano anterior, en la **misma** dirección en que crece el
+índice de plano (y por tanto el RAAN). Invertir ese signo —desplazar el plano
+`p` **hacia atrás** en vez de hacia delante— produce un patrón con el
+espaciado de RAAN correcto y el espaciado dentro de plano correcto: a simple
+vista parece bien, y es exactamente el error que este apartado existe para
+que no se cuele.
+
+**Por qué así.** Se buscó un ejemplo Walker-Delta de Vallado (*Fundamentals of
+Astrodynamics and Applications*, 4.ª ed.) resuelto con número de página, para
+transcribirlo como V2 igual que `test_kepler.py` transcribe sus ejemplos de
+Kepler. No se localizó con la confianza que ese estándar exige, así que —por
+la regla explícita del proyecto contra inventar una cita— **no se afirma
+ningún V2 aquí**. La corrección descansa en tres cosas: los invariantes V1 que
+no necesitan ninguna fuente externa (espaciado de RAAN exacto, espaciado de
+anomalía media exacto, recuento total exacto), un caso resuelto a mano, y el
+acuerdo con cómo el patrón está documentado de forma independiente en la
+documentación de `walkerDelta` de MATLAB Aerospace Toolbox (que describe el
+paso entre planos como exactamente `F * 360/T` grados) — verificado por
+búsqueda dirigida, no citado de memoria.
+
+**Medido en este repo.** El caso a mano, `6:6/3/1`
+(`tests/orbits/test_constellations.py::TestPhasingDirectionAgreesWithConvention::test_six_six_three_one_by_hand`,
+reproducido también como doctest del módulo): plano 0 = `[0°, 180°]`, plano 1 =
+`[60°, 240°]`, plano 2 = `[120°, 300°]`. Si el signo estuviera invertido, el
+plano 1 leería `[-60°, 120°] = [300°, 120°]` en su lugar — los dos patrones
+tienen el mismo RAAN por plano y el mismo espaciado interno, así que solo el
+signo del desfase los distingue.
+`test_phase_offset_between_planes_is_exactly_f_times_360_over_t` repite el
+chequeo sobre cuatro patrones más (`24/6/1`, `24/3/2`, `60/5/3`, `8/4/3`).
+
+### Decisión 3 — la SSO se despeja, la traza repetida se busca con `brentq`
+
+**Qué es.** `secular_rates_j2` da `dOmega/dt = -1.5 n J2 (R/p)^2 cos(i)`.
+Fijados `a` y `e`, es una ecuación **lineal en `cos(i)`**: despejar es una
+división. La condición de traza repetida, en cambio, iguala la tasa nodal del
+satélite (que depende de `a` a través de `n`, `dOmega/dt` y `domega/dt`) con
+la rotación terrestre relativa al nodo (que depende de `a` a través de
+`dOmega/dt` otra vez): `a` aparece a los dos lados, así que no hay despeje
+posible y hace falta una raíz numérica.
+
+**Por qué así, y no al revés en los dos casos.** Meter `scipy.optimize` en la
+SSO sería resolver con fuerza bruta un problema que ya viene resuelto, y de
+paso reimplementar por la puerta de atrás una fórmula que `perturbations.py`
+ya tiene probada — el mismo argumento que el ADR 0004 ya aplicó a los
+armónicos zonales. `brentq` (no un Newton escrito a mano) para la traza
+repetida, porque converge garantizado para cualquier corchete que cambie de
+signo, sin necesitar una derivada — el mismo argumento que ya documenta el
+solver iterativo de `frames.py` para la inversión geodésica. El corchete es la
+estimación de dos cuerpos (ignorando J2 del todo) ensanchada un 5 % a cada
+lado: generoso porque la contribución de J2 a la condición de resonancia es
+`O(J2)` ~ 1e-3 relativo y la corrección de rotación terrestre no pasa de ~1.4 %
+en los regímenes de este proyecto.
+
+**Medido en este repo.**
+
+- Invertir `a=7078.137 km, e=0.001` (el mismo caso que el docstring de
+  `secular_rates_j2` cita con `i=98.19°` → `0.9859°/día`) recupera
+  `i = 98.19°` a la precisión con la que ese número está citado
+  (`TestSunSynchronousClosedForm::test_recovers_the_secular_rates_j2_docstring_example`).
+  El viaje de ida y vuelta —despejar `i`, meterla otra vez en
+  `secular_rates_j2`— cierra con un residuo `< 1e-17` rad/s: no es una
+  segunda medición que coincide, es la misma igualdad resuelta para la
+  incógnita contraria
+  (`test_round_trip_through_secular_rates_j2_is_exact`).
+- Con `j2 = 0` la condición de traza repetida se reduce idénticamente a la de
+  dos cuerpos, y el semieje que devuelve `brentq` coincide con
+  `semi_major_axis_from_period_km` aplicado al período de dos cuerpos, a
+  `1e-6` km
+  (`TestRepeatGroundTrackResonance::test_reduces_to_the_two_body_closed_form_when_j2_is_zero`).
+- El corchete del 5 % **puede** fallar, y se buscó deliberadamente un caso que
+  lo hiciera para probar que la función lo dice en vez de devolver un número
+  fuera de rango: `orbitas=16, días=1, i=63.4°, e=0.9` deja el residuo de
+  resonancia del **mismo signo** en los dos extremos del corchete
+  (`+3.27e-4` y `+3.78e-4` rad/s), así que `brentq` no tiene nada que
+  bisectar y la función levanta `ConvergenceError`
+  (`TestRepeatGroundTrackConvergenceError`).
+- WRS-2 de Landsat-8 (233 órbitas / 16 días, `i=98.2°`, ~705 km publicados,
+  misma fuente NASA/USGS que ya usa `test_perturbations.py::TestPublishedSunSynchronous`)
+  da una comprobación de plausibilidad, **no un V2**: el semieje resuelto
+  corresponde a ~699.6 km de altitud, **5.4 km (0.08 %) por debajo** de la
+  cifra publicada. Esa brecha **no** se explica por la precisión publicada de
+  la inclinación (±0.05° mueve la solución solo ~0.08 km, medido por
+  búsqueda directa) ni de la excentricidad (~0.00002 km) — así que queda
+  anotada como una discrepancia real, probablemente por «705 km» ser una
+  cifra nominal redondeada o por efectos (maniobras, J2²/J4) que esta teoría
+  de primer orden no modela, en vez de forzar el número a que encaje
+  (`TestRepeatGroundTrackAgainstLandsat8`).
+
+### El hueco que este módulo hereda del ADR 0006, sin esconderlo
+
+`sun_synchronous_inclination_rad` y `repeat_ground_track_semi_major_axis_km`
+devuelven el número crudo (radianes, kilómetros), nunca un `ClassicalElements`
+— la misma elección que ya hace `kepler.semi_major_axis_from_period_km`, y por
+la misma razón: es quien llama quien decide la etiqueta al construir. La razón
+de fondo es más seria que estilo: esos números son correctos como cantidades
+**medias** (son la salida de invertir/resolver `secular_rates_j2`, que exige
+`MEAN_BROUWER`), no como el semieje/inclinación **osculador** de una época
+concreta. Construirlos con `ClassicalElements.from_semi_major_axis(...)` —cuyo
+`element_type` por defecto es `OSCULATING`— y pasarlos por `coe_to_rv` hereda
+el mismo desajuste ya medido en `kepler.py`: hasta **86 km tras una vuelta y
+1290 km tras un día** para una SSO de 700 km, y no una cifra única porque
+depende de en qué punto de la órbita se declaren los elementos. No se
+vuelve a medir aquí — es la misma fórmula y el mismo régimen ya medidos, y
+remedirlo sería fingir una medición nueva sobre un número que ya existe. La
+guarda de tipos del ADR 0006 es lo que convierte ese error en un
+`DomainError` explícito en el momento en que alguien intenta sacar un estado
+sin pasar por `relabelled_as` y decirlo por escrito, en vez de un número
+plausible y equivocado que ninguna aserción de forma detecta.
+
+### Las decisiones, en tabla
+
+| Decisión | Razón | Coste de cambiarla |
+|---|---|---|
+| **Espaciado dentro de plano en anomalía media, no verdadera** | Solo la anomalía media se mantiene exactamente constante entre satélites que comparten semieje, bajo movimiento kepleriano puro; la verdadera se deforma y reconstruye cada vuelta en una órbita excéntrica | Medio |
+| **Sentido de `F`: el plano `p` avanza, no retrocede** | Es la convención estándar (Walker 1977), reproducida de forma independiente por MATLAB Aerospace Toolbox; invertirla da un patrón que parece correcto a simple vista | Alto (es exactamente el error que la gente comete) |
+| **Ningún ejemplo Walker-Delta ni de traza repetida citado como V2 de Vallado** | No se localizó uno transcribible con la confianza que el estándar del proyecto exige; se prefiere decir el hueco a inventar una cita | — |
+| **SSO por álgebra cerrada, no `scipy.optimize`** | La ecuación es lineal en `cos(i)`; un solver numérico ahí sería reimplementar `secular_rates_j2` con más pasos y más superficie de error | Alto (perdería la garantía de "misma fórmula, ida y vuelta") |
+| **Traza repetida por `brentq`, acotado por la estimación de dos cuerpos ± 5 %** | `a` aparece a los dos lados de la condición de resonancia; `brentq` converge garantizado sin derivada para cualquier corchete que cambie de signo | Medio |
+| **`ConvergenceError`, no un corchete más ancho por defecto, cuando no hay cambio de signo** | Un caso de excentricidad alta lo prueba: ensanchar a ciegas escondería que el problema pedido está lejos de cualquier estimación de dos cuerpos razonable | Bajo |
+| **Las dos funciones físicas devuelven el número crudo, nunca un `ClassicalElements`** | Son cantidades *medias*; etiquetarlas `OSCULATING` por defecto sería exactamente el desajuste que el ADR 0006 existe para bloquear con un `DomainError` en vez de dejarlo pasar | Alto |
+
+### Alternativas descartadas
+
+**Espaciar en anomalía verdadera.** Es lo que casi todo libro de texto dibuja
+al presentar el patrón. Se descarta porque no se mantiene constante en el
+tiempo para una órbita excéntrica — ver Decisión 1.
+
+**Resolver la SSO con `scipy.optimize.brentq`, por uniformidad con la traza
+repetida.** El problema es lineal en `cos(i)`; usar un solver numérico donde
+hay álgebra cerrada no gana nada y sí pierde la garantía de "misma fórmula
+resuelta en las dos direcciones" que hace exacto el viaje de ida y vuelta.
+
+**Devolver un `ClassicalElements` ya etiquetado `MEAN_BROUWER` desde las
+funciones físicas en vez del número crudo.** Habría cerrado el hueco
+mean/osculador de raíz, pero habría obligado a la firma a decidir el resto de
+elementos (RAAN, argumento de periastro, anomalía) con valores arbitrarios que
+la función no tiene motivo para fijar. El número crudo, con la construcción a
+cargo de quien llama, es el patrón que ya sigue
+`semi_major_axis_from_period_km`.
+
+### Lo que queda abierto de este módulo
+
+- **Brouwer-Lyddane sigue sin existir.** El semieje/inclinación de SSO y traza
+  repetida siguen siendo cantidades medias que nada en QuOSS puede convertir a
+  osculador. La bandera del ADR 0006 es una puerta cerrada, no un paso —igual
+  que en cada entrada anterior que toca este tema.
+- **Ningún ejemplo Walker-Delta ni de traza repetida con página de Vallado
+  citada.** Queda como hueco declarado, no como V2 inventado — ver Decisión 2
+  y la nota de Landsat-8 en Decisión 3.
+- **Visibilidad, CLI y esquema de escenario** siguen sin tocar, por diseño:
+  son las etapas `scenario/` y `cli/` (`orbits/geometry.py`, ya hecho, es
+  quien calcula elevación/azimut una vez existe una `Trajectory`, y no
+  depende de este módulo ni al revés — genera conjuntos de `ClassicalElements`,
+  no ángulos de visión).
+- **`TROPICAL_YEAR_S`**, la única constante nueva de esta entrada
+  (`core/constants.py`), no tiene test propio que la mida contra una fuente —
+  es un valor citado directamente (365.2421897 días), en el mismo estilo que
+  `MEAN_SIDEREAL_DAY_S` ya usa para el día sidéreo medio.
+
+Verificación ejecutada:
+
+```bash
+uv run ruff check .                          # All checks passed!
+uv run ruff format --check .                 # 35 files already formatted
+uv run mypy                                  # Success: no issues found in 35 source files
+uv run pytest -q                             # 740 passed
+uv run pytest tests/orbits/test_constellations.py \
+  --cov=quoss.orbits.constellations --cov-report=term-missing
+                                              # 96 % (106/110 sentencias, 36/38 ramas)
+```
+
+Sin exclusiones: la deselección de `test_angle_conversion_only_at_the_boundary`
+y el `--ignore` de `test_constellations.py` que la entrada 16 necesitó durante
+el desarrollo en paralelo ya no hacen falta — las dos únicas llamadas a
+`np.rad2deg` que este módulo tenía fuera de un docstring se movieron a
+`quoss.core.units.rad_to_deg`, la misma convención que ya sigue `kepler.py`.
+
+**Revisado tras la primera entrega (mismo día):** el `rtol` de `brentq` era un
+literal sin explicar, `8.881784197001252e-16` — exactamente `4 * eps`, el
+mínimo que `scipy.optimize.brentq` acepta, pero escrito como si fuera un
+número elegido en vez de un límite del solver. Se reemplazó por
+`_BRENTQ_RTOL = 4.0 * np.finfo(np.float64).eps`, con docstring, siguiendo la
+misma disciplina que `_BRENTQ_XTOL_KM` y `_BRACKET_RELATIVE_HALF_WIDTH` ya
+tenían al lado. De 91 % a 96 % de cobertura en `constellations.py`: tres
+ramas de `DomainError` sin ejercitar (`mu_km3_s2`/`r_equatorial_km`/`j2`
+inválidos y longitudes que no hacen broadcast en
+`sun_synchronous_inclination_rad`, y excentricidad fuera de rango en
+`repeat_ground_track_semi_major_axis_km`) ganaron test. Quedan sin cubrir
+`_resonance_residual_rad_s == 0.0` exactamente en un extremo del corchete —
+una coincidencia de punto flotante que forzarla a propósito exigiría resolver
+primero qué combinación de entradas la produce, y el propio código ya trata
+ese caso (asigna el extremo y sigue) en vez de dejarlo caer a `brentq`, así
+que no es una rama sin guardia, solo una difícil de alcanzar por accidente.

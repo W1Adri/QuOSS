@@ -273,7 +273,10 @@ del proyecto para proteger un caso que aún no puede darse.
   período corto, o corto + largo) y oráculo de validación. Hoy la bandera es una
   **puerta cerrada, no un paso**: marca dónde haría falta la conversión.
 - **`MEAN_KOZAI_SGP4`.** Entra el día que algo lo produzca. Las constantes WGS-72
-  que suelen acompañarlo son del llamante, no de la etiqueta.
+  que suelen acompañarlo son del llamante, no de la etiqueta. **Sigue sin
+  usarse tras `orbits/tle.py`** ([ADR 0007](0007-tle-and-sgp4-propagation.md)):
+  SGP4 devuelve estado en TEME directamente y ese módulo no construye ningún
+  `ClassicalElements`, así que el momento previsto aquí todavía no ha llegado.
 - **El esquema de escenario (etapa 4).** El campo aceptará la cadena
   (`ElementType` es `StrEnum` y se resuelve desde texto), pero cómo se escribe en
   el YAML y qué valida Pydantic es decisión de esa etapa.

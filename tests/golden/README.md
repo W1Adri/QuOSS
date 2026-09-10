@@ -111,7 +111,20 @@ Reference values that would be worth having and are **not** in `data/` yet:
   registering one.
 - **SGP4 verification data**: `SGP4-VER.TLE` and `tcppver.out`, the official
   output from Vallado et al., AIAA 2006-6753. Both ship inside the `sgp4` PyPI
-  package, so this arrives for free with `orbits/tle.py`.
+  package, so this arrived for free with `orbits/tle.py`, and it is **done**:
+  `tests/orbits/test_tle.py::TestAgainstVallado2006VerificationData` parses
+  both files directly out of the installed package and propagates
+  `parse_tle`/`propagate_tle` against four satellites chosen to span distinct
+  regimes — low-drag LEO, moderate-drag LEO, a high-eccentricity Molniya, and
+  one that decays within the file's own test window — rather than all ~20 the
+  file carries. Same pattern as the J2 DOP853 oracle below: an in-process V3
+  oracle that is not frozen to a file of its own, because `sgp4` is already a
+  core dependency, the comparison is deterministic, and the tolerance (1e-7 km
+  position, 1e-8 km/s velocity) sits an order of magnitude above the ~7e-9 km /
+  ~7e-10 km/s residual actually measured — itself consistent with
+  `tcppver.out`'s own printed precision (8 decimal digits, i.e. 1e-8 km) rather
+  than with any modelling difference, since both sides of the comparison run
+  the same `sgp4` theory.
 - **GMAT or Orekit** cross-checks for look angles, for `orbits/geometry.py`.
 
   For the **J2 secular rates** the gap is closed differently, and the reason is

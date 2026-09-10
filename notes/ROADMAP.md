@@ -105,11 +105,72 @@ lo demás depende de él (era la duda anotada en `LAST_CHANGES.md` §6).
    no obliga a nada. Aquí se resuelven además los dos pendientes del módulo:
    la época viaja obligatoria dentro del `TimeGrid`, y la forma multi-satélite es
    `(S, n, 3)` satellite-major
-5. `orbits/tle.py` — parseo TLE + SGP4 (usar `sgp4`, no reimplementar). El paquete
-   trae `SGP4-VER.TLE` y `tcppver.out`: datos de verificación oficiales, gratis
-6. `orbits/geometry.py` — elevación/azimut/slant range/Doppler + **ángulo de
-   point-ahead** (35 µrad a 1000 km: mayor que el jitter de apuntado que se modelará)
-7. `orbits/constellations.py` — Walker-Delta, SSO, traza repetida
+5. ✅ `orbits/tle.py` — parseo TLE + SGP4, envolviendo `sgp4` (dependencia del
+   núcleo desde esta entrada, no un extra) en vez de reimplementarlo.
+   Ver [ADR 0007](../docs/adr/0007-tle-and-sgp4-propagation.md).
+   **No entra por `propagate()`** (ya decidido en el ADR 0005): SGP4 devuelve
+   estado en TEME directamente, y `tle.py` no construye ningún
+   `ClassicalElements` — la disciplina que impide el error de mezclar
+   elementos medios de un TLE con osculadores es no escribir esa línea, no una
+   guarda de tipos nueva. `PropagationMethod` gana un tercer miembro, `SGP4`,
+   que `propagate()` **no sabe ejecutar** (pedirlo da `NotImplementedError`):
+   es un caso distinto del enum incompleto de `propagator.py` — ahí el nombre
+   está ausente del todo, aquí está presente y es correcto, solo que vive en
+   `propagate_tle`. `parse_tle` valida checksum, forma de línea y el código de
+   error de `sgp4`, que la propia librería deja pasar en silencio (verificado
+   contra el paquete instalado). El paquete trae `SGP4-VER.TLE` y
+   `tcppver.out`: datos de verificación oficiales, gratis
+6. ✅ `orbits/geometry.py` — elevación/azimut/slant range/rate de rango +
+   **ángulo de point-ahead**, todo desde una `Trajectory` en TEME: la rotación
+   a ITRF (vía `teme_to_itrf_state`) ocurre una sola vez dentro de
+   `look_angles`, así que no hay un segundo sitio donde una mezcla de marcos
+   pueda colarse. La velocidad de la estación en ITRF es exactamente cero por
+   construcción, así que «relativo a la estación» y «la velocidad ITRF del
+   satélite» son el mismo vector — no hace falta sumar el término de la
+   estación aparte. **Corregido al medir:** el ángulo de point-ahead lleva
+   **factor 2**, no el `v_perp/c` de una sola vía — un terminal monostático
+   tiene que adelantar la vía de transmisión y a la vez recibir por la vía que
+   la luz realmente sigue. Medido para un paso a 67.1° de elevación sobre
+   Castelldefels en la SSO de 700 km de este repo: **50.6 µrad**, mayor que
+   los 35 µrad que este roadmap citaba antes de tener la cuenta con el factor
+   2 (`tests/orbits/test_geometry.py::TestPointAheadAngle`). El Doppler
+   **no** vive en este módulo: `look_angles` da `range_rate_km_s`, una
+   cantidad puramente geométrica, y `doppler_shift_hz` es una función aparte
+   de una línea que solo se necesita cuando se conoce la frecuencia portadora
+   — la misma razón por la que `Trajectory` no lleva un modelo de gravedad.
+   V3 contra el `AltAz` de astropy (nuevo `tests/golden/generators/gen_geometry_reference.py`):
+   elevación y azimut concuerdan a milésimas de grado, rango a 2.2e-4
+   relativo, sobre 24 combinaciones estación×satélite×época — sin oráculo
+   independiente todavía para `range_rate_km_s` ni el ángulo de point-ahead,
+   que quedan como V1 (ver `tests/golden/README.md`)
+7. ✅ `orbits/constellations.py` — Walker-Delta (`i:T/P/F`), inclinación
+   heliosíncrona (SSO) e semieje de traza repetida. Las tres funciones son
+   geometría o álgebra pura sobre lo que ya existía: `walker_delta` no calcula
+   ninguna física, solo reparte `T` satélites en `P` planos y los devuelve como
+   **un** `ClassicalElements` de longitud `T` (nunca una lista); la SSO invierte
+   en forma cerrada la propia fórmula de `secular_rates_j2` (si hiciera falta
+   `scipy.optimize` ahí, sería señal de un error, no de que el problema lo
+   pida); solo la traza repetida necesita `brentq`, porque `a` aparece a los
+   dos lados de la condición de resonancia. **Decisión que se pudo equivocar
+   al revés:** el espaciado dentro de plano se hace en anomalía **media**, no
+   verdadera — para una órbita excéntrica son ángulos distintos, y solo el
+   medio se mantiene exactamente constante en el tiempo bajo movimiento
+   kepleriano puro (`tests/orbits/test_constellations.py::TestWalkerDeltaInvariants::test_true_anomaly_spacing_is_not_exact_once_eccentric`
+   es el control negativo que lo demuestra). **El sentido del `F`** —el
+   parámetro que la gente invierte— se fija con un caso `6:6/3/1` resuelto a
+   mano más el chequeo de fórmula independiente de MATLAB Aerospace Toolbox;
+   no se encontró un ejemplo Walker citable de Vallado con confianza
+   suficiente para transcribirlo como V2, así que la corrección descansa en
+   invariantes V1 (espaciado exacto de RAAN y de anomalía media, recuento
+   exacto), dicho así en vez de inventar una cita. **El hueco que hereda del
+   ADR 0006, sin esconderlo:** la inclinación/semieje que devuelven las dos
+   funciones físicas son una afirmación sobre elementos *medios* — construirlos
+   como `ClassicalElements` osculadores (el defecto de la propia clase) e
+   intentar sacar un estado con `coe_to_rv` hereda el mismo desajuste ya medido
+   en `kepler.py` (hasta 1290 km/día para una SSO de 700 km, y no una cifra
+   única). No se remide aquí porque es la misma fórmula y el mismo régimen ya
+   medidos; la guarda de tipos del ADR 0006 es lo que impide que ese error sea
+   silencioso. Ver [ADR 0008](../docs/adr/0008-constellation-design.md).
 
 **Trampa a hacer imposible por tipos:** los elementos medios de un TLE son de
 Brouwer-Lyddane con corrección de Kozai, **no** los del propagador J2 analítico.

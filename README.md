@@ -7,9 +7,12 @@ Núcleo Python puro y **vectorizado sobre el eje temporal**, sin dependencias we
 CLI, la API y el frontend son *consumidores* del mismo motor, no parte de él.
 
 > Estado: **Etapa 2.1 — `orbits/`**. Hecho: `frames.py`, `kepler.py`,
-> `perturbations.py`, `propagator.py`, y la bandera osculador/medio que los tres
-> últimos comparten ([ADR 0006](docs/adr/0006-osculating-vs-mean-elements.md)).
-> Siguiente: `tle.py`.
+> `perturbations.py`, `propagator.py`, la bandera osculador/medio que los tres
+> últimos comparten ([ADR 0006](docs/adr/0006-osculating-vs-mean-elements.md)),
+> y `tle.py` — parseo de TLE y propagación SGP4, sin construir jamás un
+> `ClassicalElements` con elementos medios
+> ([ADR 0007](docs/adr/0007-tle-and-sgp4-propagation.md)).
+> Siguiente: `geometry.py`.
 > Ver [`notes/ROADMAP.md`](notes/ROADMAP.md) para el orden de construcción,
 > [`notes/GUIA_REIMPLEMENTACION.md`](notes/GUIA_REIMPLEMENTACION.md) para el porqué de la
 > arquitectura y [`notes/LAST_CHANGES.md`](notes/LAST_CHANGES.md) para el estado actual.

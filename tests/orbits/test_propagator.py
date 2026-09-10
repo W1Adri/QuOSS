@@ -25,10 +25,12 @@ Organised by claim, per `tests/golden/README.md`:
 * ``TestEpoch`` — the epoch is carried, never read: two grids differing only in
   ``epoch_jd`` return identical states. And negative elapsed times work, which
   is what an epoch in the middle of a window needs.
-* ``TestModuleSurface`` — the deliberately incomplete enum. Every member
-  dispatches, ``method`` has no default, and the member set is asserted so that
-  adding ``J2_SECULAR_ANALYTIC`` is a decision someone takes rather than a diff
-  that slips through.
+* ``TestModuleSurface`` — the deliberately incomplete enum, and its one member
+  that is complete but lives elsewhere. Every member ``propagate()`` implements
+  dispatches, ``PropagationMethod.SGP4`` does not and says so loudly (it is
+  ``quoss.orbits.tle.propagate_tle``'s), ``method`` has no default, and the
+  member set is asserted so that adding ``J2_SECULAR_ANALYTIC`` is a decision
+  someone takes rather than a diff that slips through.
 * ``TestTrajectoryIsWhatItSaysItIs`` — the container's own claims: the states are
   read-only (frozen views, deliberately not copies) and the frame is stored as an
   enum member rather than as whatever string was handed in. Both were false until
@@ -80,6 +82,13 @@ from quoss.orbits.propagator import (
 
 EPOCH_JD = 2460676.5
 """2025-01-01 00:00 UTC. Any epoch would do — that is the point of `TestEpoch`."""
+
+PROPAGATE_MODES = (PropagationMethod.TWO_BODY, PropagationMethod.ZONAL_NUMERIC)
+"""Members ``propagate()`` can actually run. ``PropagationMethod.SGP4`` is
+deliberately excluded from every parametrisation that calls ``propagate()``
+expecting success — it belongs to ``quoss.orbits.tle.propagate_tle`` instead,
+and is tested on its own in ``TestModuleSurface.test_sgp4_is_not_wired_into_propagate``
+and in ``tests/orbits/test_tle.py``."""
 
 TWO_BODY_ONLY = ZonalGravity(
     mu_km3_s2=EGM96_MU_KM3_S2,
@@ -143,7 +152,7 @@ def _period_s(semi_major_axis_km: float = ISS_SEMI_MAJOR_AXIS_KM) -> float:
 # --------------------------------------------------------------------------- #
 class TestTwoBodyIsKepler:
     @pytest.mark.physics
-    @pytest.mark.parametrize("method", list(PropagationMethod))
+    @pytest.mark.parametrize("method", PROPAGATE_MODES)
     def test_the_epoch_sample_is_the_initial_state_exactly(self, method: PropagationMethod) -> None:
         """At ``t = 0`` no propagation has happened, so nothing may change.
 
@@ -674,7 +683,7 @@ class TestWhatNotHavingBrouwerLyddaneCosts:
 # The (S, n, 3) decision
 # --------------------------------------------------------------------------- #
 class TestSatelliteAxis:
-    @pytest.mark.parametrize("method", list(PropagationMethod))
+    @pytest.mark.parametrize("method", PROPAGATE_MODES)
     def test_a_single_orbit_is_still_three_dimensional(self, method: PropagationMethod) -> None:
         """``(1, n, 3)``, never ``(n, 3)``, so no consumer branches on shape."""
         grid = TimeGrid.uniform(epoch_jd=EPOCH_JD, duration_s=600.0, step_s=60.0)
@@ -686,7 +695,7 @@ class TestSatelliteAxis:
         assert (traj.n_satellites, traj.n_samples) == (1, grid.n)
 
     @pytest.mark.physics
-    @pytest.mark.parametrize("method", list(PropagationMethod))
+    @pytest.mark.parametrize("method", PROPAGATE_MODES)
     def test_each_slice_equals_that_orbit_propagated_alone(self, method: PropagationMethod) -> None:
         """The test that makes the flattening honest.
 
@@ -749,7 +758,7 @@ class TestSatelliteAxis:
 # The epoch decision
 # --------------------------------------------------------------------------- #
 class TestEpoch:
-    @pytest.mark.parametrize("method", list(PropagationMethod))
+    @pytest.mark.parametrize("method", PROPAGATE_MODES)
     def test_the_epoch_is_carried_but_never_read(self, method: PropagationMethod) -> None:
         """Two grids differing only in ``epoch_jd`` give identical states.
 
@@ -770,7 +779,7 @@ class TestEpoch:
         assert late.grid.epoch_jd == EPOCH_JD
 
     @pytest.mark.physics
-    @pytest.mark.parametrize("method", list(PropagationMethod))
+    @pytest.mark.parametrize("method", PROPAGATE_MODES)
     def test_a_grid_straddling_the_epoch_works(self, method: PropagationMethod) -> None:
         """What a TLE gives: elements from an epoch inside the window.
 
@@ -918,29 +927,43 @@ class TestTrajectoryIsWhatItSaysItIs:
 # --------------------------------------------------------------------------- #
 # The module surface: the enum is incomplete on purpose
 # --------------------------------------------------------------------------- #
+
+
 class TestModuleSurface:
     def test_the_enum_holds_exactly_the_implemented_modes(self) -> None:
         """The deliberate gap, asserted so that closing it is a decision.
 
-        ``J2_SECULAR_ANALYTIC`` is missing because the analytic mode needs mean
-        elements and this project has only osculating ones — a gap of ~1300 km per
-        day, not a rounding error, measured in
-        ``TestWhatNotHavingBrouwerLyddaneCosts``. When Brouwer-Lyddane lands, this
-        test fails, and updating it is the moment to also update the module
+        ``J2_SECULAR_ANALYTIC`` is missing entirely because the analytic mode
+        needs mean elements and this project has only osculating ones — a gap of
+        ~1300 km per day, not a rounding error, measured in
+        ``TestWhatNotHavingBrouwerLyddaneCosts``. When Brouwer-Lyddane lands,
+        this test fails, and updating it is the moment to also update the module
         docstring and ADR 0005. That is the intended workflow, not an
         inconvenience: a failing test here means someone added a mode, and the
         question is whether they added the model with it.
+
+        ``PropagationMethod.SGP4`` is a different kind of addition to this same
+        set: present, correct, and simply not ``propagate()``'s to run (see
+        ``docs/adr/0007-tle-and-sgp4-propagation.md``). This test only pins the
+        *name set*; which of those names ``propagate()`` itself implements is
+        ``test_every_propagate_mode_actually_propagates`` below.
         """
-        assert {member.value for member in PropagationMethod} == {"two_body", "zonal_numeric"}
+        assert {member.value for member in PropagationMethod} == {
+            "two_body",
+            "zonal_numeric",
+            "sgp4",
+        }
         assert not hasattr(PropagationMethod, "J2_SECULAR_ANALYTIC")
 
-    @pytest.mark.parametrize("method", list(PropagationMethod))
-    def test_every_declared_member_actually_propagates(self, method: PropagationMethod) -> None:
+    @pytest.mark.parametrize("method", PROPAGATE_MODES)
+    def test_every_propagate_mode_actually_propagates(self, method: PropagationMethod) -> None:
         """A member with no branch behind it raises ``NotImplementedError``.
 
-        Parametrising over the enum rather than over a hand-written list is the
-        whole point: adding a member without wiring it fails here immediately,
-        which is what lets the enum grow "without touching anyone".
+        Parametrising over the members ``propagate()`` claims to implement,
+        rather than over a hand-written list, is the whole point: adding one of
+        *these* without wiring it fails here immediately. ``PropagationMethod.SGP4``
+        is excluded on purpose — it is not one of these members, and asserting
+        that exclusion is the next test's job, not this one's.
         """
         grid = TimeGrid(epoch_jd=EPOCH_JD, t_s=np.array([0.0, 60.0]))
 
@@ -948,6 +971,22 @@ class TestModuleSurface:
 
         assert traj.method is method
         assert np.all(np.isfinite(traj.r_km))
+
+    def test_sgp4_is_not_wired_into_propagate(self) -> None:
+        """``PropagationMethod.SGP4`` exists and is not ``propagate()``'s to run.
+
+        SGP4 takes a parsed TLE record, not ``ClassicalElements`` — there is no
+        branch this function could have for it, and the fallback that used to be
+        marked "unreachable until the enum grows" is now exactly this case,
+        reachable and correct. The model this member names is
+        ``quoss.orbits.tle.propagate_tle``, tested in ``tests/orbits/test_tle.py``;
+        this test only pins that asking *this* function for it fails loud rather
+        than silently returning nonsense of the right shape.
+        """
+        grid = TimeGrid(epoch_jd=EPOCH_JD, t_s=np.array([0.0, 60.0]))
+
+        with pytest.raises(NotImplementedError, match=r"PropagationMethod\.SGP4"):
+            propagate(_iss_like(), grid, method=PropagationMethod.SGP4)
 
     def test_method_is_keyword_only_and_has_no_default(self) -> None:
         """A default would be a modelling decision taken for the caller.
@@ -971,10 +1010,18 @@ class TestModuleSurface:
         assert traj.method is PropagationMethod.TWO_BODY
 
     def test_the_method_travels_with_the_result(self) -> None:
-        """Provenance: a trajectory can always say which model made it."""
+        """Provenance: a trajectory can always say which model made it.
+
+        Over ``PROPAGATE_MODES``, not the full enum: ``PropagationMethod.SGP4``
+        never reaches this return statement (see
+        ``test_sgp4_is_not_wired_into_propagate``), so it has nothing to travel
+        with here — its ``Trajectory.method`` is asserted in
+        ``tests/orbits/test_tle.py`` instead, on the object ``propagate_tle``
+        actually returns.
+        """
         grid = TimeGrid(epoch_jd=EPOCH_JD, t_s=np.array([0.0]))
 
-        for method in PropagationMethod:
+        for method in PROPAGATE_MODES:
             assert propagate(_iss_like(), grid, method=method).method is method
 
     def test_the_frame_is_inherited_from_the_elements(self) -> None:
@@ -1020,15 +1067,19 @@ class TestRejectsBadInput:
         with pytest.raises(DomainError, match="not a propagation method"):
             propagate(_iss_like(), grid, method="j2_secular")  # type: ignore[arg-type]
 
-    @pytest.mark.parametrize("method", list(PropagationMethod))
+    @pytest.mark.parametrize("method", PROPAGATE_MODES)
     def test_every_mode_refuses_mean_elements(self, method: PropagationMethod) -> None:
         """Both modes propagate osculating elements, and neither can tell by itself.
 
-        Parametrised over the enum for the same reason
-        ``test_every_declared_member_actually_propagates`` is: the day
-        ``J2_SECULAR_ANALYTIC`` arrives it will be the one mode that *wants* mean
-        elements, and this test failing is the reminder that its branch needs its
-        own rule rather than inheriting this one.
+        Parametrised over ``PROPAGATE_MODES`` rather than the full enum, and for
+        the same reason ``test_every_propagate_mode_actually_propagates`` is:
+        ``PropagationMethod.SGP4`` never reaches the ``coe_to_rv`` guard this test
+        is about — asking ``propagate()`` for it raises ``NotImplementedError``
+        first, which is ``test_sgp4_is_not_wired_into_propagate``'s claim, not
+        this one's. The day ``J2_SECULAR_ANALYTIC`` arrives it will be the one
+        mode in this set that *wants* mean elements, and this test failing is the
+        reminder that its branch needs its own rule rather than inheriting this
+        one.
 
         The ``TWO_BODY`` half is the load-bearing case. That mode does not hand
         the caller's elements to ``coe_to_rv``; it builds a flattened ``S * n``

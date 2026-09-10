@@ -55,6 +55,7 @@ __all__ = [
     "SECONDS_PER_DAY",
     "SPEED_OF_LIGHT_M_S",
     "STEFAN_BOLTZMANN_W_M2_K4",
+    "TROPICAL_YEAR_S",
     "WGS72_J2",
     "WGS72_J3",
     "WGS72_J4",
@@ -222,3 +223,28 @@ MJD_OFFSET_JD: Final = 2_400_000.5
 
 JD_UNIX_EPOCH: Final = 2_440_587.5
 """Julian date of the Unix epoch (1970-01-01 00:00:00 UTC), days [6]."""
+
+TROPICAL_YEAR_S: Final = 365.242_189_7 * SECONDS_PER_DAY
+"""Mean tropical year, s: 365.2421897 days, quoted directly [6].
+
+The tropical year is the time the **mean Sun** — a fictitious sun that moves at
+the ecliptic's average rate, used because the real Sun's apparent motion is not
+uniform — takes to return to the same **ecliptic longitude**, the angle measured
+eastward along the ecliptic (the plane of Earth's orbit) from the equinox. It is
+*not* the same as the sidereal year (~365.256 days, one full circuit against the
+fixed stars): the equinox itself drifts westward, slowly, because Earth's spin
+axis precesses like a tilted top, so the mean Sun meets it about 20 minutes
+early each year. That 20-minute gap is not a rounding difference to absorb —
+using the sidereal year in place of this one would mis-size a sun-synchronous
+design by the corresponding ~365.242/365.256 relative factor, a few hundredths
+of a degree in the required inclination, which is a fair fraction of the ~1e-3
+deg/day precision a J2-only theory is good for in the first place.
+
+Used by :mod:`quoss.orbits.constellations` to set the sun-synchronous nodal
+regression rate, ``2 pi / TROPICAL_YEAR_S`` ~ 0.98565 deg/day: a sun-synchronous
+orbit is defined as one whose node regresses (or, being retrograde, advances) at
+exactly this rate, so that the angle between the orbital plane and the
+Sun-Earth line stays fixed and every pass of a given latitude happens at
+(approximately) the same local solar time year-round. See
+:func:`~quoss.orbits.constellations.sun_synchronous_inclination_rad`.
+"""

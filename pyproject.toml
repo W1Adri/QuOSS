@@ -22,10 +22,14 @@ classifiers = [
 dynamic = ["version"]
 
 # The core must install with very little: arrays, science, schema. Nothing else.
+# sgp4 is in this list and not in an optional group: orbits/tle.py wraps it
+# rather than reimplementing SGP4, per notes/ROADMAP.md 2.1.5, and a TLE is
+# useless without a propagator for it.
 dependencies = [
     "numpy>=1.26",
     "scipy>=1.11",
     "pydantic>=2.7",
+    "sgp4>=2.23",
 ]
 
 [project.optional-dependencies]

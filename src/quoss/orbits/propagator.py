@@ -192,11 +192,16 @@ __all__ = [
 
 
 class PropagationMethod(StrEnum):
-    """Which model :func:`propagate` runs. No default anywhere.
+    """How a :class:`Trajectory` was produced. No default anywhere.
 
     A :class:`~enum.StrEnum` so that a scenario file can write the plain string
     ``"zonal_numeric"`` and get the member back, and so that the value serialises
     into a result's provenance without a converter.
+
+    Two of the three members are what :func:`propagate` can be asked to run;
+    the third, :attr:`SGP4`, is not — see its entry below and
+    ``docs/adr/0007-tle-and-sgp4-propagation.md`` for why this enum names it
+    anyway rather than inventing a second field just for that one case.
 
     Attributes
     ----------
@@ -212,6 +217,16 @@ class PropagationMethod(StrEnum):
         reference model: it makes no averaging or first-order assumption, and it
         is what the secular theory in :mod:`quoss.orbits.perturbations` is
         measured against.
+    SGP4 : str
+        Produced by :func:`~quoss.orbits.tle.propagate_tle`, **not**
+        :func:`propagate` — passing ``method=PropagationMethod.SGP4`` to
+        :func:`propagate` raises :class:`NotImplementedError`, and correctly
+        so: SGP4 takes a parsed TLE record, not
+        :class:`~quoss.orbits.kepler.ClassicalElements`, so there is no branch
+        for it to have here. The member exists on this enum anyway because
+        :class:`Trajectory` uses the same field, ``method``, to say how *any*
+        trajectory was produced, and a TLE-derived one is still exactly that
+        question with a different answer.
 
     Notes
     -----
@@ -221,6 +236,16 @@ class PropagationMethod(StrEnum):
     module docstring has the measured table, the derivation of its size, and the
     condition for the member to appear.
 
+    ``SGP4`` is a different kind of gap from ``J2_SECULAR_ANALYTIC``: the latter
+    is a name that does not exist yet, so nobody can be depending on it; the
+    former is a name that exists, is correct, and simply is not reachable from
+    this function — reachable instead from
+    :func:`~quoss.orbits.tle.propagate_tle`. Confusing the two would be exactly
+    the silent-wrong-default failure this project avoids elsewhere, so
+    ``tests/orbits/test_propagator.py`` tests them as the two separate claims
+    they are: every member ``propagate()`` implements actually propagates, and
+    ``SGP4`` specifically does not and says so loudly.
+
     Examples
     --------
     >>> PropagationMethod.ZONAL_NUMERIC
@@ -228,11 +253,12 @@ class PropagationMethod(StrEnum):
     >>> PropagationMethod("two_body") is PropagationMethod.TWO_BODY
     True
     >>> sorted(PropagationMethod)
-    [<PropagationMethod.TWO_BODY: 'two_body'>, <PropagationMethod.ZONAL_NUMERIC: 'zonal_numeric'>]
+    [<PropagationMethod.SGP4: 'sgp4'>, <PropagationMethod.TWO_BODY: 'two_body'>, <PropagationMethod.ZONAL_NUMERIC: 'zonal_numeric'>]
     """
 
     TWO_BODY = "two_body"
     ZONAL_NUMERIC = "zonal_numeric"
+    SGP4 = "sgp4"
 
 
 @dataclass(frozen=True, eq=False, slots=True)
@@ -655,10 +681,17 @@ def propagate(
         r_km, v_km_s = _two_body_states(elements, grid, gravity.mu_km3_s2)
     elif resolved is PropagationMethod.ZONAL_NUMERIC:
         r_km, v_km_s = _zonal_numeric_states(elements, grid, gravity, rtol, atol_km)
-    else:  # pragma: no cover - unreachable until the enum grows
+    else:
+        # Reachable as of PropagationMethod.SGP4: that member is correct and
+        # implemented, just not here — see quoss.orbits.tle.propagate_tle and
+        # the class docstring above. No longer "unreachable until the enum
+        # grows"; it grew, and this is the branch that says so instead of
+        # silently returning nonsense for a model this function cannot run.
         raise NotImplementedError(
             f"{resolved!r} is declared in PropagationMethod but propagate() has no branch "
-            f"for it. A member is only added together with the model that implements it."
+            f"for it. A member is only added together with the model that implements it, "
+            f"and PropagationMethod.SGP4's model is quoss.orbits.tle.propagate_tle, which "
+            f"takes a parsed TLE, not ClassicalElements."
         )
 
     return Trajectory(
