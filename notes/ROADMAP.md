@@ -340,8 +340,51 @@ cita más plausible.
    integral de difracción por cuadratura
 
 ### 2.3 `qkd/` — de canal a clave
-1. `qkd/base.py` — interfaz común de protocolo (entra transmitancia+ruido, sale tasa+QBER) y registro de protocolos
-2. `qkd/bb84.py` — BB84 WCP + decoy/GLLP
+1. ✅ `qkd/base.py` — la frontera: `LinkConditions` (entra transmitancia +
+   ruido), `KeyRate` (sale tasa + QBER), `QkdProtocol` (la interfaz) y
+   `ProtocolRegistry` (el nombre que escribe un escenario). **Sin física
+   dentro.** Las tres trampas que le dan forma: (1) `NoiseBudget` da una
+   **media** y un protocolo necesita la **probabilidad** `Y_0 = 1 - exp(-µ)` —
+   leer una por la otra sobreestima **3.58 %** con el telescopio de 2.3 m y
+   **0.38 %** con el de 0.75 m bajo el día claro de 6 W/(m²·µm·sr) de Ntanos et
+   al., y la conversión **es** `click_probability`, no una segunda copia de la
+   exponencial; (2) la transmitancia ya lleva el receptor dentro, así que hay
+   **un** campo de transmitancia y **ninguno** de eficiencia, y el doble conteo
+   de 6.36 dB no tiene por dónde entrar; (3) solo se guarda la tasa **por
+   pulso** y la de por segundo se deriva. La interfaz **comprueba a sus
+   implementaciones** —forma, tasa de pulsos copiada y nombre— con un test de
+   implementación rota a propósito detrás de cada comprobación. **Dos ausencias
+   con motivo:** no hay entrada de finite-key por bloques (un bloque es una
+   integral sobre el pase: `system/key_volume.py`), así que toda tasa sale
+   etiquetada `ASYMPTOTIC`; y el registro no tendrá nunca un nombre para E91,
+   CV-QKD, MDI-QKD ni TF-QKD mientras no estén implementados, por la regla del
+   [ADR 0005](../docs/adr/0005-propagation.md). 100 % de cobertura de líneas y
+   ramas, 102 tests
+2. ✅ `qkd/bb84.py` — BB84 con pulsos coherentes débiles y decoy vacío+débil, la
+   primera implementación de `QkdProtocol`. Modelo de Ma et al. 2005 Ecs. (7)-(11)
+   y cotas decoy Ecs. (34), (35) y (37); tasa GLLP de su Ec. (1), que es la Ec. (1)
+   de Ntanos et al. **Cuatro decisiones con su número:** (1) se usa el rendimiento
+   **exacto** —la primera línea de su Ec. (7), que **es** `click_probability`— y no
+   la aproximación `Y_0 + 1 − e^(−ηµ)` de su Ec. (10) y de la (A4) de Ntanos et
+   al., que difiere **0.0000787 %** de noche y **0.070965 %** de día en el telescopio de
+   0.75 m, y por encima de **7.152 cuentas por puerta devuelve una probabilidad
+   mayor que uno**; (2) el QBER se escribe como **mezcla** de la moneda del fondo y
+   el error de la óptica, así que `E ≤ ½` se cumple en coma flotante — el numerador
+   publicado junto a la ganancia exacta lo rompe a **3.912 cuentas por puerta**, y
+   el sol brillante de la ITU está un 12.6 % por debajo; (3) donde la cota no
+   certifica nada se devuelve `e_1 = ½` y **no** `e_1 = 0`, que dibujaría un canal
+   perfecto donde falló el análisis; (4) `q` incluye la fracción de pulsos de
+   señal, así que toda tasa es **por pulso emitido**. **La intuición corregida:**
+   la cota no falla por pérdida —de η = 1 a 1e-08 sigue positiva y converge a
+   `Y_0`— sino por **intensidad**, por encima de µ = 3.72 con ν = 0.1.
+   **Verificación:** V3 contra el **programa lineal** del que la Ec. (34) es forma
+   cerrada, resuelto con `scipy.optimize.linprog` (coinciden a 1e-09); V2 contra el
+   óptimo analítico de µ de su Ec. (12), **0.7687**, reproducido al **0.1 %** con
+   tolerancia derivada del tamaño de lo que esa ecuación desprecia; V2 del estado
+   de vacío (Ec. 33) exacto. Y una inconsistencia de la fuente escrita en vez de
+   arreglada: «4:1:16» y «q = 2/5» en la misma frase de Ntanos et al. §4.1 no
+   concuerdan por un factor 4.2, y el orden que reproduce su `q` es 16:1:4. 100 %
+   de cobertura de líneas y ramas, 552 tests
 3. `qkd/finite_key.py` — finite-key componible (Tomamichel). **Por defecto activo**
 4. `qkd/entanglement.py` — E91
 5. `qkd/cv.py` — CV-QKD

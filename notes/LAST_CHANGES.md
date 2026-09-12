@@ -1,7 +1,57 @@
 # QuOSS — Últimos cambios y cosas a considerar
 
 > Bitácora viva. Se actualiza al cerrar cada etapa del [`ROADMAP.md`](ROADMAP.md).
-> Última actualización: **2026-09-12** — **séptimo y último módulo de la Etapa
+> Última actualización: **2026-09-12** — **segundo módulo de la Etapa 2.3**,
+> `qkd/bb84.py` (§24): BB84 con pulsos coherentes débiles y estados decoy, la
+> primera implementación de `QkdProtocol`. **Cuatro decisiones con su número:**
+> (1) se usa el rendimiento **exacto** de Ma et al. Ec. (7) primera línea —que
+> **es** `click_probability`— y no su aproximación Ec. (10), que por encima de
+> **7.152 cuentas por puerta devuelve una ganancia mayor que uno**; (2) el QBER se
+> escribe como **mezcla** para que `E ≤ ½` se cumpla en coma flotante, cosa que el
+> numerador publicado no hace a partir de **3.912 cuentas por puerta** —el sol
+> brillante de la ITU está un 12.6 % por debajo—; (3) donde la cota decoy no
+> certifica nada se devuelve `e_1 = ½` y **no** `e_1 = 0`; (4) `q` cuenta los
+> pulsos gastados en decoys. **La intuición que hubo que corregir:** la cota no
+> falla por pérdida —de η = 1 a 1e-08 sigue positiva— sino por **intensidad**,
+> por encima de µ = 3.72. **Verificación:** V3 contra el programa lineal del que
+> la Ec. (34) es forma cerrada (`linprog`, 1e-09), y V2 contra el óptimo analítico
+> de µ de la Ec. (12) al 0.1 %, con tolerancia derivada.
+>
+> Entrada anterior: **primer módulo de la Etapa 2.3**,
+> `qkd/base.py` (§23): la frontera entre el canal y un protocolo. Qué entra
+> (`LinkConditions`), qué sale (`KeyRate`), qué interfaz se implementa
+> (`QkdProtocol`) y qué nombre puede escribir un escenario (`ProtocolRegistry`).
+> Sin física dentro: toda fórmula sobre BB84 es de `bb84.py`.
+>
+> **Las tres trampas que le dan forma.** (1) *Una media no es una probabilidad*:
+> `NoiseBudget` da cuentas por puerta como **media** y un protocolo necesita la
+> **probabilidad** `Y_0 = 1 - exp(-µ)`. Medido con el día claro de 6 W/(m²·µm·sr)
+> que Ntanos et al. citan a 1550 nm, leer la media como probabilidad sobreestima
+> **un 3.58 %** en su telescopio de 2.3 m y **un 0.38 %** en el de 0.75 m —
+> pequeño, silencioso y a favor del enlace (la versión patológica, 3.42 «de
+> probabilidad», ya estaba tasada en §20). La conversión **es**
+> `click_probability` con señal cero, no una segunda copia de la exponencial.
+> (2) *La transmitancia ya lleva el receptor dentro*, así que `LinkConditions`
+> tiene un campo de transmitancia y **ninguno** de eficiencia: no hay par que
+> multiplicar, y el doble conteo de 6.36 dB de §22 no tiene por dónde entrar.
+> (3) *Por pulso no es por segundo*: solo se guarda la forma por pulso y la otra
+> se deriva, como en `LossBudget`.
+>
+> **La interfaz comprueba a sus implementaciones.** `key_rate` es concreto y
+> delega en `_key_rate`, y al volver comprueba tres cosas que se pueden equivocar
+> sin que nada parezca raro: la forma (un producto exterior da un `(n, n)` con la
+> diagonal correcta), la tasa de pulsos (se copia, no se recalcula) y el nombre.
+> Cada una tiene detrás un test con una implementación rota a propósito.
+>
+> **Y dos ausencias con motivo:** no hay entrada de finite-key por bloques —una
+> cota finite-key habla de un bloque, y un bloque es una integral sobre el pase,
+> que es `system/key_volume.py`—, así que toda tasa de esta interfaz es
+> `ASYMPTOTIC` y lo dice en su propio campo; y el registro no tendrá jamás un
+> nombre para E91, CV-QKD, MDI-QKD ni TF-QKD mientras no estén implementados
+> (regla del [ADR 0005](../docs/adr/0005-propagation.md), con control negativo
+> sobre el registro real).
+>
+> Entrada anterior: **séptimo y último módulo de la Etapa
 > 2.2**, `channel/link_budget.py` (§22): todas las pérdidas en un sitio. **Con
 > esto la Etapa 2.2 queda cerrada.**
 >
@@ -3498,3 +3548,376 @@ que el log no registra nada.
 **100 %** de cobertura de líneas y ramas. Catorce huecos declarados en el ADR
 0009, ninguno rellenado con la cita más plausible. Lo siguiente es la etapa 2.3,
 `qkd/`, que es el primer consumidor de lo que este módulo produce.
+
+---
+
+## 23. `qkd/base.py` — la frontera: qué entra a un protocolo y qué sale
+
+### Qué hace este módulo, para quien llegue nuevo
+
+`channel/` termina con dos números en cada instante de un pase: **qué fracción**
+de los fotones que salieron del satélite llega a un detector, y **cuántas cuentas
+por puerta** llegan que no eran señal. Un protocolo de QKD convierte ese par en
+otros dos: una tasa de clave secreta y una tasa de error. Este módulo es la
+**costura** entre las dos mitades.
+
+No hay física dentro. Lo que hay es la forma de la conversación —`LinkConditions`
+(lo que entra), `KeyRate` (lo que sale), `QkdProtocol` (la interfaz) y
+`ProtocolRegistry` (el nombre que escribe un escenario → la clase que lo
+implementa)— más la única función que calcula algo, `binary_entropy`. Toda
+fórmula que diga algo sobre BB84 vive en `bb84.py`.
+
+**Vocabulario, sin dar nada por sabido.** Una **puerta** (*gate*) es la ventana
+corta en la que el receptor acepta que un clic vino del pulso que Alice envió;
+hay **una puerta por pulso**. La **ganancia** `Q` es la probabilidad de que un
+pulso produzca un clic, venga de donde venga: es por *pulso*, no por segundo. El
+**rendimiento** `Y_n` es lo mismo condicionado a lo que Alice envió, y `Y_0` —el
+rendimiento cuando no envió nada— es el ruido. El **sifting** es quedarse solo
+con los pulsos en los que Alice y Bob eligieron por azar la misma base. El
+**QBER** es la fracción de bits cribados en los que discrepan; es una *fracción*,
+no una tasa por segundo: el 11 % es `0.11`.
+
+### Las tres trampas que dan forma a la costura
+
+**1. Una media no es una probabilidad.** `NoiseBudget` reporta cuentas por puerta
+como **media** —es lo que permite sumar fondo, cuentas oscuras y afterpulsing—, y
+un protocolo necesita `Y_0`, que es una **probabilidad**. La conversión es
+`1 - exp(-µ)`, hecha una vez. Leer la media como probabilidad es el error que
+`background.py` tasa en 253 % para la luz solar brillante de la UIT, donde la
+«probabilidad» sale **3.42**. Medido aquí en el caso ordinario en vez del
+patológico, con los 6 W/(m²·µm·sr) de día claro que Ntanos et al. citan a
+1550 nm: en su telescopio de 2.3 m la media vale 7.0712e-2 y la `Y_0` verdadera
+6.8270e-2, así que la lectura lineal **sobreestima un 3.58 %**; en el de 0.75 m
+del enlace de referencia, un **0.38 %**. Pequeño, silencioso, y en la dirección
+que favorece al enlace. `LinkConditions.background_yield` es el único camino
+entre las dos, y **es** `click_probability` con señal cero y eficiencia uno, no
+una segunda copia de esa exponencial: una sola ley de clic de Poisson en el
+proyecto.
+
+**2. La transmitancia ya lleva el receptor dentro.**
+`LossBudget.transmittance` es extremo a extremo: óptica, filtro y eficiencia
+cuántica están dentro. Multiplicarla otra vez por una eficiencia es el doble
+conteo de **6.36 dB** que da forma a `link_budget.py` —factor 4.3 en tasa de
+clave— así que `LinkConditions` tiene **un** campo de transmitancia y **ningún**
+campo de eficiencia: no hay par que multiplicar. Asertado por ausencia en
+`test_the_link_conditions_offer_no_second_efficiency_to_multiply_by`.
+
+**3. Un número por pulso no es un número por segundo.** Todo lo que calcula un
+protocolo es por pulso; todo lo que dibuja un paper es por segundo. `KeyRate`
+guarda **solo** la forma por pulso y *deriva* la otra, así que las dos no pueden
+discrepar — la misma razón por la que `LossBudget` es inmutable.
+
+### La interfaz comprueba a sus implementaciones
+
+`QkdProtocol.key_rate` es concreto y llama a `_key_rate`, que es el abstracto.
+Esa indirección existe porque hay tres cosas que una implementación puede
+equivocar sin que nada parezca raro, y las tres se comprueban al volver:
+
+| Comprobación | Qué falla si no está |
+|---|---|
+| la **forma** coincide con la de las condiciones | dos arrays combinados en producto exterior dan un resultado `(n, n)` cuya diagonal es correcta y cuya gráfica no significa nada |
+| la **tasa de pulsos** se copió, no se recalculó | `secure_bit_s` se deriva de ella, así que una tasa venida de otro sitio escala todas las figuras |
+| el **nombre** es el de este protocolo | un resultado se compara con otro por esa cadena |
+
+Los tres levantan `ConfigurationError` y no `ScenarioError`, porque el defecto
+está en la clase del protocolo, no en el escenario del usuario. Cada uno tiene
+detrás un test con una implementación rota a propósito: una comprobación que
+nadie ha visto fallar es una comprobación que nadie sabe si funciona.
+
+La misma idea en `KeyRate`, que valida la cadena `gain >= sifted >= secure >= 0`.
+No es cosmética: cribar descarta clics y no crea ninguno, y la amplificación de
+privacidad no puede quitar más que toda la clave cribada, así que una violación
+es un argumento en la ranura equivocada. La holgura que se permite es
+**relativa, 1e-12**, y está probada por los dos lados —`1e-13` pasa, `1e-6` no—
+porque las tres tasas se calculan una de otra y una igualdad puede perder el
+último bit, pero una parte en un millón no sale de ahí.
+
+### Dos decisiones de reparto que `bb84.py` va a heredar
+
+- **El desalineamiento (`e_mis`) es del enlace, no del protocolo.** Es la
+  probabilidad de que un fotón de señal *que sí se detectó* caiga en el resultado
+  equivocado porque las referencias de polarización de emisor y receptor no
+  coinciden. Es calidad de hardware medida, no una elección del experimentador,
+  y es además el único error que **no** se lava cuando el enlace mejora: el fondo
+  se diluye, el desalineamiento no. Por eso va en `LinkConditions`, y en el
+  objeto del protocolo quedan solo las elecciones (intensidades, sesgo de bases,
+  longitud de bloque, parámetro de seguridad). Va **sin defecto**, por la misma
+  razón que `zenith_transmittance` en `link_budget.py`: un `0.0` por omisión es
+  una afirmación de óptica perfecta hecha por quien no se enteró de que la hacía.
+- **La puerta se pide aunque no entre en ninguna fórmula.** El ruido llega ya
+  integrado sobre ella, así que `gate_duration_s` no multiplica nada aquí; se
+  exige porque es lo único que hace que «por puerta» signifique algo, y porque
+  una puerta **más ancha que el periodo de pulso** es un receptor cuyas puertas
+  se solapan: cada cuenta se atribuiría a dos pulsos. El caso límite —puerta
+  igual al periodo, receptor continuo— es legal y tiene su test.
+
+Ninguna de las dos abre un ADR todavía. El sitio natural es el ADR que abrirá
+`bb84.py` con las decisiones de decoy y finite-key, y un ADR de una decisión que
+aún no tiene un consumidor es un documento que se escribe dos veces.
+
+### Lo que el módulo deja fuera, dicho en voz alta
+
+- **Cualquier protocolo que no sea BB84.** El registro estará vacío hasta que
+  `bb84.py` se importe, y nunca tendrá un nombre para E91, CV-QKD, MDI-QKD ni
+  TF-QKD mientras no estén implementados. Es la regla del
+  [ADR 0005](../docs/adr/0005-propagation.md) para `PropagationMethod`: un nombre
+  ausente obliga a preguntar en el punto de llamada, uno presente y sin
+  implementar invita a un escenario a seleccionarlo. El control negativo corre
+  sobre el registro real y sobre ocho deletreos (`e91`, `cv-qkd`, `mdi`, …), así
+  que sigue valiendo por muchos módulos de protocolo que se importen después.
+- **La entrada de finite-key por bloques.** `key_rate` mapea instantes a
+  instantes. Una cota finite-key habla de un **bloque** de detecciones, y un
+  bloque es una integral sobre el pase, que necesita el eje temporal que este
+  módulo no lleva. Va en `finite_key.py`, y toma cuentas acumuladas en vez de una
+  tasa. Hasta que exista, toda tasa que devuelva esta interfaz es
+  `KeyRegime.ASYMPTOTIC` y **lo dice en su propio campo**, porque la asintótica
+  es una cota superior y no una entrega.
+- **El eje temporal.** `LinkConditions` lleva arrays y no un `TimeGrid`, igual
+  que las funciones de `channel/` toman un array de elevaciones y no una rejilla.
+  Así un barrido de cien transmitancias —que no es una serie temporal— no tiene
+  que inventarse un eje para poder pasar. Integrar la tasa sobre el pase es
+  `system/key_volume.py`, una etapa más tarde.
+- **La maquinaria de decoy.** Acotar `Y_1` y `e_1` desde las ganancias
+  observadas de varias intensidades es contenido de BB84 con pulsos coherentes
+  débiles, no de la frontera. Un test asierta que ninguna firma pública de este
+  módulo acepta una intensidad, un nivel decoy, una longitud de bloque ni un
+  parámetro de seguridad: es el sitio por donde crecería una segunda copia del
+  modelo.
+- **La saturación por tiempo muerto.** Quien haga correr una fuente lo bastante
+  rápido como para saturar sus propios detectores no recibe aviso aquí; el número
+  que lo decide es `detector.saturation_count_rate_cps` y pide un tiempo muerto
+  que este módulo no tiene por qué llevar.
+
+### Por qué `xlogy` y no `x * log(x)`
+
+`h(x) = -x log2 x - (1-x) log2(1-x)` es el precio de las dos cosas que Alice y
+Bob tienen que pagar: corregir los errores cuesta al menos `h(E)` bits por bit
+cribado, y borrar lo que la espía pueda saber cuesta otro `h(e_1)`. En `x = 0` el
+producto `x log x` es `0 · (-inf)`: numpy devuelve `nan` **y avisa**, y esta suite
+corre con `filterwarnings = ["error"]`, así que el aviso no es algo que se pueda
+decidir ignorar después. Envolverlo en `np.where` no sirve —las dos ramas se
+evalúan antes de elegir—, y un error nulo no es un caso raro: es lo que tiene un
+enlace simulado sin fondo ni desalineamiento. `scipy.special.xlogy` define
+`xlogy(0, 0) = 0`, que es el límite, y lo calcula sin llegar a formar el
+producto. Además se le suma `0.0` a la salida para que el cero sea `+0.0`: `-0.0`
+compara igual que cero y no rompe nada, pero se imprime como una entropía
+negativa en una tabla de resultados.
+
+Verificación: **V1**. Valores a mano (`h(0) = h(1) = 0`, `h(½) = 1`), la
+definición reevaluada por un camino independiente (`math.log2` de la biblioteca
+estándar en vez de `xlogy`), simetría alrededor de ½, y el umbral del 11 % de
+BB84 **resuelto con un buscador de raíces** en vez de transcrito: donde
+`h(E) = ½` sale `E = 0.110027864…`.
+
+### Estado
+
+`src/quoss/qkd/base.py`, 200 sentencias, **100 % de cobertura de líneas y de
+ramas**; `tests/qkd/test_base.py`, 102 tests. `ruff`, `ruff format` y `mypy`
+(estricto para `quoss.qkd.*`) limpios, y la suite entera en verde. No hay ningún
+número publicado reproducido aquí porque no hay física que reproducir: los dos
+números medidos (3.58 % y 0.38 %) salen de correr el propio `downlink_noise_budget`
+dentro del test, no de una medición hecha a mano y guardada en prosa.
+
+Lo siguiente de la etapa 2.3 es `qkd/bb84.py`: BB84 con pulsos coherentes débiles
+y estados decoy, que es lo primero que implementa esta interfaz.
+
+---
+
+## 24. `qkd/bb84.py` — BB84 con pulsos coherentes débiles y decoy vacío+débil
+
+### Qué hace este módulo, para quien llegue nuevo
+
+Es la primera implementación de `QkdProtocol`, y por ahora la única. Entra un
+`LinkConditions` —transmitancia, ruido y desalineamiento en cada instante— y sale
+un `KeyRate`: tasa de clave secreta por pulso, QBER, y la etiqueta que dice de
+qué afirmación de seguridad se trata. Todo lo que devuelve es **asintótico**, y lo
+dice en su propio campo.
+
+**Por qué hace falta el decoy, dicho desde cero.** Una fuente QKD real no emite
+un fotón: emite un pulso láser atenuado cuyo número de fotones es Poisson. Con
+µ = 0.56, el 57 % de los pulsos van vacíos, el 32 % llevan exactamente uno, y el
+11 % llevan dos o más. Esos últimos son el problema: si un pulso lleva dos
+fotones, la espía se queda uno y reenvía el otro, tiene una copia perfecta del bit
+y **no ha perturbado nada** —el QBER no la ve—. Y como una bajada satelital pierde
+28 dB, Alice y Bob esperan que casi todo se pierda, así que a la espía le basta
+con bloquear todos los pulsos de un fotón, reenviar solo los multifotónicos por un
+canal sin pérdidas suyo, y reproducir exactamente la ganancia que Bob espera
+sabiendo la clave entera. Es el ataque **PNS**.
+
+La defensa (GLLP) es suponer lo peor: todo pulso multifotónico está *marcado*, la
+espía lo sabe gratis, y **solo los clics que vinieron de pulsos de un fotón**
+producen secreto. Eso deja la pregunta que GLLP no resuelve: el detector de Bob no
+dice de qué pulso vino cada clic. Los estados **decoy** la resuelven —Alice varía
+la intensidad al azar entre µ, ν y vacío y lo anuncia después; la espía no puede
+distinguirlas en vuelo, así que lo que le haga al canal se lo hace a las tres, y
+tres ganancias medidas acotan las mismas incógnitas.
+
+### Las cuatro decisiones, cada una con el número que la sostiene
+
+**1. El rendimiento exacto, no la aproximación publicada.** Ma et al. escriben
+`Y_n = Y_0 + η_n − Y_0 η_n` y en la línea siguiente `≈ Y_0 + η_n`. Sumada sobre la
+Poisson, la aproximación da su Ec. (10) —y la (A4) de Ntanos et al.—,
+`Q = Y_0 + 1 − e^(−ηµ)`. Este módulo usa la **primera** línea, cuya suma es
+`Q = 1 − (1 − Y_0) e^(−ηµ)`, que **es** `click_probability`: una sola ley de clic
+Poisson en el proyecto, no una segunda copia.
+
+La diferencia son las puertas donde disparan el fondo **y** la señal, que la
+aproximación cuenta dos veces. Medido en el enlace de referencia (0.75 m, cenit,
+µ = 0.56): **0.0000787 %** con el ruido nocturno, **0.070965 %** con el día claro
+de Ntanos et al. en ese mismo telescopio, y **0.077502 %** en el de 2.3 m. Pequeño — y
+entonces deja de serlo de la única forma que importa: por encima de **7.152
+cuentas por puerta la forma publicada devuelve una ganancia mayor que uno**,
+1.0007 a diez cuentas. Es la misma confusión entre media y probabilidad que §20
+encontró en la Ec. (20) de Ntanos et al., y `KeyRate` rechaza una ganancia por
+encima de uno, así que aquí la aproximación no engañaría: reventaría.
+
+**2. El QBER como mezcla, no como cociente.** Se escribe
+`E = e_0 + (e_mis − e_0)(Q − Y_0)/Q`: la media ponderada entre la moneda al aire
+del fondo (`e_0 = ½`) y el error de la óptica, con el peso de cuántos clics pone
+cada uno. Algebraicamente es la Ec. (11) de Ma et al.; la razón de deletrearlo así
+es que `E ≤ ½` se cumple **en coma flotante** y no solo en el álgebra. Mantener su
+numerador literal junto a la ganancia exacta **no** tiene esa propiedad: devuelve
+`E > ½` por encima de **3.912 cuentas por puerta**, y el caso de sol brillante de
+la ITU que este proyecto ya modela está en 3.42 — un 12.6 % por debajo, no a
+salvo. Un QBER por encima de un medio no es una clave peor: es un convenio de bit
+invertido, y `KeyRate` levanta `DomainError`.
+
+**3. Donde la cota decoy no certifica nada, lo dice.** La cota inferior de `Y_1`
+puede salir **negativa**, que no es un rendimiento pequeño sino un conjunto de
+restricciones vacío. Se recorta a cero, pero entonces `e_1` es `0/0`, y devolver
+`e_1 = 0` ahí dibujaría un canal de un fotón **perfecto** justo donde el análisis
+falló. Se devuelve `e_1 = ½` —el valor que no informa, `h(½) = 1`, clave cero—, se
+marca la muestra en `certified` y se registra
+`bb84.single-photon-yield-uncertified`.
+
+**Y aquí hubo que corregir la intuición, que es la parte que merece leerse.** La
+primera versión de este docstring decía que la cota falla «a baja elevación», que
+es la respuesta natural y es **falsa**. Barrida de η = 1 a 1e-08 con el ruido
+nocturno y las intensidades de Ntanos et al., la cota sigue positiva todo el
+recorrido y converge a `Y_0` —salvo su propia holgura de primer orden en ν, un
+**1.221 %** con esas intensidades—: un enlace sin señal todavía certifica que un
+fotón habría hecho clic tan a menudo como el fondo. Lo que sí la rompe es la
+**elección de intensidad**: con ν = 0.1 se vuelve no positiva por encima de
+**µ = 3.72** a η = 1e-03. El test que lo mide existe precisamente porque la frase
+equivocada ya estaba escrita, y una frase de «cuándo falla esto» equivocada es
+peor que ninguna.
+
+**4. La eficiencia de protocolo cuenta los pulsos gastados en decoys.** Ma et al.
+dan `q = ½`; la Ec. (A1) de Ntanos et al. la extiende a
+`q = ½ · N_s/(N_s + N_1 + N_2)`. Se usa la segunda, así que toda tasa es **por
+pulso emitido**, decoys incluidos, que es el único denominador bajo el cual una
+frecuencia de fuente en hercios significa algo.
+
+### Una inconsistencia en la fuente, escrita en vez de arreglada a escondidas
+
+Ntanos et al. §4.1 dicen «signal:decoy:vacuum ratio = 4:1:16» y «about q = 2/5» en
+la **misma frase**, y las dos no concuerdan. Metido en su propia Ec. (A1), el
+orden impreso da `q = ½·(4/21) = 0.0952`, un factor **4.2** por debajo de 2/5; el
+orden invertido, 16:1:4, da `0.3810`, que es lo que significa «about 2/5». Así que
+`NTANOS_STATE_COUNTS = (16, 1, 4)`, con la aritmética en el docstring de la
+constante **y en un test que corre**, para que la afirmación no pueda volverse
+falsa en silencio. Regla del [ADR 0009](../docs/adr/0009-citation-policy.md).
+
+### Verificación
+
+- **V1 — la ganancia contra la serie que dice ser.** El cierre analítico se
+  compara contra la suma explícita `Σ_n P(n|µ) Y_n` con `Y_n = 1 − (1−Y_0)(1−η)^n`,
+  término a término hasta n = 200, sobre 40 combinaciones de pérdida e intensidad.
+  La serie se evalúa con `log1p`/`expm1` porque escrita literalmente es una resta
+  de dos números que coinciden en dieciséis dígitos cuando `Y_0` y `η` rondan
+  1e-07 — que es el enlace de referencia, así que la forma ingenua habría hecho
+  del **test** lo menos preciso de la comparación.
+- **V1 — la cota es una cota.** `Y_1` por debajo y `e_1` por encima del valor
+  verdadero, en cinco décadas de pérdida. Es la comprobación sin síntoma: si se
+  cruza, la tasa sigue siendo un número plausible y la afirmación de seguridad es
+  nula, porque aguas abajo solo se ve la cota.
+- **V3 — la cota contra el programa lineal del que es forma cerrada.** La Ec. (34)
+  de Ma et al. es la solución analítica de «minimizar `Y_1` sobre todas las
+  sucesiones de rendimientos en [0,1] compatibles con las dos ganancias medidas y
+  con `Y_0`». Ese programa se le entrega a `scipy.optimize.linprog`, que no
+  comparte una línea de razonamiento con su derivación: **coinciden a 1e-09
+  relativo** en cuatro pérdidas. Es la verificación más fuerte disponible aquí, y
+  dice que la fórmula es el óptimo del programa, no una relajación de él.
+- **V2 — la intensidad óptima.** La Ec. (12) de Ma et al. da el óptimo analítico
+  de µ en el límite dominado por pérdidas: resuelta desde la ecuación publicada da
+  **µ = 0.7687** para `e_mis = 1 %` y `f = 1.22`. Maximizar numéricamente la tasa
+  **completa de este módulo** lo reproduce con un error de **0.09 %** a η = 1e-02,
+  **0.10 %** a η = 1.3993e-03 y **0.98 %** a η = 1e-04. La tolerancia es
+  **derivada, no elegida**: la Ec. (12) desprecia el fondo (error de orden
+  `Y_0/(ηµ)`) y un ν no nulo (orden `ν/µ`), así que se exige que la diferencia no
+  pase del tamaño de lo que la ecuación tira. Por debajo de η ≈ 1e-05 el primer
+  término deja de ser pequeño para este receptor y la comparación deja de serlo —
+  propiedad de la Ec. (12), no de este módulo, y por eso el barrido acaba donde
+  acaba.
+- **V2 — el estado de vacío.** `Q_vacuum = Y_0` y `E_vacuum = ½`, Ec. (33) de Ma
+  et al., **exactamente** y sin una rama por `intensity == 0`: la expresión
+  general tiene que darlo.
+- **V4 — el punto de referencia.** 1.180893e-04 bit por pulso a cenit, 11 809
+  bit/s a 100 MHz, QBER 1.0492 %. Etiquetado como lo que es: una foto de la salida
+  del propio módulo. **No** es trazable a un número publicado, y el test lo dice:
+  Ntanos et al. reportan un máximo de 3.9e-04 bit/pulso sobre todo su estudio, para
+  un telescopio y una elevación que no fijan, y con un presupuesto que arrastra los
+  0.906 dB de residuo de §22. Lo único derivable de esa comparación es una
+  desigualdad de un lado —a cenit y con su telescopio mayor tiene que salir **por
+  encima**— y es lo único que se asierta; una tolerancia de dos lados aquí sería un
+  número elegido para pasar.
+
+### Lo que el módulo deja fuera, dicho en voz alta
+
+- **La cota finite-key.** Sigue en `finite_key.py`. El indicador más nítido de que
+  hace falta está dentro de este módulo: en el límite asintótico las fracciones de
+  decoy y vacío son **coste puro** —la cota que compran ya es exacta por pocos que
+  se envíen—, así que la tasa es estrictamente proporcional a la fracción de
+  señal, y hay un test que lo asierta. Y el ν óptimo es «tan débil como dejen las
+  estadísticas», que es justo lo que un módulo asintótico no puede ver.
+- **Variantes de uno y de tres o más decoys.** La cota implementada es la de
+  vacío+débil y solo esa. Un protocolo de un decoy tiene una cota **distinta**, no
+  esta con una probabilidad a cero, y por eso se exigen las tres probabilidades
+  estrictamente positivas.
+- **La optimización de µ y ν.** Son argumentos **sin defecto**. El 0.56 y el 0.11
+  salieron de optimizar contra *su* enlace con *su* ruido; un defecto llevaría esa
+  optimización, en silencio, a un enlace para el que no se hizo.
+  `Bb84DecoyProtocol.ntanos_2021()` existe para que pedir su configuración se
+  parezca a pedirla.
+- **BB84 asimétrico (eficiente).** Sesgar la base empuja `q` hacia 1 haciendo rara
+  una de las bases, y la base rara es entonces de donde sale la estimación de
+  parámetros — que es una afirmación sobre una muestra finita. Tasarlo
+  asintóticamente sería cobrar la ganancia sin el coste.
+- **Los clics dobles.** `channel/detector.py` ya dice por qué se queda corto; la
+  diferencia con el tratamiento que asigna un bit al azar es `O(Y_0 η µ)`, 6e-12 en
+  el punto nocturno de referencia.
+
+### Estado
+
+`src/quoss/qkd/bb84.py`, 184 sentencias, **100 % de cobertura de líneas y de
+ramas**; `tests/qkd/test_bb84.py`, 552 tests. `ruff`, `ruff format` y `mypy`
+(estricto para `quoss.qkd.*`) limpios, y la suite entera —1888 tests— en verde.
+
+### Lo que se corrigió al revisar la etapa antes de guardarla
+
+Tres cifras de tests de esta entrada y de la §23 estaban **contadas a mano y
+mal**: «105» y «555» son en realidad **102** y **552** (`uv run pytest
+tests/qkd/test_base.py` y `tests/qkd/test_bb84.py`), y la suite entera son
+**1888**, no 1887. Corregidas aquí y en las dos entradas de la etapa 2.3 del
+[`ROADMAP.md`](ROADMAP.md). Es la C1 de la auditoría del 2026-08-04 en pequeño y
+sin consecuencias físicas —un número guardado solo en prosa— y es la razón de que
+el modo de guardar cifras sea correr el comando, no recordarlo. Lo que sí se
+reprodujo al comprobarlo: `--cov=quoss.qkd --cov-branch` da 386 sentencias y 108
+ramas con **cero sin cubrir**, o sea que el «100 % de líneas y ramas» de las dos
+entradas es exacto.
+
+Y una afirmación del código que era falsa: `src/quoss/qkd/__init__.py` decía que
+la cota finite-key «is on by default and the asymptotic rate is an explicit flag,
+not the other way round», y listaba `finite_key` entre sus módulos como si se
+pudiera importar. Ese fichero no existe, y `base.py` dice lo contrario con todas
+las letras («Until it exists, every rate this interface returns is
+`KeyRegime.ASYMPTOTIC`»). El docstring del paquete habla ahora en futuro y marca
+el módulo como no escrito. Que el defecto se anuncie antes de existir es
+exactamente la sobreestimación silenciosa que `KeyRegime` está para hacer
+visible: quien lea solo el paquete creería que la tasa que recibe ya lleva
+descontado el coste del bloque finito, y no lo lleva.
+
+Lo siguiente de la etapa 2.3 es `qkd/finite_key.py`, y con él el ADR que este
+módulo todavía no abre: las decisiones de decoy de arriba y las de finite-key
+pertenecen al mismo documento, y un ADR de una decisión sin consumidor se escribe
+dos veces.
