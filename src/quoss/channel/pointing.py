@@ -351,7 +351,11 @@ def equivalent_beam_radius_m(
         receive_aperture_m=receive_aperture_m,
     )
     beam_to_aperture = radius_m / aperture_radius_m
-    worst = float(np.min(beam_to_aperture))
+    worst = (
+        float(np.min(beam_to_aperture))
+        if beam_to_aperture.size
+        else GAUSSIAN_POINTING_BEAM_TO_RADIUS_LIMIT
+    )
     if worst < GAUSSIAN_POINTING_BEAM_TO_RADIUS_LIMIT:
         degradations.warn(
             "pointing.gaussian-approximation-out-of-published-range",

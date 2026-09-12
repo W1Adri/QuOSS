@@ -335,10 +335,39 @@ be opened, written down so nobody has to rediscover it.
   Gaussian `1/e²` waist radius with the transmitter's aperture *radius*
   (`w_t = D_T/2`) is what Ntanos et al. Eq. (6) implies, and it is what QuOSS
   uses — but it means the transmitting aperture clips 13.5 % of its own beam
-  (`1 − exp(−2)`), a flat **0.63 dB** that `beam.py` does not apply and
-  `link_budget.py` will. Optimum-truncation conventions (`w_t = D_T/2.2` and
-  similar) differ by tens of percent in on-axis intensity, so any external
-  comparison has to declare which one it uses.
+  (`1 − exp(−2)`), which `beam.py` does not apply and `link_budget.py` does.
+  Optimum-truncation conventions (`w_t = D_T/2.2` and similar) differ by tens of
+  percent in on-axis intensity, so any external comparison has to declare which
+  one it uses.
+
+  **This entry used to say the term was a flat 0.63 dB. It is 3.35 dB, and the
+  correction is worth reading rather than just applying.** 0.63 dB is
+  `1 − exp(−2)`, the light the rim blocks; it answers "how much never leaves"
+  and it is not what the model gets wrong. On axis in the far field the
+  *amplitude* integrates and the intensity is its square, so losing the tail of
+  the amplitude integral costs twice while the power normalisation recovers it
+  once. With `α = a/w_t`, what the untruncated far field overstates per unit
+  **launched** power is
+
+      η_trunc(α) = [1 − exp(−α²)]² / [1 − exp(−2α²)]
+
+  which is 0.4621 at `α = 1`: **3.352 dB**. Three numbers exist and each has its
+  own reference power — 0.632 dB against the laser, 3.352 dB against what left
+  the aperture, 3.984 dB against the laser for both effects together — and they
+  are one identity, not three measurements. `link_budget.py` applies the middle
+  one, because a link budget's transmit power is the power out of the telescope.
+  `TestTheTransmitterClipsItsOwnBeam` asserts the closed form against the
+  diffraction integral evaluated by quadrature, and asserts all three numbers so
+  that the other two cannot be adopted by accident.
+
+  **What the correction changed downstream:** Ntanos et al.'s "as low as 20 dB"
+  went from a 4.259 dB residual — which would have needed a vertical extinction
+  of `L_zen = 0.375` at 1550 nm, an order of magnitude more than anything
+  credible — to **0.906 dB**, i.e. `L_zen = 0.812`, an ordinary clear-sky
+  value. The missing decibels were in the transmitter, not in the atmosphere.
+  That is a consistency and not a reproduction: the paper states no extinction
+  and no truncation, and a residual landing in a plausible range is not evidence
+  that it is the thing it resembles.
 - **Turbulence-induced beam spreading is not modelled**, on the source's own
   authority rather than by omission: ITU-R P.1622 §4.4 states it "is typically
   very small with respect to divergence and does not account for an appreciable

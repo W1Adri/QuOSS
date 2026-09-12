@@ -349,7 +349,7 @@ def log_irradiance_variance(
         / (wavelength_um ** (7.0 / 6.0) * np.sin(elevation) ** (11.0 / 6.0))
     )
 
-    peak = float(np.max(variance))
+    peak = float(np.max(variance)) if variance.size else 0.0
     if peak > WEAK_FLUCTUATION_VARIANCE_LIMIT:
         degradations.warn(
             "turbulence.weak-fluctuation-limit-exceeded",

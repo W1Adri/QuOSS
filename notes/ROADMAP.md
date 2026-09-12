@@ -188,8 +188,10 @@ la bandera es hoy una puerta cerrada que marca dónde haría falta. Ver
 **Decisión que gobierna toda la etapa, tomada antes de escribir física:** la
 referencia canónica del canal (Andrews & Phillips) **no se cita por número de
 ecuación porque no se pudo abrir**. Fuentes primarias: ITU-R P.1621-2, P.1622 y
-Ntanos et al. 2021, todas gratuitas y numeradas. Siete huecos declarados en vez
-de rellenados → [ADR 0009](../docs/adr/0009-citation-policy.md).
+Ntanos et al. 2021, todas gratuitas y numeradas. Catorce huecos declarados en
+vez de rellenados → [ADR 0009](../docs/adr/0009-citation-policy.md). **Etapa
+cerrada**: los siete módulos escritos, y ninguno de los huecos rellenado con la
+cita más plausible.
 
 1. ✅ `channel/atmosphere.py` — perfil Cn² (HV 5/7), viento de Bufton, malla de
    integración de 139 capas y refracción. **Corregido al implementarlo:** la
@@ -295,7 +297,47 @@ de rellenados → [ADR 0009](../docs/adr/0009-citation-policy.md).
    techo de 33.3 Mcps, 1.5 % de pérdida). Las dos leyes de tiempo muerto y la
    fracción de puertas vivas `1/(1 + b·p)` están verificadas V1 contra Monte
    Carlo del proceso del que se derivan
-7. `channel/link_budget.py` — **ensambla** los anteriores en pérdida total y ruido total
+7. ✅ `channel/link_budget.py` — **ensambla** los anteriores en pérdida total y
+   ruido total. **El hallazgo:** dos de los seis módulos no devuelven un número
+   —apuntado devuelve una distribución y turbulencia una varianza— y la práctica
+   publicada de **sumar el cuantil al 1 % de cada uno** no da un presupuesto al
+   1 %. Las dos colas tienen forma cerrada *en decibelios*: la de apuntado es
+   **exactamente exponencial** (sustituir `L = -10 log10 x` en la ley de
+   potencias `F(x) = x^(γ²)` lo demuestra en una línea) y la de escintilación
+   **exactamente gaussiana**, así que su suma es una gaussiana modificada
+   exponencialmente y el cuantil conjunto es **exacto, sin Monte Carlo**:
+   1.668 dB donde la suma publicada da 2.312 dB. Son 0.644 dB de margen que
+   nadie pidió y, sobre todo, una etiqueta falsa — ese presupuesto es del
+   **0.066 %** de outage, quince veces más estricto que el 1 % impreso al lado.
+   `FadeCombination` tiene dos miembros y ningún defecto escondido: `EXACT` por
+   defecto, `ADDITIVE` para reproducir lo publicado, y la diferencia sale de la
+   misma llamada. Verificado V1 contra 4e6 muestras del jitter gaussiano en dos
+   ejes y de la lognormal, y V3 reevaluando la propia función de distribución en
+   la respuesta. **La trampa que da forma al módulo:** `click_probability` toma
+   una `efficiency` y un presupuesto quiere la cadena del receptor como línea,
+   así que hacer las dos cosas la cuenta **dos veces — 12.71 dB en vez de
+   6.36**, un factor 4.3 en tasa de clave. El API guarda las dos transmitancias
+   con nombre (`transmittance` completa, `channel_transmittance` hasta la
+   apertura) y ninguna es el producto de la otra por algo que haya que recordar.
+   Dos cosas más que salieron: la Ec. (18) de Ntanos et al. **devuelve un número
+   negativo y lo llama pérdida** (es el nivel, no la caída: sumarla como está
+   impresa deja el total equivocado en el doble del desvanecimiento), y su total
+   de 20 dB de §4.2.1 **no se reproduce**. Por eso la extinción es un
+   **argumento obligatorio sin defecto** y no un modelo: hueco 14 del
+   [ADR 0009](../docs/adr/0009-citation-policy.md), porque la UIT publica
+   absorción y dispersión **solo como figuras**. **Y el término que faltaba no
+   estaba en la atmósfera, estaba en el transmisor** (hueco 15): `beam.py`
+   propaga una gaussiana **sin truncar**, y el borde de la apertura corta el
+   13.5 % del haz. El número tentador —0.632 dB de potencia recortada— es la
+   respuesta a otra pregunta: en el eje lo que integra es la **amplitud** y la
+   intensidad es su cuadrado, así que el modelo sin truncar sobreestima
+   `[1-exp(-α²)]²/[1-exp(-2α²)]`, que a `α = 1` son **3.352 dB**. Con él, el
+   presupuesto de Ntanos et al. pasa de 15.741 a **19.094 dB** y su residuo de
+   4.259 dB (que exigía `L_zen = 0.375`, absurdo) a **0.906 dB** (`L_zen =
+   0.812`, ordinario). Compatible, no reproducido. Y `tests/golden/README.md`
+   tenía este término predicho en 0.63 dB desde antes de que el módulo
+   existiera: está corregido allí, con la forma cerrada verificada contra la
+   integral de difracción por cuadratura
 
 ### 2.3 `qkd/` — de canal a clave
 1. `qkd/base.py` — interfaz común de protocolo (entra transmitancia+ruido, sale tasa+QBER) y registro de protocolos

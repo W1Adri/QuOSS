@@ -237,6 +237,95 @@ Esta lista es la parte que hace que la de arriba signifique algo.
     ambigüedad es una función que falta en vez de una suposición escondida. Para
     los enlaces publicados el hueco no cuesta nada —a 500 kcps la pérdida es del
     1.5 % con cualquiera de los dos— y eso también está medido.
+14. **La extinción atmosférica: la ley de escala está publicada y el número que
+    escala no.** La Ec. (7) de Ntanos et al., `L_a = L_zen^(1/cos ζ)`, está
+    numerada y es verificable; su `L_zen` —la transmitancia vertical— **no
+    aparece en el paper**, que cita una referencia para la ecuación y ningún
+    valor. Y la ITU-R P.1621-2 publica la absorción (§2) y la dispersión (§3)
+    **solo como figuras**: las Figs. 1, 2 y 4 son gráficas, sin tabla ni forma
+    cerrada al lado. Leer un valor de una curva y presentarlo como publicado es
+    exactamente lo que esta política prohíbe.
+
+    **Consecuencia en el código, y es una firma:** `zenith_transmittance` es un
+    argumento **obligatorio y sin defecto** de `atmospheric_transmittance` y de
+    `downlink_loss_budget`. Quien no tenga extinción escribe `1.0` en su propio
+    código y con eso lo declara; no hay ningún valor del argumento que
+    signifique en silencio «no lo he pensado». Hay un test que aserta que el
+    parámetro no tiene defecto, porque la forma fácil de cerrar este hueco por
+    accidente es poner uno.
+
+    **Lo que el hueco cuesta, medido:** la §4.2.1 de Ntanos et al. afirma un
+    total de bajada de 20 dB a 600 km con telescopio grande. Todos los demás
+    términos, calculados con los parámetros que el propio paper declara y
+    combinados como él los combina, más el truncamiento de apertura que sus
+    ecuaciones no llevan (ver abajo), suman **19.094 dB**. El residuo son
+    **0.906 dB**, que leídos por su Ec. (7) son `L_zen = 0.812` — una
+    transmitancia cenital de cielo claro perfectamente ordinaria a 1550 nm.
+
+    Así que su 20 dB es **compatible** con este presupuesto más una extinción no
+    declarada de tamaño plausible, y hasta ahí llega la afirmación: un residuo
+    que cae en un rango creíble **no es prueba** de ser la cosa a la que se
+    parece, y el paper no declara extinción en ninguna parte.
+
+    **La mitad más interesante es lo que hubo que añadir para que el residuo
+    fuera plausible.** Sin el término de truncamiento, el mismo presupuesto suma
+    15.741 dB y deja **4.259 dB**, que exigirían `L_zen = 0.375` — una extinción
+    vertical de 4.26 dB a 1550 nm con cielo despejado, un orden de magnitud por
+    encima de cualquier valor creíble. Los decibelios que faltaban **no estaban
+    en la atmósfera, estaban en el transmisor**. Todo está en
+    `tests/channel/test_link_budget.py::TestAgainstNtanosEtAl::test_their_twenty_decibel_best_case_does_not_reproduce`,
+    que aserta las dos lecturas y los dos `L_zen` implícitos.
+
+    **Sub-hueco de masa de aire:** el exponente `1/cos ζ` es una atmósfera
+    plana, que diverge en el horizonte donde el camino real es finito. La
+    comparación honesta aquí no es una cita sino geometría —el camino por una
+    capa esférica de 8.5 km sobre una Tierra de 6371 km— y la secante se pasa un
+    0.20 % a 30°, **0.50 % a 20°** (el suelo de elevación del propio paper, así
+    que ahí no cuesta nada), 2.1 % a 10° y 8.1 % a 5°. El 5 % cae en **6.427°**,
+    que es `SECANT_AIRMASS_ELEVATION_LIMIT_RAD`, derivado con un buscador de
+    raíces en el test y no elegido. Por debajo sale un `WARNING` con las dos
+    masas de aire dentro; el valor devuelto **sigue siendo el del modelo
+    publicado**, porque sustituirlo en silencio por el esférico dejaría al módulo
+    sin reproducir nada.
+15. **El truncamiento de la apertura transmisora: una convención, no una cita —
+    y la predicción que el propio repo tenía escrita estaba mal por 2.7 dB.**
+    `beam.py` propaga una gaussiana **sin truncar**, con radio de cintura igual
+    al **radio** de la apertura, que es lo que implica la Ec. (6) de Ntanos et
+    al. Una apertura real es un agujero, y con esa cintura el borde corta
+    `exp(-2) = 13.5 %` del haz.
+
+    El número tentador es ese 13.5 %: **0.632 dB** de luz que nunca sale. Es la
+    respuesta correcta a otra pregunta. En el eje y en campo lejano lo que
+    integra es la **amplitud**, y la intensidad es su cuadrado, así que perder la
+    cola de la integral de amplitud cuesta **dos veces** mientras la
+    normalización de potencia la recupera **una**. Con `α = a/w_t`, lo que el
+    campo lejano sin truncar sobreestima por unidad de potencia **lanzada** es
+
+        η_trunc(α) = [1 - exp(-α²)]² / [1 - exp(-2α²)]
+
+    que a `α = 1` vale 0.4621: **3.352 dB**. Hay tres números y cada uno tiene su
+    potencia de referencia —0.632 dB contra el láser, **3.352 dB contra lo que
+    salió de la apertura**, 3.984 dB contra el láser con los dos efectos juntos—
+    y son **una identidad, no tres medidas**. `link_budget.py` aplica el de en
+    medio, porque la potencia de transmisión de un presupuesto de enlace es la
+    que salió del telescopio; si la `µ` del llamante está definida en la fuente,
+    los 0.632 dB extra van en `static_loss_db` y esa decisión es suya, porque
+    ninguna fórmula puede saberlo.
+
+    **Por qué esto es un hueco y no física implementada sin más:** `α` es un
+    parámetro de diseño del terminal, no una constante. A `α = 2` el término son
+    0.16 dB y a `α = 3` ha desaparecido, que es para lo que existe un expansor de
+    haz. El defecto es `α = 1` porque es **el único valor consistente** con los
+    radios de haz que calcula `beam.py`, no porque ninguna fuente lo publique, y
+    hay un test que lo aserta contra la constante privada de ese módulo para que
+    cambiar la convención allí no deje este término huérfano.
+
+    **Y lo que hace falta decir en voz alta:** `tests/golden/README.md` tenía
+    este término predicho en **0.63 dB** desde antes de que el módulo existiera.
+    Era el número de potencia recortada, no el del error del modelo. Está
+    corregido allí con la derivación al lado, y la forma cerrada está verificada
+    contra la integral de difracción evaluada por cuadratura
+    (`TestTheTransmitterClipsItsOwnBeam`), no contra el álgebra que la produjo.
 
 ### El caveat de Ntanos et al. 2021, que es la fuente V2 de punta a punta
 
@@ -250,6 +339,30 @@ numeradas, resultado publicado— y por eso hay que escribir lo que no cuadra:
   intensidades 4:1:16 que declara; lo consistente es 2/21.
 - Lo que **sí** se reprodujo son los ratios entre estaciones: publicado
   1 : 0.28 : 0.084, medido 1 : 0.29 : 0.10.
+- Su **total de enlace de 20 dB** (§4.2.1, «the total link loss for a 600 km
+  link distance can get as low as 20 dB in total») **no se reproduce**, pero el
+  residuo dejó de ser absurdo: sus propios términos suman 15.741 dB, y con el
+  truncamiento de apertura que sus ecuaciones no llevan (hueco 15) suben a
+  **19.094 dB**. Los **0.906 dB** que quedan son `L_zen = 0.812`, una extinción
+  cenital de cielo claro ordinaria. Compatible, no reproducido: el paper no
+  declara ni extinción ni truncamiento. Ver los huecos 14 y 15.
+- Su Ec. (18) devuelve un **número negativo y lo llama pérdida**: es
+  `10 log10` del cuantil de la irradiancia, o sea el **nivel** de señal
+  respecto de la media, no la caída desde ella. Vale −1.282 dB en la geometría
+  de referencia al 1 % de outage, y sumarla a un presupuesto de pérdidas
+  positivas tal como está impresa deja el total equivocado en **el doble** del
+  desvanecimiento. `link_budget.scintillation_fade_db` devuelve la forma
+  negada, y hay un test con la Ec. (18) transcrita literalmente al lado para
+  que la diferencia sea entre dos expresiones y no una afirmación sobre una.
+- Su práctica de **sumar dos cuantiles al 1 %** —la pérdida de apuntado de §4.1
+  y la Ec. (18), las dos a `p_0 = 1 %`— no da un presupuesto al 1 %. Las dos
+  colas tienen forma cerrada en decibelios (exponencial la de apuntado,
+  gaussiana la de escintilación), así que su suma es una **gaussiana modificada
+  exponencialmente** y el cuantil conjunto es exacto: 1.668 dB donde la suma da
+  2.312 dB. Son **0.644 dB** de margen que nadie pidió, y sobre todo una
+  etiqueta equivocada — ese presupuesto es del **0.066 %** de outage, quince
+  veces más estricto que el número impreso al lado. Es conservador, no
+  peligroso; lo que no es, es lo que dice ser.
 - Su Ec. (5) **tal como está impresa** (`(8/w_0)²` donde la identidad exige
   `8/w_0²`) es 8 veces mayor, **9.03 dB optimista**, y con sus propios parámetros
   devuelve una transmitancia de 1.36. Encontrado al implementar

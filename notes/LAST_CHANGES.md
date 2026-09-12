@@ -1,44 +1,75 @@
 # QuOSS — Últimos cambios y cosas a considerar
 
 > Bitácora viva. Se actualiza al cerrar cada etapa del [`ROADMAP.md`](ROADMAP.md).
-> Última actualización: **2026-09-10** — **sexto módulo de la Etapa 2.2**,
-> `channel/detector.py` (§21): la cadena de eficiencia, las cuentas oscuras, el
-> afterpulsing y el tiempo muerto. Lo que el detector pierde, lo que se inventa,
-> y cuándo no está escuchando.
+> Última actualización: **2026-09-12** — **séptimo y último módulo de la Etapa
+> 2.2**, `channel/link_budget.py` (§22): todas las pérdidas en un sitio. **Con
+> esto la Etapa 2.2 queda cerrada.**
 >
-> **La regla que da forma al módulo:** las medias se suman y la exponencial se
-> hace una vez, al final — porque las **tres** formas publicadas que reproduce
-> son truncamientos a primer orden de eso (el `1 - 2 p_dc` de Lim et al., su
-> `D_k(1 + p_ap)`, y el `Y_0 = P_dc + P_noise` de la Ec. (A6) de Ntanos et al.),
-> excelentes en su punto de operación (7e-12, 0.16 % y 1.2e-6) y las tres por
-> encima de 1 en el barrido diurno de este proyecto (**1.93, 1.006 y 3.42**).
+> **El hallazgo:** dos de los seis módulos que ensambla no devuelven un número
+> —apuntado devuelve una distribución, turbulencia una varianza— y la práctica
+> publicada de **sumar el cuantil al 1 % de cada uno no da un presupuesto al
+> 1 %**. Las dos colas tienen forma cerrada *en decibelios*: la de apuntado es
+> **exactamente exponencial** y la de escintilación **exactamente gaussiana**,
+> así que su suma es una gaussiana modificada exponencialmente y el cuantil
+> conjunto es exacto sin Monte Carlo — **1.668 dB donde la suma publicada da
+> 2.312 dB**. Son 0.644 dB de margen que nadie pidió y, sobre todo, una etiqueta
+> falsa: ese presupuesto es del **0.066 % de outage**, quince veces más estricto
+> que el 1 % impreso a su lado.
 >
-> **La trampa:** la cadena de eficiencia se aplica a todo lo que entró por la
-> apertura y a nada que naciera dentro del detector. Los fotones de fondo son
-> fotones; las cuentas oscuras se generan detrás de la óptica. Aplicarles la
-> cadena también a ellas —la frase natural, «aplica la eficiencia al ruido»—
-> esconde **0.94 dB de ruido** y mueve su peso del 7 % al 25 % del presupuesto
-> nocturno del receptor de referencia.
+> **La trampa que da forma al módulo:** `click_probability` toma una `efficiency`
+> y un presupuesto quiere la cadena del receptor como línea, así que hacer las
+> dos cosas la cuenta **dos veces — 12.71 dB en vez de 6.36**, un factor 4.3 en
+> tasa de clave. El API guarda las dos transmitancias con nombre y ninguna es el
+> producto de la otra por algo que haya que recordar.
 >
-> **Y el hallazgo que pone una condición a `background.py`:** el gating no toca
-> el afterpulsing, porque escala con la tasa de clics y no con la puerta.
-> Estrechar de 1 ns a 100 ps vale **10 dB con el nanohilo de Ntanos et al. y
-> 0.22 dB con el APD de InGaAs de Lim et al.** Así que «estrecha la puerta» es
-> una frase condicional y la condición es qué detector hay dentro — el hueco 5
-> del [ADR 0009](../docs/adr/0009-citation-policy.md) pasa de declarado a
-> **medido**, con un sub-hueco de unidades nuevo (Lim publica una probabilidad
-> por puerta y **no declara ninguna puerta**) y una coincidencia asertada *como*
-> coincidencia, para que nadie lea los 6e-7 de los dos papers como dos fuentes
-> confirmándose.
+> **El segundo hallazgo, y salió de perseguir un V2 que no cerraba:** el total
+> de bajada de 20 dB de Ntanos et al. §4.2.1 dejaba **4.259 dB** sin explicar, y
+> cerrarlos con extinción exigía `L_zen = 0.375` — un orden de magnitud más de lo
+> creíble a 1550 nm. **Los decibelios que faltaban no estaban en la atmósfera,
+> estaban en el transmisor.** `beam.py` propaga una gaussiana **sin truncar** y
+> el borde de la apertura corta el 13.5 % del haz; el número tentador —0.632 dB
+> de potencia recortada— es la respuesta a otra pregunta, porque en el eje lo que
+> integra es la **amplitud** y la intensidad es su cuadrado. El modelo sin
+> truncar sobreestima `[1-exp(-α²)]²/[1-exp(-2α²)]`, que a `α = 1` son
+> **3.352 dB**. Con ese término el presupuesto sube a **19.094 dB** y el residuo
+> baja a **0.906 dB** (`L_zen = 0.812`, ordinario): **compatible, no
+> reproducido**. Y `tests/golden/README.md` llevaba este término predicho en
+> **0.63 dB** desde antes de que el módulo existiera — corregido allí, con la
+> forma cerrada verificada contra la integral de difracción por cuadratura.
+> Hueco 15 del [ADR 0009](../docs/adr/0009-citation-policy.md).
 >
-> Una afirmación publicada que **sí** reproduce, por una vez: la §4.2 de Ntanos
-> et al. sobre no saturar por tiempo muerto es correcta con dos órdenes de
-> magnitud de margen (500 kcps contra un techo de 33.3 Mcps). Y el modelo
-> paralizable de tiempo muerto **no se puede invertir** —16.3 y 59.4 Mcps dan la
-> misma lectura de 10 Mcps— así que la ambigüedad es una función que falta en vez
-> de una suposición escondida.
+> **La extinción atmosférica sigue siendo un hueco declarado**, y por eso
+> `zenith_transmittance` es un **argumento obligatorio sin defecto**: la ley de
+> escala está publicada y numerada, el número que escala no, porque la UIT
+> publica absorción y dispersión **solo como figuras** (hueco 14). Dos cosas más
+> de la misma fuente:
+> su Ec. (18) **devuelve un número negativo y lo llama pérdida** (es el nivel, no
+> la caída — sumarla como está impresa deja el total equivocado en el doble del
+> desvanecimiento), y una log-varianza no es un índice de escintilación
+> (convertir dos veces cuesta 0.005 dB donde el enlace opera y 2.36 dB en el
+> límite de la teoría).
 >
-> Entrada anterior del mismo día: **quinto módulo de la Etapa 2.2**,
+> Y un defecto de los hermanos que solo aparece al ensamblarlos: un **eje
+> temporal vacío** hacía reventar a `beam`, `turbulence`, `pointing` y
+> `background` en el `np.max` con el que deciden si avisan. `detector.py` ya
+> tenía la guarda desde §21; ahora la tienen los cinco.
+>
+> Entrada anterior: **sexto módulo de la Etapa 2.2**, `channel/detector.py`
+> (§21): la cadena de eficiencia, las cuentas oscuras, el afterpulsing y el
+> tiempo muerto. Lo que el detector pierde, lo que se inventa, y cuándo no está
+> escuchando. **La regla que da forma al módulo:** las medias se suman y la
+> exponencial se hace una vez, al final — porque las **tres** formas publicadas
+> que reproduce son truncamientos a primer orden de eso, excelentes en su punto
+> de operación (7e-12, 0.16 % y 1.2e-6) y las tres por encima de 1 en el barrido
+> diurno de este proyecto (**1.93, 1.006 y 3.42**). **La trampa:** la cadena de
+> eficiencia se aplica a todo lo que entró por la apertura y a nada que naciera
+> dentro del detector; aplicársela también a las cuentas oscuras esconde
+> **0.94 dB de ruido**. **Y el hallazgo que pone una condición a
+> `background.py`:** el gating no toca el afterpulsing, así que estrechar de 1 ns
+> a 100 ps vale **10 dB con el nanohilo de Ntanos et al. y 0.22 dB con el APD de
+> InGaAs de Lim et al.**
+>
+> Entrada anterior: **quinto módulo de la Etapa 2.2**,
 > `channel/background.py` (§20) — la luz que llega cuando no se envió nada, y la
 > Ec. (20) que llama «probability» a un número esperado de cuentas que con la luz
 > solar tabulada por la UIT vale 3.42. (La cabecera no se actualizó al cerrar esa
@@ -153,28 +184,30 @@
 
 | | |
 |---|---|
-| Etapa cerrada | **1 — `core/`** y **2.1 — `orbits/`** |
-| En curso | **2.2 — `channel/`**, cuatro módulos de siete: `atmosphere.py`, `turbulence.py`, `beam.py` (§18) y `pointing.py` (§19). Es donde el proyecto se juega la credibilidad, porque aquí nadie detecta a ojo que 45 dB debería ser 39 dB: ver la política de citas ([ADR 0009](../docs/adr/0009-citation-policy.md)), §18 y §19 |
-| Física implementada | Marcos y escalas de tiempo · dos cuerpos · gravedad zonal J2/J3/J4 y teoría secular de J2 · propagación sobre una rejilla temporal, con época y método explícitos · **el tipo de elemento (osculador/medio) como parte del tipo, no como aviso** · **parseo de TLE y propagación SGP4**, con época propia y sin construir jamás un `ClassicalElements` medio · **ángulos de visión, distancia oblicua, velocidad de rango y point-ahead** desde una `Trajectory` en TEME · Walker-Delta, SSO y traza repetida (escrito, aparcado) · **perfil `C_n²(h)` y refracción · escintilación, promediado de apertura, `r0` y ángulo isoplanático · divergencia, acoplamiento geométrico y vaivén del haz · desvanecimiento por jitter de apuntado, como distribución** |
-| Novedad de esta entrada | **`channel/pointing.py`** (§19). El desvanecimiento por apuntado es una **ley de potencias con un solo parámetro**, derivada en tres líneas del jitter Rayleigh, y su cola es lo que decide el enlace: 0.22 dB de media contra 1.03 dB al 1 % de outage. **17.5 dB** es lo que cuesta contar `A_0` dos veces, y la forma del API lo impide. Dos fuentes independientes concuerdan en el exponente a **0.01 dB**, con el residuo atribuido a la corrección de apertura y no tolerado |
-| Novedad de la entrada anterior | **`channel/beam.py`** (§18), y la etapa 2.2 entra en la bitácora. La Ec. (5) de Ntanos et al. 2021 es **9.03 dB optimista** tal como está impresa, y se demuestra sin discutir: con los parámetros del propio paper devuelve una transmitancia de **1.36**. QuOSS usa la integral de truncación gaussiana, que satura en 1. Y el vaivén de subida crece frente a la divergencia como `D_T^(5/6)`, así que un transmisor de 1 m pasea su haz **3.15 anchos de haz** |
-| Novedad de dos entradas atrás | **Los dos últimos módulos de 2.1.** `geometry.py` (§16): una sola rotación TEME→ITRF dentro de `look_angles`, así que no hay un segundo sitio donde una mezcla de marcos se cuele; point-ahead **con factor 2**, medido en 50.6 µrad; Doppler deliberadamente fuera, como función aparte que consume `range_rate_km_s`. `constellations.py` (§17): espaciado en anomalía **media**, no verdadera, con su control negativo que demuestra por qué |
+| Etapa cerrada | **1 — `core/`**, **2.1 — `orbits/`** y **2.2 — `channel/`** |
+| En curso | **2.3 — `qkd/`**, sin empezar. La 2.2 cierra con sus siete módulos: `atmosphere.py`, `turbulence.py`, `beam.py` (§18), `pointing.py` (§19), `background.py` (§20), `detector.py` (§21) y `link_budget.py` (§22). Es donde el proyecto se jugaba la credibilidad, porque ahí nadie detecta a ojo que 45 dB debería ser 39 dB: ver la política de citas ([ADR 0009](../docs/adr/0009-citation-policy.md)), con **catorce huecos declarados y ninguno rellenado** |
+| Física implementada | Marcos y escalas de tiempo · dos cuerpos · gravedad zonal J2/J3/J4 y teoría secular de J2 · propagación sobre una rejilla temporal, con época y método explícitos · **el tipo de elemento (osculador/medio) como parte del tipo, no como aviso** · **parseo de TLE y propagación SGP4**, con época propia y sin construir jamás un `ClassicalElements` medio · **ángulos de visión, distancia oblicua, velocidad de rango y point-ahead** desde una `Trajectory` en TEME · Walker-Delta, SSO y traza repetida (escrito, aparcado) · **perfil `C_n²(h)` y refracción · escintilación, promediado de apertura, `r0` y ángulo isoplanático · divergencia, acoplamiento geométrico y vaivén del haz · desvanecimiento por jitter de apuntado, como distribución · radiancia de cielo, fondo y puerta temporal · cadena de eficiencia, cuentas oscuras, afterpulsing y tiempo muerto · presupuesto de enlace y de ruido completos, con el cuantil conjunto de los dos desvanecimientos en forma cerrada** |
+| Novedad de esta entrada | **`channel/link_budget.py`** (§22), y con él **la Etapa 2.2 queda cerrada**. Dos hallazgos. (1) Sumar dos cuantiles al 1 % **no da un presupuesto al 1 %**: las dos colas tienen forma cerrada en dB (exponencial y gaussiana), su suma es una gaussiana modificada exponencialmente, y el cuantil conjunto exacto son **1.668 dB** contra los **2.312 dB** de la suma publicada — un outage real del **0.066 %**, quince veces más estricto que la etiqueta. (2) Persiguiendo los 4.259 dB que le faltaban al total de 20 dB de Ntanos et al., apareció un término que no estaba en la atmósfera sino en el **transmisor**: truncar la gaussiana en la apertura cuesta **3.352 dB** y no los 0.63 dB que el propio repo tenía predichos. Residuo final **0.906 dB** (`L_zen = 0.812`): compatible, no reproducido |
+| Novedad de la entrada anterior | **`channel/detector.py`** (§21). **Las medias se suman y la exponencial se hace una vez, al final**, porque las tres formas publicadas que reproduce pasan de 1 en el barrido diurno (1.93, 1.006 y 3.42). Aplicar la cadena de eficiencia a las cuentas oscuras esconde **0.94 dB** de ruido, y el gating **no toca el afterpulsing**: estrechar la puerta vale 10 dB con un nanohilo y **0.22 dB** con un APD de InGaAs |
+| Novedad de dos entradas atrás | **`channel/background.py`** (§20). Las dos ecuaciones publicadas son la misma y discrepan en las **unidades** del campo de visión (41.05 dB pasarlo mal, 6.02 dB leerlo como semiángulo), y la Ec. (20) llama «probability» a un número esperado de cuentas que con la luz solar tabulada por la UIT vale **3.42** |
 
-Verificación ejecutada **el 2026-09-10, con `channel/pointing.py` en el árbol**
-(estos números sí se han vuelto a correr, por la misma regla que costó los
-«219 km» de §14.1):
+Verificación ejecutada **el 2026-09-12, con `channel/link_budget.py` en el
+árbol** (estos números sí se han vuelto a correr, por la misma regla que costó
+los «219 km» de §14.1):
 
 ```bash
 uv run ruff check .          # All checks passed!
-uv run ruff format --check . # 46 files already formatted
-uv run mypy                  # Success: no issues found in 46 source files
-uv run pytest                # 937 passed in 22.18s
-uv run pytest --cov          # 99 % global (1697 sentencias, 358 ramas, 8 sin cubrir)
+uv run ruff format --check . # 52 files already formatted
+uv run mypy                  # Success: no issues found in 52 source files
+uv run pytest                # 1227 passed in 24.42s
+uv run pytest --cov          # 99 % global (2194 sentencias, 454 ramas, 8 sin cubrir)
 ```
 
-Cobertura de `channel/`: `atmosphere`, `turbulence`, `beam`, `pointing` y
-`_validation` al **100 %**, ramas incluidas. Las 8 sentencias sin cubrir del total siguen
-siendo las mismas de `orbits/constellations.py`, que está aparcado.
+Cobertura de `channel/`: los siete módulos —`atmosphere`, `turbulence`, `beam`,
+`pointing`, `background`, `detector`, `link_budget`— y el compartido
+`_validation` al **100 %**, ramas incluidas. Las 8 sentencias sin cubrir del
+total están todas fuera de `channel/`: cuatro en `orbits/constellations.py` (que
+está aparcado), una en `core/rng.py` y tres en `core/types.py`.
 
 Cobertura por módulo de `orbits/`: `frames`, `kepler`, `perturbations`,
 `propagator`, `geometry`, `tle` y `_validation` al **100 %**, ramas incluidas.
@@ -182,12 +215,10 @@ Cobertura por módulo de `orbits/`: `frames`, `kepler`, `perturbations`,
 las ramas de fallo de `brentq` en la traza repetida, y quedan así a propósito
 porque el módulo está aparcado.
 
-La suite pasa de ~20 s a **32 s**. Todo el coste añadido son las integraciones de
-`constellations.py` y los 24 casos de `geometry.py` contra la referencia
-congelada de astropy. Todo el coste base siguen siendo integraciones DOP853: son
-el oráculo de `perturbations.py` y no hay forma barata de tenerlo. Si llega a
-molestar, el sitio donde recortar es el número de revoluciones, no las
-tolerancias.
+La suite está en **36 s**. El coste añadido de esta entrada son los dos Monte
+Carlo de 4e6 muestras que verifican el cuantil conjunto (marcados `physics`);
+todo el coste base siguen siendo las integraciones DOP853, que son el oráculo de
+`perturbations.py` y no tienen forma barata.
 
 ---
 
@@ -3140,3 +3171,330 @@ el tiempo muerto es extensible (§21.4). Ninguna hoja de datos responde al prime
 `pointing.py`, `background.py`, `detector.py` y el compartido `_validation.py`.
 Queda **`link_budget.py`**, que es el que ensambla. La suite está en 1131 tests, y
 `channel/` entero al 100 % de cobertura de líneas y ramas.
+
+---
+
+## 22. `channel/link_budget.py` — todas las pérdidas en un sitio, y las dos que no son números
+
+### Qué hace este módulo, para quien llegue nuevo
+
+Los seis módulos anteriores responden cada uno a una pregunta sobre el canal.
+Este los suma. Suena a contabilidad y no lo es, porque **dos de los seis no
+devuelven un número**:
+
+- `pointing.py` devuelve una **distribución**: con jitter mecánico la
+  transmitancia relativa no es un valor, es una variable aleatoria con una ley
+  de potencias `F(x) = x^(γ²)`.
+- `turbulence.py` devuelve una **varianza**: `σ²_lnI`, la anchura de las
+  fluctuaciones de intensidad, no una pérdida.
+
+Una línea de presupuesto tiene que ser **un** número en decibelios. Convertir
+esas dos en uno exige elegir, y esa elección es todo el contenido del módulo.
+
+La salida son dos objetos, separados a propósito: un `LossBudget` (cuánta luz
+llega, partida en términos que un revisor puede comprobar de uno en uno) y un
+`NoiseBudget` (cuántas cuentas por puerta llegan que no eran señal).
+
+Un presupuesto de enlace es el objeto más revisable de una simulación y el más
+fácil de equivocar en silencio, porque todos los términos son decibelios y los
+decibelios se suman. Meter un término dos veces, o con el signo cambiado, da un
+total equivocado exactamente por el tamaño de ese término y **igual de plausible
+a la vista** que el correcto.
+
+### El hallazgo: dos permisos al 1 % no hacen un permiso al 1 %
+
+Un **desvanecimiento** (*fade*) es una pérdida que varía sola en el tiempo. Este
+enlace tiene dos —el jitter de apuntado y la escintilación atmosférica— y un
+presupuesto no puede citar una variable aleatoria, así que cita un **cuantil**:
+«la pérdida que no se supera el 99 % del tiempo», el permiso al 1 % de *outage*.
+
+La práctica publicada, que Ntanos et al. 2021 siguen explícitamente (§4.1 para
+apuntado, Ec. (18) para escintilación, las dos a su `p_0 = 1 %`), es calcular el
+cuantil al 1 % de cada una y **sumar los dos decibelios**. Está mal, y está mal
+en una dirección y una cantidad que se pueden decir exactas, porque las dos colas
+tienen forma cerrada **en decibelios**:
+
+- **Apuntado.** Sustituyendo `L = -10 log10 x` en `F(x) = x^(γ²)`:
+
+      P(L > l) = exp(-l · γ² · ln10 / 10)
+
+  El desvanecimiento de apuntado en dB es **exactamente exponencial**, de tasa
+  `a = γ²/4.343`. Una línea de álgebra, y no hace falta creerse nada más.
+- **Escintilación.** La lognormal normalizada a media unidad de la Ec. (17) tiene
+  `ln I ~ N(-σ²/2, σ²)`. La misma sustitución la vuelve **exactamente gaussiana**
+  en dB, de media `4.343·σ²/2` y desviación `4.343·σ`.
+
+Su suma es entonces una **gaussiana modificada exponencialmente**, cuya función
+de distribución es forma cerrada. El cuantil conjunto no necesita Monte Carlo ni
+aproximación: `combined_fade_db` lo invierte por bisección vectorizada hasta el
+último bit.
+
+Medido, en el enlace de referencia de este repo (telescopio de 0.75 m, 600 km,
+1550 nm, transmisor de 0.15 m, 0.75 µrad de jitter, 20° de elevación):
+
+| | outage 1 % | outage 0.1 % |
+|---|---|---|
+| Permiso de apuntado solo | 1.030 dB | 1.545 dB |
+| Permiso de escintilación solo | 1.282 dB | 1.692 dB |
+| Su suma, como suman los presupuestos publicados | 2.312 dB | 3.237 dB |
+| **El cuantil conjunto verdadero** | **1.668 dB** | **2.217 dB** |
+| Margen añadido que nadie pidió | 0.644 dB | 1.020 dB |
+| Outage que la suma compra de verdad | **0.066 %** | **0.0011 %** |
+
+El error es **conservador** —la suma exagera el desvanecimiento—, así que nada
+construido encima es inseguro. Lo que es, es **mal etiquetado**: un diseño que
+reporta «20 dB al 1 % de outage» está reportando la pérdida al 0.066 % de outage,
+quince veces más estricto que el número impreso a su lado, y una tasa de clave
+citada «al 1 % de outage» no es la tasa disponible al 1 % de outage. Dos sistemas
+comparados al mismo outage declarado **no están comparados al mismo outage** a no
+ser que sus términos de desvanecimiento tengan la misma forma.
+
+Por eso `FadeCombination` tiene dos miembros y ningún defecto que esconda la
+elección: `EXACT` es lo que el módulo usa si no se le dice otra cosa, `ADDITIVE`
+existe para reproducir un presupuesto publicado, y la diferencia entre los dos
+sale de la misma llamada (`effective_outage_probability`).
+
+**Verificado a tres niveles a la vez**, que es lo que hace que esto sea un
+hallazgo y no una afirmación: **V1** contra 4e6 muestras de los dos procesos
+físicos —jitter gaussiano en dos ejes metido por `pointing_transmittance`, y la
+lognormal de la Ec. (17)—, con tolerancia **derivada** del error estándar de un
+cuantil empírico y la densidad local estimada de la propia muestra; **V3**
+reevaluando la función de distribución en la respuesta que devuelve la bisección
+(tiene que dar `1 - p` a 1e-12, lo que caza un bracket mal puesto, un contador de
+iteraciones corto o un signo dentro del exponente); y **V2** porque la
+convención aditiva es la publicada y el módulo la conserva medida en vez de
+descartarla.
+
+### La trampa que da forma al módulo: la cadena del receptor, dos veces
+
+`detector.click_probability` toma un argumento `efficiency` y se lo aplica a la
+señal y al fondo. Un presupuesto de enlace también quiere la cadena del receptor
+como línea, porque **6.36 dB** de filtro, óptica y eficiencia cuántica son el
+segundo término más grande del receptor de referencia. Hacer las dos cosas la
+cuenta dos veces: **12.71 dB en vez de 6.36**, un factor **4.3** en tasa de
+clave, y todos los números intermedios siguen pareciendo normales.
+
+Es la misma forma de error que el doble conteo de `A_0` que `pointing.py` existe
+para evitar (§19), y la defensa es la misma: la ambigüedad se quita del **API**,
+no de la documentación. `LossBudget.transmittance` es el factor **completo**, con
+cadena incluida, así que el número medio de fotones multiplicado por él ya son
+fotones *detectados* y la llamada que sigue es `click_probability(...,
+efficiency=1.0)`. Para la otra ruta está `LossBudget.channel_transmittance`, que
+se para en la apertura y es la que se empareja con una `efficiency` explícita.
+Las dos se guardan, hay un test que comprueba que las dos rutas dan el mismo
+número, y ninguna es el producto de la otra por algo que haya que recordar.
+
+### La extinción atmosférica es un argumento, no un modelo
+
+«Extinción» es la luz que la atmósfera quita por absorción en bandas moleculares
+y por dispersión en moléculas y aerosoles. No es lo mismo que la turbulencia, que
+**redistribuye** la luz en vez de quitarla, ni que las nubes, que no son una
+pérdida sino un corte.
+
+`atmospheric_transmittance` implementa la Ec. (7) de Ntanos et al.,
+`L_a = L_zen^(1/cos ζ)`: la transmitancia vertical elevada a la masa de aire. Es
+Beer-Lambert disfrazado —una profundidad óptica multiplicada por la masa de aire
+es lo mismo que una transmitancia elevada a ella—, y por eso la elevación entra
+en el **exponente** y no en la base.
+
+**La ley de escala está publicada y numerada. El número que escala, no.** Ntanos
+et al. citan una referencia para la Ec. (7) y no dan nunca `L_zen`; la ITU-R
+P.1621-2 publica absorción (§2) y dispersión (§3) **solo como figuras** —las
+Figs. 1, 2 y 4 son gráficas, sin tabla ni forma cerrada al lado—. Leer un valor
+de una curva y presentarlo como publicado es exactamente lo que prohíbe el
+[ADR 0009](../docs/adr/0009-citation-policy.md).
+
+Así que `zenith_transmittance` es un argumento **obligatorio, sin defecto**.
+Quien tenga una extinción medida o modelada la pasa; quien no tenga ninguna
+escribe `1.0` y con eso lo declara **en su propio código**. No hay ningún valor
+del argumento que signifique en silencio «no lo he pensado», y hay un test que
+aserta que el parámetro no tiene defecto, porque la forma fácil de cerrar este
+hueco por accidente es ponerle uno. Es el **hueco 14** del ADR 0009.
+
+**Lo que el hueco cuesta, medido — y lo que perseguirlo destapó.** Ntanos et al.
+§4.2.1 afirman que su pérdida total de bajada «can get as low as 20 dB in total»
+para 600 km con telescopio grande. Todos los demás términos son reproducibles
+desde sus propios parámetros declarados:
+
+| Término | dB |
+|---|---|
+| Geométrico (0.15 m → 2.3 m a 600 km) | 8.066 |
+| **Truncamiento de la apertura transmisora** (ver la sección siguiente) | **3.352** |
+| Desvanecimiento (apuntado + escintilación, su convención aditiva, 1 %) | 1.019 |
+| Cadena del receptor (85 % · 3 dB filtro · 2.65 dB óptica) | 6.356 |
+| Decoherencia de polarización (declarada, §4.1) | 0.300 |
+| **Total** | **19.094** |
+| Publicado (§4.2.1) | 20.0 |
+| **Residuo** | **0.906** |
+
+Leído por su Ec. (7), ese residuo es `L_zen = 0.812`: una transmitancia cenital
+de cielo claro perfectamente ordinaria a 1550 nm. Así que su 20 dB es
+**compatible** con este presupuesto más una extinción no declarada de tamaño
+plausible, y hasta ahí llega la afirmación — **un residuo que cae en un rango
+creíble no es prueba de ser la cosa a la que se parece**, y el paper no declara
+extinción en ninguna parte. Compatible, no reproducido.
+
+**Y la mitad interesante es la fila en negrita.** Sin ella el presupuesto sumaba
+15.741 dB y el residuo eran **4.259 dB**, que exigían `L_zen = 0.375` — una
+extinción vertical de 4.26 dB a 1550 nm con cielo despejado, un orden de
+magnitud por encima de cualquier valor creíble. Lo que faltaba no estaba en la
+atmósfera. El test aserta las **dos** lecturas y los dos `L_zen` implícitos,
+precisamente para que se vea cuál de los dos hallazgos hace el trabajo.
+
+El residuo tampoco es la convención de desvanecimiento: en el cenit las dos
+reglas de combinación se separan **0.067 dB**, una décima parte de él.
+
+### El transmisor recorta su propio haz, y cuesta más de lo que parece
+
+`beam.py` propaga una gaussiana **sin truncar** —una cuya potencia se integra
+sobre todo el plano infinito— con un radio de cintura igual al **radio** de la
+apertura transmisora, que es lo que implica la Ec. (6) de Ntanos et al. Una
+apertura real es un agujero, y con esa cintura el borde del telescopio corta
+`exp(-2) = 13.5 %` del haz.
+
+El número tentador es ese 13.5 %: **0.632 dB** de luz que nunca sale. Es la
+respuesta correcta a **otra pregunta**. En el eje y en campo lejano lo que
+integra es la **amplitud** —`I(0) = |∫E dA|²/(λL)²`— y la intensidad es su
+cuadrado, así que perder la cola de la integral de amplitud cuesta **dos veces**
+mientras la normalización de potencia la recupera **una**. Con `α = a/w_t`:
+
+    ∫E dA         = π w² [1 - exp(-α²)]
+    potencia lanzada = |E|² π w²/2 [1 - exp(-2α²)]
+
+    η_trunc(α) = [1 - exp(-α²)]² / [1 - exp(-2α²)]
+
+que a `α = 1` vale 0.4621: **3.352 dB**, no 0.63.
+
+Hay **tres** números y cada uno tiene su potencia de referencia. Decirlos los
+tres es lo que impide que se adopte el equivocado más adelante:
+
+| Cantidad | A `α = 1` | Potencia de referencia |
+|---|---|---|
+| Luz que el borde bloquea | 0.632 dB | el láser |
+| **Lo que el modelo sin truncar sobreestima** | **3.352 dB** | **lo que salió de la apertura** |
+| Las dos juntas, `[1-exp(-α²)]²` | 3.984 dB | el láser |
+
+Y son **una identidad, no tres medidas**: el producto de las dos primeras es la
+tercera, y hay un test que lo aserta. `link_budget.py` aplica la de en medio,
+porque la potencia de transmisión de un presupuesto de enlace es la que salió
+del telescopio. Si la `µ` del llamante está definida **en la fuente**, los
+0.632 dB extra van en `static_loss_db`, y esa decisión es del llamante porque
+ninguna fórmula puede saber qué convención usa su `µ`.
+
+Tres consecuencias que conviene separar. Es una propiedad **del transmisor**,
+así que es un escalar, no varía a lo largo de un pase, y se reporta como línea
+propia del presupuesto. Es el **único** término de aquí que un expansor de haz
+quita: a `α = 2` son 0.16 dB y a `α = 3` ha desaparecido, lo que convierte a `α`
+en una variable de diseño. Y el defecto es `α = 1` **porque es el único valor
+consistente** con los radios de haz que calcula `beam.py`, no porque nadie lo
+publique — hay un test que lo aserta contra la constante privada de ese módulo,
+para que cambiar la convención allí no deje este término huérfano.
+
+**Verificado V3, no derivado a mano:** la forma cerrada se compara contra la
+integral de difracción evaluada por cuadratura a seis valores de `α`, con las
+dos integrales hechas en el test sin nada de álgebra en común con el módulo.
+Coinciden a 1e-9 relativo.
+
+**Y una predicción del propio repo que estaba mal.** `tests/golden/README.md`
+llevaba este término escrito en **0.63 dB** desde que se cerró `beam.py`, antes
+de que `link_budget.py` existiera: era el número de potencia recortada, no el
+del error del modelo. Está corregido allí con la derivación al lado. Merece
+decirse porque es exactamente el modo de fallo que este proyecto teme —un número
+plausible y equivocado, escrito con confianza en un documento de referencia— y
+lo que lo cazó no fue una revisión sino **tener que usarlo**.
+
+### La masa de aire, y dónde la secante deja de serlo
+
+`1/cos ζ` trata la atmósfera como una losa plana: exacto en el cenit, y divergente
+en el horizonte donde el camino real es finito. La comparación honesta aquí **no
+es una cita, es geometría** — el camino por una capa esférica de espesor `H`
+alrededor de una esfera de radio `R`:
+
+    X(ζ) = sqrt((R/H)² sin²θ + 2R/H + 1) - (R/H) sinθ
+
+Con `R = 6371 km` y 8.5 km de altura de escala, la secante se pasa un **0.20 % a
+30°, 0.50 % a 20°** —el suelo de elevación del propio paper, así que ahí no cuesta
+nada—, **2.1 % a 10°** y **8.1 % a 5°**. El 5 % cae en **6.427°**, que es
+`SECANT_AIRMASS_ELEVATION_LIMIT_RAD`, **derivado con un buscador de raíces en el
+test** y no elegido. Por debajo sale un `WARNING` con las dos masas de aire
+dentro, y el valor devuelto **sigue siendo el del modelo publicado**: sustituirlo
+en silencio por el esférico dejaría al módulo sin reproducir nada.
+
+### Dos convenciones de signo, dichas una vez
+
+**La Ec. (18) de Ntanos et al. devuelve un número negativo y lo llama pérdida.**
+Escrita entera es `4.343 [erf⁻¹(2p₀-1)·sqrt(2σ²_lnI) - σ²_lnI/2]`, que es
+`10 log10` del cuantil `p₀` de la **irradiancia**: el *nivel* de señal respecto de
+la media, no la caída desde ella. Al 1 % y en la geometría de referencia vale
+**−1.282 dB**. Sumada a un presupuesto de pérdidas positivas tal como está
+impresa, **resta** el desvanecimiento en vez de sumarlo, y el total queda
+equivocado en **el doble** de su profundidad. `scintillation_fade_db` devuelve la
+forma negada, y el test lleva la Ec. (18) transcrita literalmente al lado para
+que la diferencia sea **entre dos expresiones del mismo fichero** y no una
+afirmación sobre una.
+
+**Una varianza de log-irradiancia no es un índice de escintilación.** La Ec. (18)
+está escrita en `σ²_I` —la varianza normalizada de la *irradiancia*— y convierte
+con `σ²_lnI = ln(σ²_I + 1)`. Lo que devuelve
+`turbulence.log_irradiance_variance` **ya es** `σ²_lnI`, porque la Ec. (4b) de
+ITU-R P.1622 calcula esa cantidad directamente. Aplicar la conversión una segunda
+vez es un error silencioso de **0.005 dB** en la varianza de referencia
+(0.0153 Np²) y de **2.36 dB** en el límite de 1.0 Np² de la teoría de
+fluctuaciones débiles. El módulo toma la log-varianza, su argumento lo dice en el
+nombre, y la conversión no se aplica aquí.
+
+### Lo que el módulo deja fuera, dicho en voz alta
+
+- **La subida.** Todos los términos de desvanecimiento del `LossBudget` son de
+  bajada. Una subida tiene un tercero —el vaivén del haz de
+  `beam.uplink_beam_wander_angle_rad`— cuya distribución **no tiene la misma
+  forma** que ninguna de estas dos, así que la gaussiana modificada
+  exponencialmente que hace exacta a `combined_fade_db` deja de serlo. Y no tiene
+  fondo en absoluto, porque el hueco 7 del ADR 0009 registra que ninguna fuente
+  verificada publica la radiancia de una Tierra iluminada. **Un presupuesto de
+  subida equivocado es peor que uno ausente**, y hay un test que aserta por
+  ausencia que no existe ninguna función `uplink_*` en el módulo.
+- **Las nubes.** La línea de vista libre de nubes es una probabilidad de que el
+  enlace exista, no una cifra en decibelios, y va en `system/pcflos.py` donde se
+  puede aplicar a un pase entero. Meter una probabilidad de nube dentro de una
+  atenuación convertiría un corte en un promedio y haría que un enlace que **no
+  funciona nunca** pareciera un enlace que funciona mal.
+- **La correlación temporal.** Los dos desvanecimientos se citan aquí como
+  cuantiles marginales **en un instante**. Un pase real se desvanece a ráfagas de
+  milisegundos, así que el número de puertas *consecutivas* que se pierden no es
+  el que implica un muestreo independiente. Eso es
+  `system/correlated_fading.py`, y hasta que exista **ninguna afirmación de este
+  módulo sobre clave por puerta implica una sobre clave por pase**.
+- **Doppler, rotación de polarización y efecto Faraday.** `static_loss_db` es un
+  escalar único para todo lo constante que ningún módulo modela; el valor de
+  referencia que se le mete son los 0.3 dB de decoherencia de polarización que
+  Ntanos et al. §4.1 declaran. Llamarlo pérdida estática y no modelo de
+  polarización es justo el punto: es un hueco con cita, no un tratamiento físico.
+- **Cualquier cantidad de protocolo.** Rendimiento, QBER, sifting, decoy y tasa
+  de clave consumen una transmitancia y una tasa de ruido; no pertenecen al
+  canal. Aquí termina `quoss.channel`.
+
+### Un defecto de los módulos hermanos que apareció al ensamblarlos
+
+Un eje temporal **vacío** —un pase que todavía no ha empezado, que es lo que
+devuelve una segmentación antes de la primera muestra visible— hacía reventar a
+`beam.py`, `turbulence.py`, `pointing.py` y `background.py` con
+`ValueError: zero-size array to reduction operation minimum which has no
+identity`. Los cuatro calculan el peor caso del array (`np.max`/`np.min`) para
+decidir si registran un aviso, sin comprobar que hay array. No es un error de
+física y no lo cazaba ningún test, porque cada módulo se probaba con muestras
+reales; lo cazó `link_budget.py`, que los llama a los cuatro seguidos.
+
+Lo interesante es que **`detector.py` ya tenía la guarda** (`if product.size else
+0.0` en `observed_count_rate_cps`, §21): el patrón ya se había encontrado una vez
+y se había arreglado solo donde apareció. Ahora está en los cinco, y el test de
+regresión es `TestScalingLaws::test_an_empty_pass_returns_empty_and_records_nothing`,
+que pide el presupuesto entero sobre un pase vacío y comprueba que sale vacío y
+que el log no registra nada.
+
+**Estado de la etapa 2.2: cerrada.** Los siete módulos escritos —`atmosphere.py`,
+`turbulence.py`, `beam.py`, `pointing.py`, `background.py`, `detector.py`,
+`link_budget.py`— más el compartido `_validation.py`, y `channel/` entero al
+**100 %** de cobertura de líneas y ramas. Catorce huecos declarados en el ADR
+0009, ninguno rellenado con la cita más plausible. Lo siguiente es la etapa 2.3,
+`qkd/`, que es el primer consumidor de lo que este módulo produce.

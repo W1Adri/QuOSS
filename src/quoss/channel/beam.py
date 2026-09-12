@@ -847,7 +847,10 @@ def uplink_wander_to_divergence_ratio(
     )
     ratio: FloatArray = wander / divergence
 
-    peak = float(np.max(ratio))
+    # An empty time axis is a pass that has not started, not an error: nothing
+    # to warn about, and `np.max` of nothing raises. Same guard as
+    # `detector.observed_count_rate_cps`.
+    peak = float(np.max(ratio)) if ratio.size else 0.0
     if peak > UPLINK_WANDER_BEAMWIDTH_LIMIT:
         degradations.warn(
             "beam.uplink-wander-exceeds-divergence",

@@ -1159,7 +1159,7 @@ def background_click_probability(
     1
     """
     counts = background_counts_per_gate(photon_rate_cps, gate_duration_s=gate_duration_s)
-    worst = float(np.max(counts))
+    worst = float(np.max(counts)) if counts.size else 0.0
     if worst > LINEAR_CLICK_PROBABILITY_LIMIT:
         probability_at_worst = float(-np.expm1(-worst))
         degradations.warn(
