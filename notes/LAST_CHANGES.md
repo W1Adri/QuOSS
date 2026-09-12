@@ -1,7 +1,44 @@
 # QuOSS — Últimos cambios y cosas a considerar
 
 > Bitácora viva. Se actualiza al cerrar cada etapa del [`ROADMAP.md`](ROADMAP.md).
-> Última actualización: **2026-09-12** — **segundo módulo de la Etapa 2.3**,
+> Última actualización: **2026-09-12** — **tercer módulo de la Etapa 2.3**,
+> `qkd/finite_key.py` (§25): la cota finite-key componible, y con ella el
+> [ADR 0010](../docs/adr/0010-decoy-and-finite-key.md) que la etapa tenía
+> aplazado. **La fuente no es la que el roadmap pedía:** decía «Tomamichel» y lo
+> implementado es **Lim et al. 2014**, porque el protocolo que hay es decoy con
+> pulsos coherentes débiles y el de Tomamichel et al. supone fuente de un fotón —
+> y no es apartarse de ellos, es usar el resultado que aplica su relación de
+> incertidumbre entrópica al protocolo que tenemos.
+>
+> **Lo que entra y sale es de otra especie:** entra un **bloque** de cuentas
+> acumuladas, sale una **longitud en bits** con dos probabilidades de fallo al
+> lado. No es la tasa asintótica por un factor, y tres cosas lo impiden: hay un
+> coste fijo de **260 bits por bloque** que no escala con nada; la desviación de
+> Hoeffding la comparten las tres intensidades, así que la que se envía 1/21 de
+> las veces carga una incertidumbre relativa 21 veces mayor; y el protocolo de
+> Lim et al. —base sesgada, clave de las tres intensidades, error estimado en la
+> otra base— **no es** el de `bb84.py`.
+>
+> **La cifra que resume la etapa:** en el enlace de referencia a cenit con el
+> reparto 16:1:4, un bloque de 1e10 pulsos —cien segundos de una fuente de
+> 100 MHz— certifica **1.1387e-05 bits por pulso** contra los **6.0239e-05** del
+> límite asintótico del mismo protocolo. El **18.9 %**. Y a 1e9 pulsos, nada.
+>
+> **El hallazgo que solo este módulo puede ver:** asintóticamente los pulsos
+> decoy son coste puro y su fracción óptima es cero —lo dice el docstring de
+> `protocol_efficiency`, y es cierto—; con un bloque de pase el óptimo está
+> **cerca del 50 %** y vale un factor **3.4** sobre gastar una décima parte.
+>
+> **Verificación:** V3 **entre fuentes** —con `mu_3 = 0` y bloque grande, la
+> Ec. (3) de Lim et al. **es** la Ec. (34) de Ma et al. que implementa
+> `bb84.py`, y el residuo cae exactamente como `1/sqrt(N)`: 4.33e-04 a 1e16
+> pulsos, 4.33e-06 a 1e20, 4.33e-08 a 1e24—; y V2 contra su Fig. 1, cuyo cociente
+> publicado de **1.75** entre bloques de 1e9 y 1e7 se reproduce en **1.79**. Ese
+> cociente es además lo que **decide** una ambigüedad de su modelo de error, y lo
+> que **no** se reproduce —su curva de bloque 1e4— queda escrito como hueco 16
+> del ADR 0009 y como un test que asierta el desacuerdo.
+>
+> Entrada anterior: **segundo módulo de la Etapa 2.3**,
 > `qkd/bb84.py` (§24): BB84 con pulsos coherentes débiles y estados decoy, la
 > primera implementación de `QkdProtocol`. **Cuatro decisiones con su número:**
 > (1) se usa el rendimiento **exacto** de Ma et al. Ec. (7) primera línea —que
@@ -3921,3 +3958,210 @@ Lo siguiente de la etapa 2.3 es `qkd/finite_key.py`, y con él el ADR que este
 módulo todavía no abre: las decisiones de decoy de arriba y las de finite-key
 pertenecen al mismo documento, y un ADR de una decisión sin consumidor se escribe
 dos veces.
+
+---
+
+## 25. `qkd/finite_key.py` — de una tasa a una longitud, y por qué no es lo mismo
+
+### Qué hace este módulo, para quien llegue nuevo
+
+`bb84.py` contesta «qué fracción de los pulsos se convierte en clave» suponiendo
+que Alice y Bob tuvieran tiempo infinito. Este contesta la pregunta que plantea
+un pase de verdad: *tuvieron once minutos y 6.6e10 pulsos — cuántos bits de clave
+pueden reclamar, y con qué probabilidad la reclamación es falsa*.
+
+**Por qué «finito» cambia algo, y no un poco.** Todos los números de la tasa
+asintótica son probabilidades, y Alice y Bob nunca observan una probabilidad:
+observan un recuento. 412 detecciones de 3.7e8 pulsos a la intensidad decoy. Un
+recuento dividido por los intentos es una **estimación**, y una estimación puede
+tener mala suerte. La cota decoy se construye restando una ganancia medida de
+otra, así que una fluctuación del signo equivocado en cualquiera de las dos hace
+que el rendimiento de un fotón certificado salga **demasiado alto** — y un
+rendimiento certificado de más es clave que Eve conoce en parte. El análisis
+finite-key sustituye cada recuento por el peor valor compatible con él a una
+confianza declarada, y pone precio a la diferencia.
+
+**Qué quiere decir «componible», que es la palabra que carga el peso.** Una clave
+no es «segura» o «insegura»: es `epsilon`-segura, o sea que se separa de una
+clave ideal —uniforme y desconocida para Eve— como mucho `epsilon` en una
+distancia que se **compone bien**. Eso último es lo que importa: garantiza que
+usar la clave dentro de otro protocolo —cifrar con ella, autenticar con ella—
+degrada la seguridad de ese protocolo como mucho otro `epsilon`. Una cota no
+componible puede ser perfectamente cierta y no decir nada sobre el sistema donde
+la clave se usa.
+
+**Y qué es el error de fase, que no es el QBER.** La amplificación de privacidad
+cobra por lo que Eve sabe, y lo que Eve sabe está acotado por la tasa de error
+que Alice y Bob **habrían visto** si hubieran medido en la base conjugada. No la
+midieron: esos bits fueron clave. Así que hay que inferirla desde la base que sí
+midieron, y la inferencia es un argumento de muestreo con su propia probabilidad
+de fallo — el término `gamma`. Son dos tasas de error distintas en dos términos
+distintos de la misma ecuación, y en el bloque de referencia valen **1.06 %** y
+**8.85 %**: confundirlas infla el término de un fotón por **1.609**, sin que nada
+aguas abajo pueda notarlo.
+
+### La decisión de esta entrada: Lim et al. 2014, no Tomamichel et al. 2012
+
+El roadmap escribió «finite-key componible (Tomamichel)» antes de que existiera
+`bb84.py`. Lo que hay hoy es un protocolo de **pulsos coherentes débiles con
+decoy**, y eso manda: Tomamichel, Lim, Gisin y Renner (*Nature Communications*
+3:634, 2012) analizan BB84 con **fuente de un fotón**, y aplicarlo aquí exigiría
+una fuente que este proyecto no modela o un argumento de *tagging* encima que
+nadie ha publicado en esa combinación. Lim, Curty, Walenta, Xu y Zbinden (*PRA*
+89, 022307, 2014) analizan exactamente el protocolo que hay, en cinco ecuaciones,
+y su análisis de secreto **está construido sobre** la relación de incertidumbre
+entrópica de Tomamichel y Renner. Elegir Lim no es apartarse de Tomamichel: es
+usar el resultado que aplica su técnica a nuestro protocolo.
+
+### Por qué no es «la asintótica por un factor de corrección»
+
+Tres razones, cada una medida:
+
+1. **Hay un coste fijo por bloque.** La Ec. (1) resta
+   `6 log2(21/eps_sec) + log2(2/eps_cor)` bits **una vez**: **260** con
+   `eps_sec = eps_cor = 1e-10` (225.7 + 34.2). Despreciable frente a un pase,
+   decisivo frente a una demostración de unos cientos de bits, y sin traducción
+   posible a una tasa.
+2. **La desviación estadística es una sola para las tres intensidades.** Hoeffding
+   acota el **reparto del bloque entero** entre ellas, así que la misma `delta`
+   absoluta le toca a la intensidad rara y a la común — y tras el `1/p_k` que
+   convierte cuentas en cantidad por pulso, la relativa de la rara es 21 veces
+   mayor. En el bloque de referencia eso se ve crudo: el estado decoy registró
+   **230** errores en la base de comprobación y la desviación compartida es
+   **458**, o sea el doble que lo que mide. La cota de errores de un fotón sale
+   entonces en **39 630** donde la base registró **16 088** errores de todo tipo.
+   Una cota superior por encima del total sigue siendo una cota superior; lo que
+   dice es que esa configuración no certifica casi nada sobre de dónde vinieron
+   los errores.
+3. **El protocolo no es el mismo.** Base sesgada, clave de las **tres**
+   intensidades, error estimado en la **otra** base, y `mu_3 >= 0` en vez de
+   vacío exacto. Comparar término a término es comparar dos protocolos.
+
+### El crédito de vacío: ruido que hace clave, y cuánto vale de verdad
+
+La Ec. (1) suma `s_{X,0}` —las detecciones en puertas donde Alice no envió nada—
+**entera**, sin cobrarle amplificación de privacidad. Es correcto: un clic en una
+puerta vacía lo decidió el detector, no el canal, así que Eve no sabe nada del bit
+que Bob apuntó. Suena a truco, así que se midió, con 1e12 pulsos:
+
+| Ruido (cuentas/puerta) | `s_0` | Clave | Aporte de `s_0` |
+|---|---|---|---|
+| 7.9e-07 (noche) | **0** | 5.47e+07 bits | 0 % |
+| 1e-05 | 1.51e+06 | 4.58e+07 bits | **3.3 %** |
+| 1e-04 | 1.65e+07 | **0** | — |
+
+De noche no se certifica ninguno: hay **37 522** detecciones de vacío y la
+desviación es **44 399**, así que están dentro del ruido del reparto. Y de 1e-04
+en adelante el término crece pero la clave ya es cero, porque la corrección de
+errores se cobra sobre **todo** el bloque y el QBER que producen esas mismas
+cuentas oscuras se la comió antes. El crédito es real, es pequeño y **nunca
+rescata** un enlace ruidoso.
+
+### El hallazgo que solo este módulo puede ver
+
+`Bb84DecoyProtocol.protocol_efficiency` dice que los pulsos decoy son coste puro y
+que su fracción óptima es cero. Es cierto —y es cierto **solo asintóticamente**.
+Barriendo la fracción decoy con la de vacío fija en 5 %:
+
+| Fracción decoy | Clave/pulso a 1e20 | Clave/pulso a 1e10 |
+|---|---|---|
+| 0.05 | **7.11e-05** | 0 |
+| 0.10 | 6.85e-05 | 6.26e-06 |
+| 0.50 | 4.77e-05 | **2.12e-05** |
+| 0.90 | 2.70e-05 | 1.69e-05 |
+
+Asintóticamente cae de forma monótona; con un bloque de pase tiene **máximo
+interior cerca del 50 %**, y gastar medio pase en decoys vale un factor **3.4**
+sobre gastar una décima. Ese óptimo es invisible desde `bb84.py`, porque la
+cantidad que `bb84.py` optimiza no depende de la fracción decoy en absoluto.
+
+Un segundo efecto de la misma familia, y también contraintuitivo: apretar
+`eps_sec` cinco décadas engorda `delta` solo un **20 %** —lleva
+`sqrt(ln(21/eps_sec))`— pero cuesta el **72 %** de la clave del bloque de
+referencia, porque un 20 % más de desviación mueve la tasa de error de fase de
+5.4 % a 12.1 %, que es media curva de `h`. Barato en la desviación, caro en la
+clave.
+
+### La verificación: dos papeles, dos transcripciones, un número
+
+La comprobación más fuerte de la etapa no compara contra un valor publicado sino
+contra **otra fuente implementada aparte**. Con `mu_3 = 0` y un bloque tan grande
+que la desviación es despreciable, la Ec. (3) de Lim et al. **es** la Ec. (34) de
+Ma et al. que implementa `bb84.py`, escrita en cuentas en vez de en
+probabilidades.
+
+Y no solo coinciden: **coinciden de la manera correcta**. El residuo relativo es
+**4.33e-04** con 1e16 pulsos, **4.33e-06** con 1e20 y **4.33e-08** con 1e24 — tres
+puntos sobre una recta de pendiente −1/2, que es exactamente como escala `delta`.
+Una coincidencia en un punto pueden ser dos errores que se cancelan; una que
+converge con la ley correcta, no. Lo mismo con la Ec. (4) contra la Ec. (37).
+
+**El V2, y la ambigüedad que resolvió.** Su §Evaluation publica que a 100 km la
+tasa con bloque 1e9 es «about 1.75» veces la de 1e7. Pero su tasa de error
+impresa lleva `eta_ch` —solo la fibra— en el término de desalineamiento, mientras
+la tasa de detección de al lado lleva `eta_sys = eta_ch·eta_Bob`, diez veces
+menor: ese término aporta entonces **3.9 puntos** de QBER a pérdida cero donde
+la lectura consistente aporta **0.48**, un factor **8.07** que es justo el
+`1/eta_Bob` que sobra. Cruzando esa
+lectura con la de si `e_k` cuenta errores por puerta o por detección salen cuatro
+modelos, con cocientes **1.79**, 2.73, 1.46 y 1.47. **Solo el físicamente
+consistente cae sobre su número**, así que es el que se implementa — la
+ambigüedad se resolvió midiendo, no eligiendo.
+
+**Lo que no se reproduce, escrito en vez de ajustado:** dicen que un bloque de
+1e4 llega a 135 km. Con esa lectura, un bloque de 1e4 no certifica clave **a
+ninguna distancia**, ni a pérdida cero. El desajuste es de exactamente una
+década: nuestra curva de 1e5 es su curva de 1e4 —positiva a 135 km, muerta antes
+de 150—. Hueco 16 del [ADR 0009](../docs/adr/0009-citation-policy.md), y un test
+que **asierta el desacuerdo**, para que quitarlo obligue a reescribir esto.
+
+### Dos detalles que un lector cuidadoso pararía a mirar
+
+**Recortar `s_0` a cero antes de usarlo en la Ec. (3) parece inseguro y no lo
+es.** Esa ecuación lleva `+ (mu_2²-mu_3²)/mu_1² · s_0/tau_0`, así que un `s_0`
+mayor da un `s_1` mayor, y mayor es la dirección insegura. Pero la Ec. (3) está
+derivada con el número **verdadero** de eventos de vacío y es monótona creciente
+en él: sustituir cualquier cota inferior válida del verdadero `s_0` da una cota
+inferior válida de `s_1`. Cero es una cota inferior válida de un recuento, y es
+**más ajustada** que un número negativo. Recortar mantiene la garantía y mejora el
+resultado.
+
+**El único sitio donde la fuente mezcla dos logaritmos.** El término de muestreo
+escribe `cd log 2` en el denominador y `log2(...)` en el numerador de la misma
+expresión. El primero es natural, el segundo base dos. Leer el primero como base
+dos lo hace `1` en vez de `0.693` y escala `gamma` por `sqrt(ln 2) = 0.8326`: un
+**17 % de subestimación** del castigo, en la dirección que favorece a la clave y
+sin síntoma en ninguna otra parte. Hay un control negativo que lo mide.
+
+### Lo que el módulo deja fuera, dicho en voz alta
+
+- **El defecto activo que el roadmap pedía.** Quien posee un pase —y por tanto un
+  bloque— es `system/key_volume.py`. Hasta que exista, lo que sale de `qkd/` por
+  la interfaz de protocolo es asintótico y lo dice en su campo.
+- **La optimización de parámetros.** Cinco, y el óptimo se mueve con el bloque.
+  Es `engine/sweep.py`.
+- **El sorteo de las cuentas.** `expected_block_counts` devuelve **esperanzas**:
+  la cota tasa la incertidumbre de estimación que queda aunque las cuentas caigan
+  justo en su media. Cuánto dispersa entre pases es otra pregunta, y es
+  `system/monte_carlo.py`.
+- **Variantes de uno o de más de dos decoys**, y cualquier protocolo que no sea
+  BB84.
+
+### El ADR que la etapa tenía aplazado
+
+La §24 dejó dicho que las decisiones de decoy y las de finite-key pertenecen al
+mismo documento y que escribirlo antes de tener consumidor era escribirlo dos
+veces. Ya está: [ADR 0010](../docs/adr/0010-decoy-and-finite-key.md), que cubre
+los tres módulos de la etapa 2.3.
+
+### Estado
+
+`src/quoss/qkd/finite_key.py`, 396 sentencias, **100 % de cobertura de líneas y
+de ramas**; `tests/qkd/test_finite_key.py`, 158 tests, de los cuales tres —la
+reproducción de su Fig. 1, que optimiza cinco parámetros por punto— van marcados
+`slow` y tardan 7 s. `ruff`, `ruff format` y `mypy` (estricto para `quoss.qkd.*`)
+limpios, y la suite entera —2058 tests— en verde.
+
+Lo siguiente de la etapa 2.3 son `qkd/entanglement.py`, `qkd/cv.py` y
+`qkd/mdi_tf.py`; ninguno de los tres tiene hoy un nombre en el registro de
+protocolos, y no lo tendrá hasta que exista su implementación.

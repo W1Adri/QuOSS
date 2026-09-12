@@ -385,7 +385,34 @@ cita más plausible.
    arreglada: «4:1:16» y «q = 2/5» en la misma frase de Ntanos et al. §4.1 no
    concuerdan por un factor 4.2, y el orden que reproduce su `q` es 16:1:4. 100 %
    de cobertura de líneas y ramas, 552 tests
-3. `qkd/finite_key.py` — finite-key componible (Tomamichel). **Por defecto activo**
+3. ✅ `qkd/finite_key.py` — la cota finite-key componible, y **no la de
+   Tomamichel que esta línea pedía**: el protocolo que hay es decoy con pulsos
+   coherentes débiles, así que la fuente es **Lim et al. 2014** (*PRA* 89,
+   022307), cuyas Ecs. (1)-(5) analizan exactamente eso y están construidas
+   sobre la relación de incertidumbre entrópica de Tomamichel y Renner. Entra un
+   bloque de cuentas acumuladas, sale una **longitud en bits** con sus dos
+   probabilidades de fallo: no es una tasa con corrección, y la interfaz de
+   `base.py` no podría expresarlo —una afirmación finite-key habla de un bloque,
+   y un bloque es una integral sobre el pase—. **Lo que mide, en el enlace de
+   referencia a cenit con el reparto 16:1:4:** un bloque de 1e10 pulsos (cien
+   segundos a 100 MHz) certifica **1.1387e-05 bits por pulso** contra los
+   **6.0239e-05** del límite asintótico del mismo protocolo — el **18.9 %** —, y
+   a 1e9 pulsos no certifica nada. **El hallazgo que solo este módulo ve:**
+   asintóticamente los pulsos decoy son coste puro y su fracción óptima es cero;
+   con un bloque de pase el óptimo está **cerca del 50 %** y vale un factor
+   **3.4** sobre gastar una décima parte, porque la desviación de Hoeffding la
+   comparten las tres intensidades. **Verificación:** V3 entre fuentes —con
+   `mu_3 = 0` y bloque grande, su Ec. (3) **es** la Ec. (34) de Ma et al. que
+   implementa `bb84.py`, y el residuo cae exactamente como `1/sqrt(N)`
+   (4.33e-04 a 1e16 pulsos, 4.33e-08 a 1e24)—; V2 contra su Fig. 1, cuyo cociente
+   publicado de 1.75 entre bloques de 1e9 y 1e7 se reproduce en **1.79**, y ese
+   cociente es además lo que **decide** una ambigüedad de su modelo de error
+   (hueco 16 del [ADR 0009](../docs/adr/0009-citation-policy.md)). Lo que **no**
+   se reproduce y queda escrito: su curva de bloque 1e4. Ver
+   [ADR 0010](../docs/adr/0010-decoy-and-finite-key.md). 100 % de cobertura de
+   líneas y ramas, 158 tests. **El «por defecto activo» que esta línea pedía no
+   se puede fijar todavía**: quien posee un pase —y por tanto un bloque— es
+   `system/key_volume.py`
 4. `qkd/entanglement.py` — E91
 5. `qkd/cv.py` — CV-QKD
 6. `qkd/mdi_tf.py` — MDI-QKD y TF-QKD con relay no confiable

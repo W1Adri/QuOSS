@@ -381,6 +381,26 @@ be opened, written down so nobody has to rediscover it.
   plausible explanation (Eq. (10) is a plane wave filling the aperture, Eq. (11b)
   a narrow beam leaving it) is **not stated in the recommendation**, so both are
   transcribed as printed and neither is used to "correct" the other.
+- **Lim et al. 2014's evaluation channel model is internally inconsistent, and
+  their smallest block size does not reproduce.** Their printed bit-error
+  probability is `e_k = p_dc + e_mis [1 - exp(-eta_ch k)] + p_ap D_k / 2`, with
+  `eta_ch` — the fibre alone — in the misalignment term, while the detection
+  rate beside it carries `eta_sys = eta_ch eta_Bob`, ten times smaller. Read
+  The misalignment term then contributes 3.9 points of QBER at zero loss (4.8 at
+  100 km) on a system specified at 0.5 %, against 0.48 points under the
+  consistent reading — a factor 8.07 that is the missing `1/eta_Bob`. Crossing that reading with whether `e_k`
+  counts errors per gate or per detection gives four models whose block-size
+  ratios at 100 km are **1.79**, 2.73, 1.46 and 1.47; the paper states "about
+  1.75" for its own Fig. 1, so the physically consistent reading is the one
+  implemented and the choice rests on their number rather than on taste.
+
+  What still does not reproduce: their statement that a block of 1e4 reaches
+  135 km. Under that reading a 1e4 block certifies no key at any distance, and
+  the disagreement is exactly one decade — our 1e5 curve is their 1e4 curve.
+  `tests/qkd/test_finite_key.py` asserts the **disagreement**, so that removing
+  it forces this paragraph to be rewritten. See
+  [ADR 0009](../../docs/adr/0009-citation-policy.md) gap 16 and
+  [ADR 0010](../../docs/adr/0010-decoy-and-finite-key.md).
 - **SatQuMA as an independent V3 oracle for finite-key** (github.com/cnqo-qcomms/SatQuMA,
   **MIT licence**, pure Python, implements Lim et al. 2014 with its own numbered
   equations in arXiv:2109.01686). Not yet frozen into `data/`. It fails condition
@@ -389,6 +409,14 @@ be opened, written down so nobody has to rediscover it.
   group. Note that SatQuMA uses **Chernoff** bounds (Yin et al., *Sci. Rep.*
   10:14312 (2020), Eqs. 2.9a/2.9b) where Lim et al. use **Hoeffding**: comparing
   without knowing which convention each side uses is chasing a ghost.
+
+  Now actionable, and with a sharper target than when this was written:
+  `qkd/finite_key.py` exists, implements Eqs. (1)-(5) of Lim et al., and already
+  carries a cross-source V3 of its own — with `mu_3 = 0` and a block large enough
+  for the Hoeffding term to vanish, its Eq. (3) reproduces Ma et al. 2005
+  Eq. (34) as implemented in `qkd/bb84.py`, and the residual falls exactly like
+  `1/sqrt(N)` (4.33e-04 at 1e16 pulses, 4.33e-08 at 1e24). What SatQuMA would add
+  is the part that check cannot reach: the finite-size terms themselves.
 
   For the **J2 secular rates** the gap is closed differently, and the reason is
   worth reading: `orbits/perturbations.py` carries its own in-process V3 oracle
