@@ -56,6 +56,13 @@ código encima que depende de haberlo entendido.
 Un lector que no sepa qué es «medio», «osculador» o «O(J2)» no saca nada de esa
 frase, y aun sabiéndolo no sabe si le importa.
 
+(Como **estilo** el ejemplo sigue valiendo, que es para lo que está. Como
+**hecho** ya está caducado: desde el [ADR 0006](docs/adr/0006-osculating-vs-mean-elements.md),
+pasarle osculadores no introduce un error, levanta un `DomainError`. Es la
+diferencia entre lo que la norma quiere ilustrar y lo que el código hace hoy, y
+merece decirse porque un ejemplo de mala redacción que además informa mal es una
+trampa doble.)
+
 **Bien** (define, defiende, mide):
 
 > Un satélite real no sigue una elipse: la Tierra está achatada y lo empuja fuera
@@ -77,12 +84,24 @@ frase, y aun sabiéndolo no sabe si le importa.
 > se achata la Tierra, así que un error O(J2) es un error de una parte en mil.
 > Una parte en mil de 7000 km son 7 km, y por eso importa.
 >
-> Medido en este repo (`propagate_zonal` como verdad, J2 solo, SSO a 700 km):
-> alimentar las tasas seculares con osculadores da **14.6 km de error tras una
-> vuelta y 219 km tras quince**, casi todo en la dirección del movimiento. La
-> parte que crece son ~2 s de error de reloj por vuelta, unos 30 s al día.
+> Medido en este repo (`propagate_zonal` como verdad, J2 solo, SSO a 700 km con
+> los elementos declarados en ν = 0): alimentar las tasas seculares con
+> osculadores da **86 km de error tras una vuelta y 1290 km tras quince**, casi
+> todo en la dirección del movimiento. La parte que crece son ~11.5 s de error de
+> reloj por vuelta, unos 2.9 minutos al día — contra un pase que dura diez. Y
+> cuánto cuesta depende de dónde se declaren los elementos: en ν = 45° la misma
+> órbita se queda en 0.07 km por vuelta, así que no hay una cifra única que citar.
+> Está en `tests/orbits/test_propagator.py::TestWhatNotHavingBrouwerLyddaneCosts`,
+> junto con la derivación que la explica.
 
 La segunda versión es cinco veces más larga y es la que hay que escribir.
+
+**Y una nota sobre el «medido en este repo» de esa última línea, que es la parte
+más fácil de saltarse.** Las cifras de arriba estuvieron citadas en quince sitios
+—incluido el texto de un `DomainError`— durante tres días, con un valor 5.9 veces
+menor, porque salieron de una medición hecha a mano y guardada solo en prosa.
+«Medido en este repo» significa **medido por un test que corre**; si no hay test,
+lo honesto es escribir de dónde salió el número y que no está reproducido.
 
 ### Lo que la norma **no** es
 
@@ -128,7 +147,7 @@ return _wrap_two_pi(self._argp_rad + self._true_anomaly_rad)
 |---|---|
 | [`notes/ROADMAP.md`](notes/ROADMAP.md) | En qué orden se construye y por qué ese orden |
 | [`notes/LAST_CHANGES.md`](notes/LAST_CHANGES.md) | Estado actual, decisiones tomadas, y lo pendiente con fecha |
-| [`notes/INCONSISTENCIAS.md`](notes/INCONSISTENCIAS.md) | Lo que el código o los documentos afirman y hoy no se cumple. Ninguna entrada la detecta la suite: por eso está escrita |
+| [`notes/INCONSISTENCIAS.md`](notes/INCONSISTENCIAS.md) | Lo que el código o los documentos afirman y hoy no se cumple. **Hoy está vacío**, y su valor está en cómo se llenó: ninguna de las siete entradas que tuvo la detectaba la suite, y una de ellas era un número citado en quince sitios que resultó falso |
 | [`notes/GUIA_REIMPLEMENTACION.md`](notes/GUIA_REIMPLEMENTACION.md) | Por qué la arquitectura es esta y no la de SimulCTTC |
 | [`tests/golden/README.md`](tests/golden/README.md) | Los cuatro niveles de verificación V1–V4 |
 | `docs/adr/*.md` | Las decisiones no obvias, una por fichero |

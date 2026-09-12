@@ -83,19 +83,30 @@ hablan de **osculadores**. La diferencia es O(J2), y en kilómetros, medida cont
 `propagate_zonal` con J2 solo en los dos lados (así que la discrepancia es el
 desajuste, no física distinta):
 
-| Órbita | 1 vuelta | 15 vueltas (~1 día) |
+| Órbita (elementos en ν = 0) | 1 vuelta | 15 vueltas (~1 día) |
 |---|---|---|
-| SSO 700 km, i = 98.2° | 14.6 km | **219 km** |
-| ISS-like, i = 51.6° | 9.9 km | **144 km** |
-| LEO polar, i = 90° | 14.9 km | **224 km** |
+| SSO 700 km, i = 98.2° | 86.3 km | **1293 km** |
+| ISS-like, i = 51.6° | 56.4 km | **845 km** |
+| LEO polar, i = 90° | 88.1 km | **1319 km** |
+| LEO baja i, i = 28.5° | 20.3 km | **305 km** |
+
+> Tabla **corregida el 2026-08-04**: daba 14.6 km y 219 km para la SSO, cifras de
+> una medición ad-hoc que nunca tuvo test y que resultaron 5.9 veces demasiado
+> pequeñas. Reproducidas y atribuidas ahora en
+> `tests/orbits/test_propagator.py::TestWhatNotHavingBrouwerLyddaneCosts`; la
+> derivación y la dependencia con la fase están en el
+> [ADR 0006](0006-osculating-vs-mean-elements.md).
 
 Lo que importa de esa tabla no es el tamaño, es que **crece**. El error radial y
 el cross-track se quedan quietos —son el bamboleo de período corto, que oscila y
-no acumula— pero el along-track crece linealmente, ~14.6 km por vuelta, porque un
-error O(J2) en el semieje es un error O(J2) en la *velocidad angular* y eso
-integra. En unidades de pase: **≈2 s de error de reloj orbital por vuelta, ≈30 s
-al día**. Un pase dura ~10 minutos, así que en una semana las ventanas de
-visibilidad están corridas minutos.
+no acumula, 0.5 km y 0.03 km tras una vuelta— pero el along-track crece
+linealmente, porque un error O(J2) en el semieje es un error O(J2) en la
+*velocidad angular* y eso integra. En unidades de pase: **≈11.5 s de error de
+reloj orbital por vuelta, ≈2.9 minutos al día**. Un pase dura ~10 minutos, así que
+en un día las ventanas de visibilidad ya están corridas una fracción apreciable de
+un pase. Y el tamaño depende de en qué punto de la órbita se declaren los
+elementos —factor 1100 entre ν = 0° y ν = 45°— así que no hay un número que citar,
+que es un argumento más para que el modo no exista en vez de existir documentado.
 
 Las dos alternativas a no enviarlo eran peores:
 
@@ -117,6 +128,14 @@ Dos tests sostienen esto: uno aserta el **conjunto exacto** de miembros (así qu
 añadir uno hace fallar el test, que es el momento de actualizar también este ADR)
 y otro está **parametrizado sobre el enum**, de modo que un miembro añadido sin
 implementar falla inmediatamente en vez de caer en una rama muerta.
+
+> **Actualizado con `orbits/tle.py`** ([ADR 0007](0007-tle-and-sgp4-propagation.md)):
+> el enum ganó un tercer miembro, `SGP4`, que es un caso distinto de este —
+> presente y correcto, pero no cableado *aquí* porque SGP4 toma un `Satrec`
+> parseado, no `ClassicalElements`. El test parametrizado de arriba ahora solo
+> recorre los miembros que `propagate()` sabe ejecutar; `SGP4` tiene su propio
+> test, que confirma que pedírselo a `propagate()` falla con
+> `NotImplementedError` en vez de con un `KeyError` de nombre desconocido.
 
 ### Por qué la condición inicial son elementos y no un estado
 

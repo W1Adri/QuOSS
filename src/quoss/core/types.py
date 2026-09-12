@@ -41,6 +41,8 @@ __all__ = [
     "TimeGrid",
     "TimeSeries",
     "Vec3Array",
+    "frozen_copy",
+    "frozen_view",
 ]
 
 # --------------------------------------------------------------------------- #
@@ -78,6 +80,113 @@ how the vectorisation contract erodes one signature at a time.
 
 
 # --------------------------------------------------------------------------- #
+# Making "immutable" true
+#
+# Every container in this project that documents itself as immutable is a frozen
+# dataclass or uses __slots__, and neither of those freezes an array's *contents*.
+# The two helpers below are what a container calls before storing an array, so
+# that the guarantee its docstring gives its consumers is one it actually holds.
+# --------------------------------------------------------------------------- #
+def frozen_copy(value: FloatArray) -> FloatArray:
+    """Return an independent, read-only ``float64`` copy of ``value``.
+
+    What a container stores when it documents itself as immutable and did **not**
+    create the array it was handed. Two failures are closed at once, and both are
+    silent:
+
+    * **Mutation.** ``frozen=True`` freezes the *binding*, not the buffer, so
+      ``grid.t_s[0] = 99.0`` used to succeed. That could put a :class:`TimeGrid`
+      into a state its own constructor rejects — samples out of order — while
+      :attr:`TimeGrid.duration_s` and :attr:`TimeGrid.is_uniform` kept answering
+      as though nothing had happened, and while the class docstring went on
+      telling consumers they need not re-check. Marking the array unwriteable
+      turns that assignment into a ``ValueError`` at the line that makes the
+      mistake.
+    * **Aliasing.** A validator that returns its argument unchanged when it is
+      already a 1-D ``float64`` array — which is the right call inside a physics
+      function that goes on to build new arrays — means a container storing that
+      return value shares the caller's buffer. The caller can then edit their own
+      array and change the container underneath.
+
+    The **copy** is what closes the aliasing; freezing alone would not, because
+    the caller keeps a writeable reference to the same memory. Use
+    :func:`frozen_view` when the array was just produced locally and no such
+    second reference exists.
+
+    Cost, so the choice is not made blind: the copy is of the array handed in, so
+    it is ``n`` values for a time axis or a set of elements — irrelevant. It is
+    the wrong tool for a ``(S, n, 3)`` trajectory.
+
+    Parameters
+    ----------
+    value : FloatArray
+        Array to copy. Any shape.
+
+    Returns
+    -------
+    FloatArray
+        A new, contiguous, read-only array with the same values.
+
+    Examples
+    --------
+    >>> caller_owns = np.array([1.0, 2.0])
+    >>> stored = frozen_copy(caller_owns)
+    >>> caller_owns[0] = 99.0  # the caller edits their own array
+    >>> float(stored[0])  # the stored copy is untouched
+    1.0
+    >>> bool(np.shares_memory(stored, caller_owns))
+    False
+    >>> stored.flags.writeable
+    False
+    """
+    out = np.array(value, dtype=np.float64)
+    out.flags.writeable = False
+    return out
+
+
+def frozen_view(value: FloatArray) -> FloatArray:
+    """Return a read-only view sharing the buffer of ``value``.
+
+    The zero-copy half of :func:`frozen_copy`, for arrays the calling module
+    produced itself. A trajectory is the case: its ``(S, n, 3)`` positions and
+    velocities are filled in by the propagator and never handed in from outside,
+    so there is no second writeable reference to defend against, and copying would
+    cost real memory — 24 MB per array for a million samples of one satellite — to
+    defend against a reference that does not exist.
+
+    A *view* rather than the argument itself, because ``writeable`` belongs to the
+    array object and not to the buffer. Freezing the argument in place would make
+    a caller's array read-only as a side effect of passing it, which is a surprise
+    they did not ask for; freezing a view of it is invisible to them.
+
+    Parameters
+    ----------
+    value : FloatArray
+        Array to wrap. Any shape. Must already be ``float64``: this helper does
+        not convert, because converting would copy and the whole point is not to.
+
+    Returns
+    -------
+    FloatArray
+        A read-only view. Shares memory with ``value``.
+
+    Examples
+    --------
+    >>> produced_locally = np.zeros(3)
+    >>> frozen = frozen_view(produced_locally)
+    >>> bool(np.shares_memory(frozen, produced_locally))
+    True
+    >>> produced_locally.flags.writeable  # the argument is left alone
+    True
+    >>> frozen.flags.writeable
+    False
+    """
+    out = value.view()
+    out.flags.writeable = False
+    return out
+
+
+# --------------------------------------------------------------------------- #
 # Time axis
 # --------------------------------------------------------------------------- #
 @dataclass(frozen=True, eq=False, slots=True)
@@ -86,7 +195,13 @@ class TimeGrid:
 
     Immutable and validated at construction, so any function receiving one may
     assume the samples are finite, one-dimensional and strictly increasing
-    without re-checking.
+    without re-checking. **Immutable includes the samples**: ``t_s`` is stored as
+    an independent read-only copy, so neither ``grid.t_s[0] = ...`` nor an edit to
+    the array the caller passed in can move the axis afterwards. Without that, the
+    permission this docstring grants would not be one the class can keep — the
+    reachable bad state is a grid whose samples are out of order, which
+    :attr:`duration_s` and :attr:`is_uniform` would then answer about as if
+    nothing were wrong.
 
     Parameters
     ----------
@@ -96,7 +211,8 @@ class TimeGrid:
     t_s : FloatArray
         Elapsed seconds from ``epoch_jd``. One-dimensional, finite, strictly
         increasing. Need not be uniformly spaced — adaptive grids around a pass
-        are legitimate — but see :attr:`is_uniform`.
+        are legitimate — but see :attr:`is_uniform`. Copied on construction; the
+        caller keeps their array and may do as they like with it.
 
     Raises
     ------
@@ -111,13 +227,24 @@ class TimeGrid:
     601
     >>> float(grid.duration_s)
     600.0
+
+    The samples cannot be moved after the fact:
+
+    >>> grid.t_s[0] = 99.0
+    Traceback (most recent call last):
+        ...
+    ValueError: assignment destination is read-only
     """
 
     epoch_jd: float
     t_s: FloatArray
 
     def __post_init__(self) -> None:
-        """Validate the invariants the rest of the pipeline relies on."""
+        """Validate the invariants the rest of the pipeline relies on, then freeze.
+
+        Validation happens on the array as handed in and the freezing after, so
+        that a rejected grid is rejected for its own reason and not for a copy's.
+        """
         if not np.isfinite(self.epoch_jd):
             raise DomainError(f"epoch_jd must be finite, got {self.epoch_jd!r}.")
         t = self.t_s
@@ -132,6 +259,9 @@ class TimeGrid:
                 "t_s must be strictly increasing; duplicate or out-of-order samples "
                 "break pass segmentation and temporal correlation."
             )
+        # `object.__setattr__` because the dataclass is frozen: the assignment the
+        # decorator blocks is exactly the one needed to make the freeze stick.
+        object.__setattr__(self, "t_s", frozen_copy(t))
 
     # -- constructors ------------------------------------------------------- #
     @classmethod

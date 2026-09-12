@@ -105,6 +105,57 @@ class TestTimeGridValidation:
             grid.epoch_jd = 0.0  # type: ignore[misc]
 
 
+class TestTimeGridImmutabilityIsReal:
+    """``frozen=True`` freezes the binding; these test that the *samples* are frozen.
+
+    The distinction is not pedantry, and the docstring of the class is what makes
+    it matter: it tells every consumer they may assume the axis is finite, 1-D and
+    strictly increasing *without re-checking*. A writeable buffer makes that a
+    promise the class cannot keep — and the reachable bad state is not academic,
+    because a grid whose samples are out of order is one the constructor rejects
+    outright, while ``duration_s`` and ``is_uniform`` would go on answering about
+    it as though nothing were wrong.
+    """
+
+    def test_the_samples_cannot_be_edited_in_place(self) -> None:
+        grid = TimeGrid.uniform(epoch_jd=EPOCH, duration_s=10.0, step_s=1.0)
+        with pytest.raises(ValueError, match="read-only"):
+            grid.t_s[0] = 99.0
+
+    def test_the_state_the_constructor_rejects_stays_unreachable(self) -> None:
+        """The whole point, stated as the invariant rather than as the mechanism.
+
+        ``t_s = [99, 60]`` is refused at construction for not being increasing.
+        Before the arrays were frozen, the same state was reachable one line later
+        by assignment, and then ``duration_s`` returned a negative span with
+        nothing complaining.
+        """
+        with pytest.raises(DomainError, match="strictly increasing"):
+            TimeGrid(epoch_jd=EPOCH, t_s=np.array([99.0, 60.0]))
+
+        grid = TimeGrid(epoch_jd=EPOCH, t_s=np.array([0.0, 60.0]))
+        with pytest.raises(ValueError, match="read-only"):
+            grid.t_s[0] = 99.0
+        assert grid.duration_s == 60.0
+        assert np.all(np.diff(grid.t_s) > 0.0)
+
+    def test_the_caller_keeps_their_own_array_and_cannot_reach_in_with_it(self) -> None:
+        """Copied, not merely frozen — the aliasing half of the same defect.
+
+        Freezing alone would leave the caller holding a writeable reference to the
+        very buffer the grid stored, so an edit they made later would move the axis
+        underneath it. Their array is theirs and stays writeable; the grid's is a
+        copy.
+        """
+        samples = np.array([0.0, 60.0, 120.0])
+        grid = TimeGrid(epoch_jd=EPOCH, t_s=samples)
+
+        assert not np.shares_memory(grid.t_s, samples)
+        samples[0] = 999.0
+        assert grid.t_s[0] == 0.0
+        assert samples.flags.writeable
+
+
 class TestNonUniformGrids:
     """Adaptive axes are allowed, but must announce themselves."""
 

@@ -42,6 +42,7 @@ from quoss.orbits.frames import (
     itrf_to_teme,
     itrf_to_teme_state,
     jd_to_calendar,
+    resolve_frame,
     teme_to_itrf,
     teme_to_itrf_state,
 )
@@ -537,6 +538,63 @@ class TestFrameEnum:
     def test_gcrf_is_declared_but_unreachable(self) -> None:
         """Declared as a hook, and no function here produces it. See the ADR."""
         assert Frame.GCRF == "gcrf"
+
+
+class TestFrameResolution:
+    """The trap that comes free with ``StrEnum``, and the one call that closes it.
+
+    ``Frame`` subclasses ``str``, so every comparison a container might use to
+    validate a frame — ``==``, ``in``, ``not in`` — is satisfied by the plain
+    string as well as by the member. A container that validates with ``in`` and
+    then stores what it was given therefore stores a ``str``, indistinguishably:
+    same ``repr``, same equality, and every test that passes members keeps
+    passing. The failure surfaces only at the first ``is`` comparison downstream,
+    which takes the wrong branch **without raising** — the exact silent
+    misconsumption ADR 0002 says the tag exists to prevent.
+
+    So the assertions here are about **identity**, not equality. An equality test
+    would pass against the bug.
+    """
+
+    def test_a_string_resolves_to_the_member_not_to_itself(self) -> None:
+        for frame in Frame:
+            assert resolve_frame(str(frame)) is frame
+
+    def test_a_member_passes_through_unchanged(self) -> None:
+        for frame in Frame:
+            assert resolve_frame(frame) is frame
+
+    def test_the_bug_this_prevents_would_have_passed_an_equality_test(self) -> None:
+        """Written out because it is the reason the tests above use ``is``.
+
+        A raw string is equal to the member and fails identity against it. Both
+        halves matter: the first is why the old membership check accepted it, the
+        second is why storing it was a defect.
+        """
+        from_a_yaml_file = "teme"
+
+        assert from_a_yaml_file == Frame.TEME
+        assert from_a_yaml_file is not Frame.TEME
+        assert resolve_frame(from_a_yaml_file) is Frame.TEME
+
+    def test_an_unknown_frame_lists_the_valid_ones(self) -> None:
+        with pytest.raises(DomainError, match="is not a frame"):
+            resolve_frame("ecef")
+
+    def test_the_message_answers_the_question_it_provokes(self) -> None:
+        """ECEF is what an engineer types, and the message says where it went.
+
+        A bare list of valid values would leave the most likely caller — someone
+        who knows the frame by its other name — to guess which of ``itrf`` and
+        ``teme`` they meant.
+        """
+        with pytest.raises(DomainError, match="ECEF is spelled 'itrf'"):
+            resolve_frame("ecef")
+
+    def test_case_matters_and_the_error_says_so_by_listing_the_values(self) -> None:
+        """Not a normaliser. ``"TEME"`` is a typo, and a silent fix hides it."""
+        with pytest.raises(DomainError, match="is not a frame"):
+            resolve_frame("TEME")
 
 
 # --------------------------------------------------------------------------- #

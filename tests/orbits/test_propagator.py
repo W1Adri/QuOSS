@@ -25,14 +25,26 @@ Organised by claim, per `tests/golden/README.md`:
 * ``TestEpoch`` — the epoch is carried, never read: two grids differing only in
   ``epoch_jd`` return identical states. And negative elapsed times work, which
   is what an epoch in the middle of a window needs.
-* ``TestModuleSurface`` — the deliberately incomplete enum. Every member
-  dispatches, ``method`` has no default, and the member set is asserted so that
-  adding ``J2_SECULAR_ANALYTIC`` is a decision someone takes rather than a diff
-  that slips through.
+* ``TestModuleSurface`` — the deliberately incomplete enum, and its one member
+  that is complete but lives elsewhere. Every member ``propagate()`` implements
+  dispatches, ``PropagationMethod.SGP4`` does not and says so loudly (it is
+  ``quoss.orbits.tle.propagate_tle``'s), ``method`` has no default, and the
+  member set is asserted so that adding ``J2_SECULAR_ANALYTIC`` is a decision
+  someone takes rather than a diff that slips through.
+* ``TestTrajectoryIsWhatItSaysItIs`` — the container's own claims: the states are
+  read-only (frozen views, deliberately not copies) and the frame is stored as an
+  enum member rather than as whatever string was handed in. Both were false until
+  2026-08-04 and neither was detectable by any existing test.
+* ``TestWhatNotHavingBrouwerLyddaneCosts`` — the figures the module docstring, two
+  ADRs and a user-facing ``DomainError`` quote. Writing this class is what showed
+  the previously documented ones were 5.9 times too small, and that no single
+  number is right because the cost depends on orbital phase.
 * ``TestRejectsBadInput`` — V1.
 
 The integrations are the expensive part. Everything is one revolution except the
-single day-long case in ``TestTheTwoModesAreNotInterchangeable``.
+day-long case in ``TestTheTwoModesAreNotInterchangeable`` and the fifteen-revolution
+cases in ``TestWhatNotHavingBrouwerLyddaneCosts``, which are marked ``slow`` and cost
+1.5 s together.
 """
 
 import inspect
@@ -41,7 +53,7 @@ import numpy as np
 import pytest
 from scipy.integrate import solve_ivp
 
-from quoss.core.constants import EGM96_MU_KM3_S2, EGM96_RADIUS_EQUATORIAL_KM
+from quoss.core.constants import EGM96_J2, EGM96_MU_KM3_S2, EGM96_RADIUS_EQUATORIAL_KM
 from quoss.core.errors import ConvergenceError, DomainError
 from quoss.core.types import TimeGrid
 from quoss.orbits import perturbations as perturbations_module
@@ -49,12 +61,17 @@ from quoss.orbits.frames import Frame
 from quoss.orbits.kepler import (
     ClassicalElements,
     ElementType,
+    advance_mean_anomaly,
     coe_to_rv,
+    mean_from_true_anomaly,
     orbital_period_s,
+    rv_to_coe,
+    true_from_mean_anomaly,
 )
 from quoss.orbits.perturbations import (
     EGM96_ZONAL,
     ZonalGravity,
+    propagate_zonal,
     secular_rates_j2,
 )
 from quoss.orbits.propagator import (
@@ -66,11 +83,31 @@ from quoss.orbits.propagator import (
 EPOCH_JD = 2460676.5
 """2025-01-01 00:00 UTC. Any epoch would do — that is the point of `TestEpoch`."""
 
+PROPAGATE_MODES = (PropagationMethod.TWO_BODY, PropagationMethod.ZONAL_NUMERIC)
+"""Members ``propagate()`` can actually run. ``PropagationMethod.SGP4`` is
+deliberately excluded from every parametrisation that calls ``propagate()``
+expecting success — it belongs to ``quoss.orbits.tle.propagate_tle`` instead,
+and is tested on its own in ``TestModuleSurface.test_sgp4_is_not_wired_into_propagate``
+and in ``tests/orbits/test_tle.py``."""
+
 TWO_BODY_ONLY = ZonalGravity(
     mu_km3_s2=EGM96_MU_KM3_S2,
     r_equatorial_km=EGM96_RADIUS_EQUATORIAL_KM,
 )
 """Every harmonic zero. Makes "no oblateness" a model rather than a mode."""
+
+J2_ONLY = ZonalGravity(
+    mu_km3_s2=EGM96_MU_KM3_S2,
+    r_equatorial_km=EGM96_RADIUS_EQUATORIAL_KM,
+    j2=EGM96_J2,
+)
+"""J2 and nothing else, on **both** sides of the mean/osculating comparison.
+
+`secular_rates_j2` is a first-order J2 theory and has nowhere to put a J3 or a
+J4, so leaving them on in the reference would add a second, unrelated difference
+to what `TestWhatNotHavingBrouwerLyddaneCosts` measures. With J2 alone the only
+thing separating the two paths is which ellipse the six numbers describe.
+"""
 
 ISS_SEMI_MAJOR_AXIS_KM = 6798.0
 ISS_INCLINATION_RAD = np.deg2rad(51.6)
@@ -115,7 +152,7 @@ def _period_s(semi_major_axis_km: float = ISS_SEMI_MAJOR_AXIS_KM) -> float:
 # --------------------------------------------------------------------------- #
 class TestTwoBodyIsKepler:
     @pytest.mark.physics
-    @pytest.mark.parametrize("method", list(PropagationMethod))
+    @pytest.mark.parametrize("method", PROPAGATE_MODES)
     def test_the_epoch_sample_is_the_initial_state_exactly(self, method: PropagationMethod) -> None:
         """At ``t = 0`` no propagation has happened, so nothing may change.
 
@@ -310,10 +347,343 @@ class TestTheTwoModesAreNotInterchangeable:
 
 
 # --------------------------------------------------------------------------- #
+# The number in the error message
+# --------------------------------------------------------------------------- #
+def _secular_analytic_states(
+    elements: ClassicalElements, t_s: np.ndarray, gravity: ZonalGravity
+) -> tuple[np.ndarray, np.ndarray]:
+    """Run the analytic J2 propagator ``PropagationMethod`` deliberately omits.
+
+    Four lines of physics: take the three secular rates, advance ``Omega``,
+    ``omega`` and ``M`` with them, and convert back. It lives here and not in
+    ``src/`` for the reason ADR 0005 gives — shipping it would mean shipping a
+    mode that returns plausible numbers and is wrong by the table below — but it
+    has to exist *somewhere* for that table to be a measurement rather than a
+    claim.
+
+    Both directions of ``relabelled_as`` appear, and that is the most honest use
+    the flag has. Going in, the osculating elements are relabelled mean because
+    that is the lie under test: the secular theory is a statement about mean
+    elements and these are not. Coming out, the advanced set is relabelled
+    osculating so that :func:`coe_to_rv` will convert it. Neither call changes a
+    number; each one is the test saying out loud which check it is stepping around
+    and why.
+    """
+    rates = secular_rates_j2(
+        elements.relabelled_as(ElementType.MEAN_BROUWER),
+        mu_km3_s2=gravity.mu_km3_s2,
+        r_equatorial_km=gravity.r_equatorial_km,
+        j2=gravity.j2,
+    )
+    n = t_s.size
+    mean_at_epoch = mean_from_true_anomaly(elements.true_anomaly_rad, elements.eccentricity)
+    mean_anomaly = advance_mean_anomaly(
+        np.repeat(mean_at_epoch, n), np.repeat(rates.mean_anomaly_rad_s, n), t_s
+    )
+    eccentricity = np.repeat(elements.eccentricity, n)
+    advanced = ClassicalElements(
+        semi_latus_rectum_km=np.repeat(elements.semi_latus_rectum_km, n),
+        eccentricity=eccentricity,
+        inclination_rad=np.repeat(elements.inclination_rad, n),
+        raan_rad=np.repeat(elements.raan_rad, n) + rates.raan_rad_s[0] * t_s,
+        argp_rad=np.repeat(elements.argp_rad, n) + rates.argp_rad_s[0] * t_s,
+        true_anomaly_rad=true_from_mean_anomaly(mean_anomaly, eccentricity),
+        element_type=ElementType.MEAN_BROUWER,
+    )
+    return coe_to_rv(advanced.relabelled_as(ElementType.OSCULATING), gravity.mu_km3_s2)
+
+
+def _rsw_components(
+    error_km: np.ndarray, r_km: np.ndarray, v_km_s: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Split an error vector into radial, along-track and cross-track parts.
+
+    The decomposition is what turns "they differ by 86 km" into an argument: a
+    short-period wobble shows up as bounded radial and cross-track terms, while a
+    rate error shows up as an along-track term that grows. Only the second one
+    moves a pass window.
+
+    Basis at each sample of the *reference* trajectory: ``r_hat`` outward,
+    ``w_hat`` along the angular momentum (normal to the orbit plane), and
+    ``s_hat = w_hat x r_hat`` completing the triad in the direction of motion.
+    """
+    r_hat = r_km / np.linalg.norm(r_km, axis=-1, keepdims=True)
+    h = np.cross(r_km, v_km_s)
+    w_hat = h / np.linalg.norm(h, axis=-1, keepdims=True)
+    s_hat = np.cross(w_hat, r_hat)
+    return (
+        np.einsum("ij,ij->i", error_km, r_hat),
+        np.einsum("ij,ij->i", error_km, s_hat),
+        np.einsum("ij,ij->i", error_km, w_hat),
+    )
+
+
+def _osculating_axis_offset_km(elements: ClassicalElements, gravity: ZonalGravity) -> float:
+    """Return ``a`` at the epoch minus its own time-average over one revolution.
+
+    The predictor of the whole effect, and computable with what this project
+    already has — no Brouwer-Lyddane required. Under J2 the osculating semi-major
+    axis oscillates about a mean value with the short-period term; how far the
+    stated epoch sits from that mean is what sets the rate error, and therefore
+    the drift.
+
+    The time average over one Keplerian period is a stand-in for the Brouwer mean,
+    not the same thing: they differ at ``O(J2)`` relative. That is why the
+    tolerances on the prediction below are a few per cent rather than a few per
+    mille.
+    """
+    period_s = float(orbital_period_s(elements.semi_major_axis_km)[0])
+    dense_s = np.linspace(0.0, period_s, 401)[1:]
+    r_km, v_km_s = propagate_zonal(*coe_to_rv(elements, gravity.mu_km3_s2), dense_s, gravity)
+    axis_km = rv_to_coe(r_km, v_km_s, gravity.mu_km3_s2).semi_major_axis_km
+    return float(elements.semi_major_axis_km[0]) - float(axis_km.mean())
+
+
+def _sso(true_anomaly_rad: float = 0.0) -> ClassicalElements:
+    """700 km sun-synchronous, the orbit every quoted figure of the mismatch uses."""
+    return ClassicalElements.from_semi_major_axis(
+        semi_major_axis_km=7078.137,
+        eccentricity=0.001,
+        inclination_rad=np.deg2rad(98.2),
+        raan_rad=0.0,
+        argp_rad=0.0,
+        true_anomaly_rad=true_anomaly_rad,
+    )
+
+
+class TestWhatNotHavingBrouwerLyddaneCosts:
+    """The figures the docstrings and the ``DomainError`` quote, measured here.
+
+    Why this class exists at all: the cost of confusing mean and osculating
+    elements is quoted in the module docstring, in two ADRs, and — the part that
+    makes it load-bearing — in the text of an exception a user reads. It had been
+    measured once, by hand, and written down in prose. Nothing reproduced it, so a
+    changed constant or integrator default could have left every one of those
+    numbers stale with no test going red. It is the only quantitative claim in the
+    project without an oracle, which is exactly the situation
+    ``tests/golden/README.md`` exists to forbid.
+
+    Writing it down found that the numbers *were* wrong — the earlier figures of
+    14.6 km per revolution and 219 km per day are 5.9 times too small — and, more
+    usefully, that no single number can be right: the drift depends on where in
+    the orbit the elements are stated, over three orders of magnitude. Both
+    findings are asserted below.
+
+    This is V1 in the sense of ``tests/golden/README.md``: an internal consistency
+    measurement, with ``propagate_zonal`` as the reference and J2 alone on both
+    sides so that the only difference between the two paths is the mean/osculating
+    mismatch and not different physics. The instrument is checked by
+    ``test_with_j2_off_both_paths_are_the_same_two_body_problem``, which closes to
+    0.08 mm.
+    """
+
+    ORBITS = (
+        ("sso_700km_i98", 7078.137, 0.001, 98.2),
+        ("iss_like_i51", 6798.0, 0.0005, 51.6),
+        ("polar_i90", 7078.137, 0.001, 90.0),
+        ("low_inclination_i28", 7078.137, 0.001, 28.5),
+    )
+
+    @staticmethod
+    def _elements(a_km: float, ecc: float, inclination_deg: float) -> ClassicalElements:
+        return ClassicalElements.from_semi_major_axis(
+            semi_major_axis_km=a_km,
+            eccentricity=ecc,
+            inclination_rad=np.deg2rad(inclination_deg),
+            raan_rad=0.0,
+            argp_rad=0.0,
+            true_anomaly_rad=0.0,
+        )
+
+    @pytest.mark.physics
+    @pytest.mark.slow
+    @pytest.mark.parametrize(("name", "a_km", "ecc", "inclination_deg"), ORBITS)
+    def test_the_drift_is_the_semi_major_axis_error_integrating(
+        self, name: str, a_km: float, ecc: float, inclination_deg: float
+    ) -> None:
+        """Not a bound on the drift — an attribution of it.
+
+        A test that only checked "the two paths differ by roughly 86 km" would
+        pass just as happily if the mechanism were something else entirely, and
+        would have to be rewritten the day a constant moved. So the drift is
+        *predicted* from a quantity measured on the reference trajectory itself:
+
+        The osculating semi-major axis at the epoch differs from its own
+        one-revolution average by ``da``. The mean motion goes as ``a**-1.5``, so
+        ``dn/n = -1.5 da/a``; over one revolution that is an angular error of
+        ``2 pi * 1.5 * da/a`` radians, and multiplying by ``a`` gives an
+        along-track displacement of ``3 pi da`` — independent of the orbit's size,
+        which is why the four cases below span 20 to 88 km purely through ``da``.
+
+        Tolerance: 5 %, and it is derived rather than fitted. The predictor is
+        itself first order — it substitutes a time average for the Brouwer mean
+        (``O(J2)`` relative), and it linearises ``n(a)`` — so agreement is expected
+        at the per-cent level, and the measured spread across the four orbits is
+        0.1 % to 1.8 %. Five per cent leaves a factor of ~3 in margin while still
+        being an order of magnitude tighter than the factor-of-two error a dropped
+        or doubled J2 would produce.
+        """
+        elements = self._elements(a_km, ecc, inclination_deg)
+        period_s = float(orbital_period_s(a_km)[0])
+        t_s = np.array([period_s])
+
+        r_reference, v_reference = propagate_zonal(
+            *coe_to_rv(elements, J2_ONLY.mu_km3_s2), t_s, J2_ONLY
+        )
+        r_analytic, _ = _secular_analytic_states(elements, t_s, J2_ONLY)
+        _, along_track_km, _ = _rsw_components(r_analytic - r_reference, r_reference, v_reference)
+
+        offset_km = _osculating_axis_offset_km(elements, J2_ONLY)
+        predicted_km = 3.0 * np.pi * abs(offset_km)
+
+        assert predicted_km > 15.0, "the prediction itself must be kilometres, not metres"
+        assert abs(abs(float(along_track_km[0])) - predicted_km) < 0.05 * predicted_km
+
+    @pytest.mark.physics
+    @pytest.mark.slow
+    def test_the_drift_grows_linearly_so_it_cannot_be_calibrated_away(self) -> None:
+        """Growth, not size, is what makes the mismatch fatal rather than inaccurate.
+
+        A fixed offset could be absorbed once and forgotten. A drift cannot: after
+        fifteen revolutions the along-track error is fifteen times the one-orbit
+        value, because what is wrong is the *rate* at which the orbit turns.
+
+        Measured 86.3 km after one revolution and 1287 km after fifteen, a ratio
+        of 14.92 against the 15.0 that exact linearity would give. The 0.5 %
+        shortfall is real and expected — the secular rates are themselves being
+        evaluated with the wrong elements, so the error in the error grows too —
+        and the assertion allows 5 %, which still excludes anything quadratic
+        (a ``t**2`` term would show up as a ratio above 20).
+        """
+        elements = _sso()
+        period_s = float(orbital_period_s(7078.137)[0])
+        t_s = np.array([period_s, 15.0 * period_s])
+
+        r_reference, v_reference = propagate_zonal(
+            *coe_to_rv(elements, J2_ONLY.mu_km3_s2), t_s, J2_ONLY
+        )
+        r_analytic, _ = _secular_analytic_states(elements, t_s, J2_ONLY)
+        _, along_track_km, _ = _rsw_components(r_analytic - r_reference, r_reference, v_reference)
+
+        one_rev_km, fifteen_revs_km = (abs(float(v)) for v in along_track_km)
+        assert one_rev_km > 50.0
+        assert fifteen_revs_km > 1000.0
+        assert abs(fifteen_revs_km / one_rev_km - 15.0) < 0.05 * 15.0
+
+    @pytest.mark.physics
+    def test_the_error_is_along_track_and_the_other_two_axes_stay_put(self) -> None:
+        """Which is what converts kilometres into a shifted pass window.
+
+        The radial and cross-track components are the short-period wobble: they
+        oscillate with the orbit and do not accumulate, measured at 0.53 km and
+        0.03 km after one revolution against 86.3 km along-track. The bound is set
+        at a factor of 20 — the measured ratios are 164 and 2800, so a factor of
+        20 cannot be satisfied by accident, and it is loose enough not to depend on
+        which sample the comparison lands on.
+
+        The decomposition is only meaningful while the separation is small. After
+        fifteen revolutions the along-track error is 1290 km, which is 10.4 deg of
+        arc, and the *chord* to a point that far along a curved orbit has a radial
+        component of ``a (1 - cos 10.4 deg)`` = 117 km — geometry of the
+        measurement, not a radial error. That is why this test uses one revolution
+        and why the earlier prose figures of "radial 11.7 km" at fifteen
+        revolutions were an artefact.
+        """
+        elements = _sso()
+        t_s = np.array([float(orbital_period_s(7078.137)[0])])
+
+        r_reference, v_reference = propagate_zonal(
+            *coe_to_rv(elements, J2_ONLY.mu_km3_s2), t_s, J2_ONLY
+        )
+        r_analytic, _ = _secular_analytic_states(elements, t_s, J2_ONLY)
+        radial_km, along_track_km, cross_track_km = _rsw_components(
+            r_analytic - r_reference, r_reference, v_reference
+        )
+
+        along = abs(float(along_track_km[0]))
+        assert along > 20.0 * abs(float(radial_km[0]))
+        assert along > 20.0 * abs(float(cross_track_km[0]))
+
+    @pytest.mark.physics
+    @pytest.mark.slow
+    def test_with_j2_off_both_paths_are_the_same_two_body_problem(self) -> None:
+        """The instrument control, and it is what licenses every number above.
+
+        With J2 zero the secular rates are all zero and ``dM/dt`` is exactly the
+        two-body mean motion, so the analytic path *is* Kepler in closed form and
+        the reference is DOP853 on the same two-body field. Any residual is the
+        integrator, not the mismatch. Measured 0.08 mm over fifteen revolutions.
+
+        The bound is 1 mm, the same one ``TestTheTwoModesAgreeOnAFlatEarth``
+        derives from the integrator's 1 nm absolute tolerance over its ~250 steps
+        per revolution — not a number chosen to let today's result through. Without
+        this test the table above could be reporting a comparison artefact, and a
+        1290 km artefact and 1290 km of physics look identical from the outside.
+        """
+        elements = _sso()
+        period_s = float(orbital_period_s(7078.137)[0])
+        t_s = np.array([period_s, 15.0 * period_s])
+
+        r_reference, _ = propagate_zonal(
+            *coe_to_rv(elements, TWO_BODY_ONLY.mu_km3_s2), t_s, TWO_BODY_ONLY
+        )
+        r_analytic, _ = _secular_analytic_states(elements, t_s, TWO_BODY_ONLY)
+
+        residual_km = np.linalg.norm(r_analytic - r_reference, axis=-1)
+        assert float(residual_km.max()) < 1e-6
+
+    @pytest.mark.physics
+    @pytest.mark.slow
+    def test_the_cost_depends_on_where_in_the_orbit_the_elements_are_stated(self) -> None:
+        """The finding that says no single number can be quoted, and why.
+
+        The short-period J2 term makes the osculating semi-major axis oscillate
+        about the mean one — peak to peak 18.3 km on this orbit — so the drift is
+        set by how far the stated epoch sits from the crossing, not by the orbit
+        alone. Two epochs of the *same* orbit:
+
+        =============  =====================  ==================
+        Stated at      ``a(epoch) - <a>``     15 revolutions
+        =============  =====================  ==================
+        ``nu = 0``     9.15 km                1293 km
+        ``nu = 45``    -0.014 km              1.1 km
+        =============  =====================  ==================
+
+        A factor of 1100 between two scenarios that differ only in when the
+        elements were written down. That is why the guard is a refusal and not a
+        documented warning with a number attached: there is no number to attach,
+        and a scenario cannot know which case it is in.
+
+        Bounds: the first case is asserted above 500 km and the second below 20 km,
+        so the claim under test is the *separation of regimes* — a factor of 25 at
+        minimum — rather than either figure. Both are far from the measured 1293
+        and 1.1.
+        """
+        period_s = float(orbital_period_s(7078.137)[0])
+        t_s = np.array([15.0 * period_s])
+
+        def drift_km(true_anomaly_rad: float) -> tuple[float, float]:
+            elements = _sso(true_anomaly_rad)
+            r_reference, _ = propagate_zonal(*coe_to_rv(elements, J2_ONLY.mu_km3_s2), t_s, J2_ONLY)
+            r_analytic, _ = _secular_analytic_states(elements, t_s, J2_ONLY)
+            separation_km = float(np.linalg.norm(r_analytic[0] - r_reference[0]))
+            return separation_km, _osculating_axis_offset_km(elements, J2_ONLY)
+
+        worst_km, worst_offset_km = drift_km(0.0)
+        best_km, best_offset_km = drift_km(float(np.deg2rad(45.0)))
+
+        assert worst_km > 500.0
+        assert best_km < 20.0
+        # And it is the axis offset that explains the collapse, not luck.
+        assert abs(worst_offset_km) > 5.0
+        assert abs(best_offset_km) < 0.5
+
+
+# --------------------------------------------------------------------------- #
 # The (S, n, 3) decision
 # --------------------------------------------------------------------------- #
 class TestSatelliteAxis:
-    @pytest.mark.parametrize("method", list(PropagationMethod))
+    @pytest.mark.parametrize("method", PROPAGATE_MODES)
     def test_a_single_orbit_is_still_three_dimensional(self, method: PropagationMethod) -> None:
         """``(1, n, 3)``, never ``(n, 3)``, so no consumer branches on shape."""
         grid = TimeGrid.uniform(epoch_jd=EPOCH_JD, duration_s=600.0, step_s=60.0)
@@ -325,7 +695,7 @@ class TestSatelliteAxis:
         assert (traj.n_satellites, traj.n_samples) == (1, grid.n)
 
     @pytest.mark.physics
-    @pytest.mark.parametrize("method", list(PropagationMethod))
+    @pytest.mark.parametrize("method", PROPAGATE_MODES)
     def test_each_slice_equals_that_orbit_propagated_alone(self, method: PropagationMethod) -> None:
         """The test that makes the flattening honest.
 
@@ -388,7 +758,7 @@ class TestSatelliteAxis:
 # The epoch decision
 # --------------------------------------------------------------------------- #
 class TestEpoch:
-    @pytest.mark.parametrize("method", list(PropagationMethod))
+    @pytest.mark.parametrize("method", PROPAGATE_MODES)
     def test_the_epoch_is_carried_but_never_read(self, method: PropagationMethod) -> None:
         """Two grids differing only in ``epoch_jd`` give identical states.
 
@@ -409,7 +779,7 @@ class TestEpoch:
         assert late.grid.epoch_jd == EPOCH_JD
 
     @pytest.mark.physics
-    @pytest.mark.parametrize("method", list(PropagationMethod))
+    @pytest.mark.parametrize("method", PROPAGATE_MODES)
     def test_a_grid_straddling_the_epoch_works(self, method: PropagationMethod) -> None:
         """What a TLE gives: elements from an epoch inside the window.
 
@@ -454,30 +824,146 @@ class TestEpoch:
 
 
 # --------------------------------------------------------------------------- #
+# The container keeps the promises its docstring makes
+# --------------------------------------------------------------------------- #
+class TestTrajectoryIsWhatItSaysItIs:
+    """Immutable *and* tagged with members, both asserted rather than assumed.
+
+    A ``Trajectory`` is what every stage downstream of here consumes, and its
+    docstring tells those consumers they may assume the arrays line up with the
+    grid without re-checking. Two things had to change for that to be true: the
+    arrays are now read-only, and the frame is resolved to a member instead of
+    being stored as whatever was passed.
+    """
+
+    @staticmethod
+    def _propagated() -> Trajectory:
+        grid = TimeGrid.uniform(epoch_jd=EPOCH_JD, duration_s=600.0, step_s=60.0)
+        return propagate(_iss_like(), grid, method=PropagationMethod.TWO_BODY)
+
+    @pytest.mark.parametrize("field", ["r_km", "v_km_s"])
+    def test_the_states_cannot_be_edited_in_place(self, field: str) -> None:
+        """A result other consumers still hold must not be editable underneath them.
+
+        ``frozen=True`` on the dataclass stops ``traj.r_km = ...`` and nothing
+        else; the assignment that actually corrupts a shared result is into the
+        array.
+        """
+        traj = self._propagated()
+        with pytest.raises(ValueError, match="read-only"):
+            getattr(traj, field)[0, 0, 0] = 0.0
+
+    def test_freezing_costs_no_copy(self) -> None:
+        """Deliberately a view, and the test says so, because the choice is a trade.
+
+        These arrays are produced by the propagator and handed to nobody first, so
+        there is no second writeable reference to guard against — and a copy of an
+        ``(S, n, 3)`` block is 24 MB per array for a million samples. The looser
+        guarantee is the right one *here*, unlike in ``ClassicalElements`` and
+        ``TimeGrid``, which take arrays from their callers and therefore copy.
+        """
+        r_km = np.zeros((1, 2, 3))
+        v_km_s = np.zeros((1, 2, 3))
+        traj = Trajectory(
+            r_km=r_km,
+            v_km_s=v_km_s,
+            grid=TimeGrid(epoch_jd=EPOCH_JD, t_s=np.array([0.0, 60.0])),
+            frame=Frame.TEME,
+            method=PropagationMethod.TWO_BODY,
+        )
+
+        assert np.shares_memory(traj.r_km, r_km)
+        assert r_km.flags.writeable, "freezing a view must not freeze the argument"
+
+    def test_a_string_frame_is_stored_as_the_member(self) -> None:
+        """So that ``traj.frame is Frame.TEME`` is a safe thing to write.
+
+        This is the assertion that fails against the old code, and it is the one
+        that matters: a raw ``"teme"`` stored here is how a silent wrong-branch bug
+        would reach ``geometry.py``, which is the next module to be written and
+        will compare frames with ``is``.
+        """
+        traj = Trajectory(
+            r_km=np.zeros((1, 2, 3)),
+            v_km_s=np.zeros((1, 2, 3)),
+            grid=TimeGrid(epoch_jd=EPOCH_JD, t_s=np.array([0.0, 60.0])),
+            frame="teme",  # type: ignore[arg-type]
+            method=PropagationMethod.TWO_BODY,
+        )
+
+        assert traj.frame is Frame.TEME
+
+    def test_the_frame_a_propagation_carries_is_a_member_even_from_a_string(self) -> None:
+        """End to end: a string on the elements comes out as a member on the result."""
+        elements = ClassicalElements.from_semi_major_axis(
+            semi_major_axis_km=ISS_SEMI_MAJOR_AXIS_KM,
+            eccentricity=0.0005,
+            inclination_rad=ISS_INCLINATION_RAD,
+            raan_rad=0.3,
+            argp_rad=1.0,
+            true_anomaly_rad=0.5,
+            frame="teme",  # type: ignore[arg-type]
+        )
+        grid = TimeGrid.uniform(epoch_jd=EPOCH_JD, duration_s=60.0, step_s=30.0)
+
+        traj = propagate(elements, grid, method=PropagationMethod.TWO_BODY)
+
+        assert traj.frame is Frame.TEME
+
+    def test_an_unknown_frame_and_a_rotating_one_stay_two_different_errors(self) -> None:
+        """Resolving must not swallow the message that teaches something."""
+        args = {
+            "r_km": np.zeros((1, 2, 3)),
+            "v_km_s": np.zeros((1, 2, 3)),
+            "grid": TimeGrid(epoch_jd=EPOCH_JD, t_s=np.array([0.0, 60.0])),
+            "method": PropagationMethod.TWO_BODY,
+        }
+        with pytest.raises(DomainError, match="is not a frame"):
+            Trajectory(frame="ecef", **args)  # type: ignore[arg-type]
+        with pytest.raises(DomainError, match="inertial frame"):
+            Trajectory(frame=Frame.ITRF, **args)  # type: ignore[arg-type]
+
+
+# --------------------------------------------------------------------------- #
 # The module surface: the enum is incomplete on purpose
 # --------------------------------------------------------------------------- #
+
+
 class TestModuleSurface:
     def test_the_enum_holds_exactly_the_implemented_modes(self) -> None:
         """The deliberate gap, asserted so that closing it is a decision.
 
-        ``J2_SECULAR_ANALYTIC`` is missing because the analytic mode needs mean
-        elements and this project has only osculating ones — a ~219 km/day gap,
-        not a rounding error. When the Brouwer-Lyddane transformation lands, this
-        test fails, and updating it is the moment to also update the module
+        ``J2_SECULAR_ANALYTIC`` is missing entirely because the analytic mode
+        needs mean elements and this project has only osculating ones — a gap of
+        ~1300 km per day, not a rounding error, measured in
+        ``TestWhatNotHavingBrouwerLyddaneCosts``. When Brouwer-Lyddane lands,
+        this test fails, and updating it is the moment to also update the module
         docstring and ADR 0005. That is the intended workflow, not an
         inconvenience: a failing test here means someone added a mode, and the
         question is whether they added the model with it.
+
+        ``PropagationMethod.SGP4`` is a different kind of addition to this same
+        set: present, correct, and simply not ``propagate()``'s to run (see
+        ``docs/adr/0007-tle-and-sgp4-propagation.md``). This test only pins the
+        *name set*; which of those names ``propagate()`` itself implements is
+        ``test_every_propagate_mode_actually_propagates`` below.
         """
-        assert {member.value for member in PropagationMethod} == {"two_body", "zonal_numeric"}
+        assert {member.value for member in PropagationMethod} == {
+            "two_body",
+            "zonal_numeric",
+            "sgp4",
+        }
         assert not hasattr(PropagationMethod, "J2_SECULAR_ANALYTIC")
 
-    @pytest.mark.parametrize("method", list(PropagationMethod))
-    def test_every_declared_member_actually_propagates(self, method: PropagationMethod) -> None:
+    @pytest.mark.parametrize("method", PROPAGATE_MODES)
+    def test_every_propagate_mode_actually_propagates(self, method: PropagationMethod) -> None:
         """A member with no branch behind it raises ``NotImplementedError``.
 
-        Parametrising over the enum rather than over a hand-written list is the
-        whole point: adding a member without wiring it fails here immediately,
-        which is what lets the enum grow "without touching anyone".
+        Parametrising over the members ``propagate()`` claims to implement,
+        rather than over a hand-written list, is the whole point: adding one of
+        *these* without wiring it fails here immediately. ``PropagationMethod.SGP4``
+        is excluded on purpose — it is not one of these members, and asserting
+        that exclusion is the next test's job, not this one's.
         """
         grid = TimeGrid(epoch_jd=EPOCH_JD, t_s=np.array([0.0, 60.0]))
 
@@ -485,6 +971,22 @@ class TestModuleSurface:
 
         assert traj.method is method
         assert np.all(np.isfinite(traj.r_km))
+
+    def test_sgp4_is_not_wired_into_propagate(self) -> None:
+        """``PropagationMethod.SGP4`` exists and is not ``propagate()``'s to run.
+
+        SGP4 takes a parsed TLE record, not ``ClassicalElements`` — there is no
+        branch this function could have for it, and the fallback that used to be
+        marked "unreachable until the enum grows" is now exactly this case,
+        reachable and correct. The model this member names is
+        ``quoss.orbits.tle.propagate_tle``, tested in ``tests/orbits/test_tle.py``;
+        this test only pins that asking *this* function for it fails loud rather
+        than silently returning nonsense of the right shape.
+        """
+        grid = TimeGrid(epoch_jd=EPOCH_JD, t_s=np.array([0.0, 60.0]))
+
+        with pytest.raises(NotImplementedError, match=r"PropagationMethod\.SGP4"):
+            propagate(_iss_like(), grid, method=PropagationMethod.SGP4)
 
     def test_method_is_keyword_only_and_has_no_default(self) -> None:
         """A default would be a modelling decision taken for the caller.
@@ -508,10 +1010,18 @@ class TestModuleSurface:
         assert traj.method is PropagationMethod.TWO_BODY
 
     def test_the_method_travels_with_the_result(self) -> None:
-        """Provenance: a trajectory can always say which model made it."""
+        """Provenance: a trajectory can always say which model made it.
+
+        Over ``PROPAGATE_MODES``, not the full enum: ``PropagationMethod.SGP4``
+        never reaches this return statement (see
+        ``test_sgp4_is_not_wired_into_propagate``), so it has nothing to travel
+        with here — its ``Trajectory.method`` is asserted in
+        ``tests/orbits/test_tle.py`` instead, on the object ``propagate_tle``
+        actually returns.
+        """
         grid = TimeGrid(epoch_jd=EPOCH_JD, t_s=np.array([0.0]))
 
-        for method in PropagationMethod:
+        for method in PROPAGATE_MODES:
             assert propagate(_iss_like(), grid, method=method).method is method
 
     def test_the_frame_is_inherited_from_the_elements(self) -> None:
@@ -557,15 +1067,19 @@ class TestRejectsBadInput:
         with pytest.raises(DomainError, match="not a propagation method"):
             propagate(_iss_like(), grid, method="j2_secular")  # type: ignore[arg-type]
 
-    @pytest.mark.parametrize("method", list(PropagationMethod))
+    @pytest.mark.parametrize("method", PROPAGATE_MODES)
     def test_every_mode_refuses_mean_elements(self, method: PropagationMethod) -> None:
         """Both modes propagate osculating elements, and neither can tell by itself.
 
-        Parametrised over the enum for the same reason
-        ``test_every_declared_member_actually_propagates`` is: the day
-        ``J2_SECULAR_ANALYTIC`` arrives it will be the one mode that *wants* mean
-        elements, and this test failing is the reminder that its branch needs its
-        own rule rather than inheriting this one.
+        Parametrised over ``PROPAGATE_MODES`` rather than the full enum, and for
+        the same reason ``test_every_propagate_mode_actually_propagates`` is:
+        ``PropagationMethod.SGP4`` never reaches the ``coe_to_rv`` guard this test
+        is about — asking ``propagate()`` for it raises ``NotImplementedError``
+        first, which is ``test_sgp4_is_not_wired_into_propagate``'s claim, not
+        this one's. The day ``J2_SECULAR_ANALYTIC`` arrives it will be the one
+        mode in this set that *wants* mean elements, and this test failing is the
+        reminder that its branch needs its own rule rather than inheriting this
+        one.
 
         The ``TWO_BODY`` half is the load-bearing case. That mode does not hand
         the caller's elements to ``coe_to_rv``; it builds a flattened ``S * n``

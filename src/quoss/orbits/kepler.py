@@ -89,10 +89,17 @@ two answers in use, and they are different ellipses:
   :func:`~quoss.orbits.perturbations.secular_rates_j2` is a statement about.
 
 The gap between them is ``O(J2)``, about one part in a thousand, and using one
-where the other is meant is not a rounding error: converting a mean set to a
-state as if it were osculating puts a 700 km sun-synchronous satellite **14.6 km**
-off after one revolution and **219 km** off after a day, almost all of it
-along-track, i.e. **~2 s of orbital clock per revolution**.
+where the other is meant is not a rounding error. Measured for a 700 km
+sun-synchronous orbit whose elements are stated at ``nu = 0``: **86 km of
+along-track error after one revolution and 1290 km after a day**, which is ~2.9
+minutes of orbital clock — against a pass that lasts ten. How large it is depends
+on *where in the orbit* the elements are stated, because the osculating
+semi-major axis oscillates about the mean one; at ``nu`` near 45 deg the epoch
+lands on the crossing and the same orbit drifts by only 0.07 km per revolution.
+That spread over three orders of magnitude is why the cost cannot be quoted as a
+single number, and why the guards below refuse rather than warn. The numbers are
+reproduced and attributed in
+``tests/orbits/test_propagator.py::TestWhatNotHavingBrouwerLyddaneCosts``.
 
 So :class:`ClassicalElements` carries an :class:`ElementType` the same way it
 carries a :class:`~quoss.orbits.frames.Frame`, and the two functions that care
@@ -147,10 +154,10 @@ import numpy as np
 
 from quoss.core.constants import EGM96_MU_KM3_S2
 from quoss.core.errors import ConvergenceError, DomainError
-from quoss.core.types import BoolArray, FloatArray, FloatLike, Vec3Array
+from quoss.core.types import BoolArray, FloatArray, FloatLike, Vec3Array, frozen_copy
 from quoss.core.units import rad_to_deg
 from quoss.orbits._validation import as_1d, as_vec3
-from quoss.orbits.frames import Frame
+from quoss.orbits.frames import Frame, resolve_frame
 
 __all__ = [
     "ClassicalElements",
@@ -851,7 +858,7 @@ class ElementType(StrEnum):
 
     A tag, like :class:`~quoss.orbits.frames.Frame`, and for the same reason: the
     confusion it prevents does not raise anything on its own, it produces a
-    plausible trajectory that is 219 km wrong after a day. Every
+    plausible trajectory that is over a thousand km wrong after a day. Every
     :class:`ClassicalElements` carries one, and the functions that can only be
     correct for one of the two refuse the other.
 
@@ -864,22 +871,40 @@ class ElementType(StrEnum):
         scenario file writes. The default, because it is the only kind this
         project can currently produce or consume.
     MEAN_BROUWER : str
-        Brouwer-Lyddane mean elements referred to the EGM96 constants: the same
-        orbit with the short-period wobble averaged out. The input the
-        first-order theory in
+        Brouwer-Lyddane mean elements: the same orbit with the short-period
+        wobble averaged out. The input the first-order theory in
         :func:`~quoss.orbits.perturbations.secular_rates_j2` is a statement
         about. Nothing in QuOSS produces these yet; the member exists so that the
         function which *requires* them can say so.
 
     Notes
     -----
+    **The label names the theory, not the constants.** Which averaging theory
+    produced a set of mean elements changes what its semi-major axis *means*, and
+    that is what this tag records. It does **not** record which values of ``mu``,
+    the reference radius and J2 were used, and it cannot: by the rule in
+    ``docs/adr/0004-zonal-perturbations.md`` those travel with the *model* — a
+    :class:`~quoss.orbits.perturbations.ZonalGravity`, or the arguments of a
+    function — never with the elements. So elements tagged ``MEAN_BROUWER`` may
+    legitimately be evaluated against WGS-72 constants, and a test does exactly
+    that to measure what changing the constants is worth.
+
+    The honest statement of the limit: a set of mean elements *does* depend on the
+    constants it was averaged with, so the tag is not wholly indifferent to them —
+    but the coherence between the two is **not checked, because nothing here can
+    check it**. Stating a constant set in this tag would be an assertion the code
+    never verifies, which is worse than a gap.
+
     **There is no plain ``MEAN``, and that is the whole design.** "Mean" is not
     one thing, it is one thing per theory: the mean elements in a TLE are
-    Brouwer's with Kozai's modification and the WGS-72 constants, while the ones
-    :func:`~quoss.orbits.perturbations.secular_rates_j2` wants are Brouwer-Lyddane
-    with EGM96. They are not interchangeable, and a two-valued flag whose second
-    value was called ``MEAN`` would make them look as though they were — the exact
-    mistake the flag exists to prevent.
+    Brouwer's with Kozai's modification, while the ones
+    :func:`~quoss.orbits.perturbations.secular_rates_j2` is a statement about are
+    Brouwer-Lyddane's. The two give a different meaning to the same six numbers.
+    They are not interchangeable, and a two-valued flag whose second value was
+    called ``MEAN`` would make them look as though they were — the exact mistake
+    the flag exists to prevent. (Each theory does come with a customary constant
+    set — WGS-72 for the TLE lineage, EGM96 here — but that is a convention of the
+    caller, not part of the label.)
 
     Naming the member after its theory is also what makes the enum safe to grow.
     The reason to fear a third value is that adding it later forces every caller
@@ -941,7 +966,11 @@ class ClassicalElements:
 
     Immutable and validated at construction, so a function receiving one may
     assume the eccentricities are bound, the inclinations are in range and every
-    field has the same length.
+    field has the same length. **Immutable includes the numbers**: each element is
+    stored as an independent read-only copy, so neither ``coe.eccentricity[0] =
+    ...`` nor a later edit to the array the caller passed in can change what a
+    consumer sees. Freezing the binding alone — which is all ``__slots__`` and a
+    hand-written ``__init__`` give — would leave that permission unearned.
 
     Scalars are accepted for any element and broadcast against the others, so a
     single orbit reads naturally and a stack of them reads the same way. What is
@@ -977,7 +1006,10 @@ class ClassicalElements:
         Inertial frame the elements are referred to. Defaults to
         :attr:`~quoss.orbits.frames.Frame.TEME`, QuOSS's single inertial frame.
         An Earth-fixed or topocentric frame is rejected: orbital elements in a
-        rotating frame are not orbital elements.
+        rotating frame are not orbital elements. A string equal to a member's
+        value is accepted and **resolved to the member**, so that
+        ``coe.frame is Frame.TEME`` holds however the frame was written; see
+        :func:`~quoss.orbits.frames.resolve_frame`.
     element_type : ElementType, optional
         Which ellipse these six numbers describe. Defaults to
         :attr:`ElementType.OSCULATING`, the only kind QuOSS produces today. State
@@ -988,8 +1020,8 @@ class ClassicalElements:
     ------
     DomainError
         If any value is out of range or not finite, if the lengths do not
-        broadcast, if ``frame`` is not inertial, or if ``element_type`` names no
-        member.
+        broadcast, if ``frame`` names no frame or names one that rotates, or if
+        ``element_type`` names no member.
 
     Examples
     --------
@@ -1031,7 +1063,11 @@ class ClassicalElements:
         frame: Frame = Frame.TEME,
         element_type: ElementType = ElementType.OSCULATING,
     ) -> None:
-        if frame not in (Frame.TEME, Frame.GCRF):
+        # Resolved first, then judged. Two different mistakes: a frame that does
+        # not exist, and a frame that exists and rotates. See `resolve_frame` for
+        # why the membership test alone is not enough to store a member.
+        resolved_frame = resolve_frame(frame)
+        if resolved_frame not in (Frame.TEME, Frame.GCRF):
             raise DomainError(
                 f"Orbital elements must be referred to an inertial frame, got {frame!r}. "
                 f"Elements expressed in a rotating frame are not orbital elements."
@@ -1063,13 +1099,19 @@ class ClassicalElements:
         )
         p, ecc, inc, raan, argp, nu = _broadcast_to_common(names, (p, ecc, inc, raan, argp, nu))
 
-        self._semi_latus_rectum_km = p
-        self._eccentricity = ecc
-        self._inclination_rad = inc
-        self._raan_rad = _wrap_two_pi(raan)
-        self._argp_rad = _wrap_two_pi(argp)
-        self._true_anomaly_rad = _wrap_two_pi(nu)
-        self._frame = frame
+        # Copied and frozen, not just referenced. `as_1d` hands back its argument
+        # untouched when it is already a 1-D float64 array, and
+        # `_broadcast_to_common` returns stride-0 views of length-1 inputs, so
+        # storing either directly would leave these attributes aliasing the
+        # caller's arrays and writeable through them. Six copies of length `n` is
+        # nothing; a set of elements that changes under its holder is not.
+        self._semi_latus_rectum_km = frozen_copy(p)
+        self._eccentricity = frozen_copy(ecc)
+        self._inclination_rad = frozen_copy(inc)
+        self._raan_rad = frozen_copy(_wrap_two_pi(raan))
+        self._argp_rad = frozen_copy(_wrap_two_pi(argp))
+        self._true_anomaly_rad = frozen_copy(_wrap_two_pi(nu))
+        self._frame = resolved_frame
         self._element_type = resolved_type
 
     @classmethod
@@ -1370,9 +1412,10 @@ def coe_to_rv(
     whose theory needs mean elements. But the kilometres are lost on *this* side:
     an averaged rate fed osculating elements is wrong by the theory's own
     truncation error, ``O(J2)``, whereas a mean element set converted to a state
-    as if it were osculating misplaces a 700 km sun-synchronous satellite by
-    14.6 km after one revolution and 219 km after a day. Guarding only the first
-    would leave the larger hole open, so both directions are closed.
+    as if it were osculating misplaces a 700 km sun-synchronous satellite by up to
+    86 km after one revolution and 1290 km after a day — and by an amount that
+    depends on orbital phase, so it cannot be bounded by one number. Guarding only
+    the first would leave the larger hole open, so both directions are closed.
 
     Vallado [1]_ Algorithm 10. Built from the perifocal basis vectors ``P``
     (towards periapsis) and ``Q`` (90 deg ahead of it in the orbit plane) rather
@@ -1407,9 +1450,9 @@ def coe_to_rv(
         raise DomainError(
             f"coe_to_rv received {str(elements.element_type)!r} elements, and a state "
             f"vector is osculating by definition. Converting mean elements as though "
-            f"they were osculating costs 14.6 km after one revolution and 219 km after "
-            f"a day for a 700 km SSO, almost all of it along-track — a drift of about "
-            f"2 s of orbital clock per revolution, not a bias that averages out. The "
+            f"they were osculating costs up to 86 km after one revolution and 1290 km "
+            f"after a day for a 700 km SSO, almost all of it along-track — a drift of "
+            f"minutes of orbital clock per day, not a bias that averages out. The "
             f"transformation that would make this legal is Brouwer-Lyddane short-period, "
             f"which QuOSS does not have: see docs/adr/0006-osculating-vs-mean-elements.md. "
             f"If you are deliberately measuring the mismatch, "

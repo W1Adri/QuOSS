@@ -95,17 +95,82 @@ lo demás depende de él (era la duda anotada en `LAST_CHANGES.md` §6).
    **Enviado a propósito con el enum incompleto:** solo `TWO_BODY` y
    `ZONAL_NUMERIC`. El modo analítico de J2 que este roadmap pedía **no puede
    devolver un estado utilizable** sin la transformación de período corto de
-   Brouwer-Lyddane: alimentar tasas seculares con osculadores cuesta 219 km tras
-   un día, y lo que crece es el reloj orbital (~30 s/día), no un sesgo. Un nombre
+   Brouwer-Lyddane: alimentar tasas seculares con osculadores cuesta ~1300 km tras
+   un día, y lo que crece es el reloj orbital (~2.9 min/día), no un sesgo — y cuánto
+   cuesta depende de en qué punto de la órbita se declaren los elementos, así que no
+   hay una cifra que documentar (medido en
+   `tests/orbits/test_propagator.py::TestWhatNotHavingBrouwerLyddaneCosts`,
+   corregido el 2026-08-04). Un nombre
    ausente obliga a preguntar en el punto de llamada; uno presente y equivocado
    no obliga a nada. Aquí se resuelven además los dos pendientes del módulo:
    la época viaja obligatoria dentro del `TimeGrid`, y la forma multi-satélite es
    `(S, n, 3)` satellite-major
-5. `orbits/tle.py` — parseo TLE + SGP4 (usar `sgp4`, no reimplementar). El paquete
-   trae `SGP4-VER.TLE` y `tcppver.out`: datos de verificación oficiales, gratis
-6. `orbits/geometry.py` — elevación/azimut/slant range/Doppler + **ángulo de
-   point-ahead** (35 µrad a 1000 km: mayor que el jitter de apuntado que se modelará)
-7. `orbits/constellations.py` — Walker-Delta, SSO, traza repetida
+5. ✅ `orbits/tle.py` — parseo TLE + SGP4, envolviendo `sgp4` (dependencia del
+   núcleo desde esta entrada, no un extra) en vez de reimplementarlo.
+   Ver [ADR 0007](../docs/adr/0007-tle-and-sgp4-propagation.md).
+   **No entra por `propagate()`** (ya decidido en el ADR 0005): SGP4 devuelve
+   estado en TEME directamente, y `tle.py` no construye ningún
+   `ClassicalElements` — la disciplina que impide el error de mezclar
+   elementos medios de un TLE con osculadores es no escribir esa línea, no una
+   guarda de tipos nueva. `PropagationMethod` gana un tercer miembro, `SGP4`,
+   que `propagate()` **no sabe ejecutar** (pedirlo da `NotImplementedError`):
+   es un caso distinto del enum incompleto de `propagator.py` — ahí el nombre
+   está ausente del todo, aquí está presente y es correcto, solo que vive en
+   `propagate_tle`. `parse_tle` valida checksum, forma de línea y el código de
+   error de `sgp4`, que la propia librería deja pasar en silencio (verificado
+   contra el paquete instalado). El paquete trae `SGP4-VER.TLE` y
+   `tcppver.out`: datos de verificación oficiales, gratis
+6. ✅ `orbits/geometry.py` — elevación/azimut/slant range/rate de rango +
+   **ángulo de point-ahead**, todo desde una `Trajectory` en TEME: la rotación
+   a ITRF (vía `teme_to_itrf_state`) ocurre una sola vez dentro de
+   `look_angles`, así que no hay un segundo sitio donde una mezcla de marcos
+   pueda colarse. La velocidad de la estación en ITRF es exactamente cero por
+   construcción, así que «relativo a la estación» y «la velocidad ITRF del
+   satélite» son el mismo vector — no hace falta sumar el término de la
+   estación aparte. **Corregido al medir:** el ángulo de point-ahead lleva
+   **factor 2**, no el `v_perp/c` de una sola vía — un terminal monostático
+   tiene que adelantar la vía de transmisión y a la vez recibir por la vía que
+   la luz realmente sigue. Medido para un paso a 67.1° de elevación sobre
+   Castelldefels en la SSO de 700 km de este repo: **50.6 µrad**, mayor que
+   los 35 µrad que este roadmap citaba antes de tener la cuenta con el factor
+   2 (`tests/orbits/test_geometry.py::TestPointAheadAngle`). El Doppler
+   **no** vive en este módulo: `look_angles` da `range_rate_km_s`, una
+   cantidad puramente geométrica, y `doppler_shift_hz` es una función aparte
+   de una línea que solo se necesita cuando se conoce la frecuencia portadora
+   — la misma razón por la que `Trajectory` no lleva un modelo de gravedad.
+   V3 contra el `AltAz` de astropy (nuevo `tests/golden/generators/gen_geometry_reference.py`):
+   elevación y azimut concuerdan a milésimas de grado, rango a 2.2e-4
+   relativo, sobre 24 combinaciones estación×satélite×época — sin oráculo
+   independiente todavía para `range_rate_km_s` ni el ángulo de point-ahead,
+   que quedan como V1 (ver `tests/golden/README.md`)
+7. ✅ `orbits/constellations.py` — Walker-Delta (`i:T/P/F`), inclinación
+   heliosíncrona (SSO) e semieje de traza repetida. Las tres funciones son
+   geometría o álgebra pura sobre lo que ya existía: `walker_delta` no calcula
+   ninguna física, solo reparte `T` satélites en `P` planos y los devuelve como
+   **un** `ClassicalElements` de longitud `T` (nunca una lista); la SSO invierte
+   en forma cerrada la propia fórmula de `secular_rates_j2` (si hiciera falta
+   `scipy.optimize` ahí, sería señal de un error, no de que el problema lo
+   pida); solo la traza repetida necesita `brentq`, porque `a` aparece a los
+   dos lados de la condición de resonancia. **Decisión que se pudo equivocar
+   al revés:** el espaciado dentro de plano se hace en anomalía **media**, no
+   verdadera — para una órbita excéntrica son ángulos distintos, y solo el
+   medio se mantiene exactamente constante en el tiempo bajo movimiento
+   kepleriano puro (`tests/orbits/test_constellations.py::TestWalkerDeltaInvariants::test_true_anomaly_spacing_is_not_exact_once_eccentric`
+   es el control negativo que lo demuestra). **El sentido del `F`** —el
+   parámetro que la gente invierte— se fija con un caso `6:6/3/1` resuelto a
+   mano más el chequeo de fórmula independiente de MATLAB Aerospace Toolbox;
+   no se encontró un ejemplo Walker citable de Vallado con confianza
+   suficiente para transcribirlo como V2, así que la corrección descansa en
+   invariantes V1 (espaciado exacto de RAAN y de anomalía media, recuento
+   exacto), dicho así en vez de inventar una cita. **El hueco que hereda del
+   ADR 0006, sin esconderlo:** la inclinación/semieje que devuelven las dos
+   funciones físicas son una afirmación sobre elementos *medios* — construirlos
+   como `ClassicalElements` osculadores (el defecto de la propia clase) e
+   intentar sacar un estado con `coe_to_rv` hereda el mismo desajuste ya medido
+   en `kepler.py` (hasta 1290 km/día para una SSO de 700 km, y no una cifra
+   única). No se remide aquí porque es la misma fórmula y el mismo régimen ya
+   medidos; la guarda de tipos del ADR 0006 es lo que impide que ese error sea
+   silencioso. Ver [ADR 0008](../docs/adr/0008-constellation-design.md).
 
 **Trampa a hacer imposible por tipos:** los elementos medios de un TLE son de
 Brouwer-Lyddane con corrección de Kozai, **no** los del propagador J2 analítico.
@@ -119,13 +184,160 @@ la bandera es hoy una puerta cerrada que marca dónde haría falta. Ver
 [ADR 0006](../docs/adr/0006-osculating-vs-mean-elements.md).
 
 ### 2.2 `channel/` — el canal óptico
-1. `channel/atmosphere.py` — perfiles Cn² (HV5/7, Bufton, HV modificado), airmass
-2. `channel/turbulence.py` — r₀, Rytov, índice de escintilación (débil y fuerte), frecuencia de Greenwood, ángulo isoplanático
-3. `channel/beam.py` — divergencia, acoplamiento geométrico/difracción, beam wander
-4. `channel/pointing.py` — pérdida de apuntado, fading PAT
-5. `channel/background.py` — radiancia de cielo, fondo solar/lunar, gating temporal
-6. `channel/detector.py` — eficiencia, dark counts, dead time, afterpulsing
-7. `channel/link_budget.py` — **ensambla** los anteriores en pérdida total y ruido total
+
+**Decisión que gobierna toda la etapa, tomada antes de escribir física:** la
+referencia canónica del canal (Andrews & Phillips) **no se cita por número de
+ecuación porque no se pudo abrir**. Fuentes primarias: ITU-R P.1621-2, P.1622 y
+Ntanos et al. 2021, todas gratuitas y numeradas. Catorce huecos declarados en
+vez de rellenados → [ADR 0009](../docs/adr/0009-citation-policy.md). **Etapa
+cerrada**: los siete módulos escritos, y ninguno de los huecos rellenado con la
+cita más plausible.
+
+1. ✅ `channel/atmosphere.py` — perfil Cn² (HV 5/7), viento de Bufton, malla de
+   integración de 139 capas y refracción. **Corregido al implementarlo:** la
+   Ec. (7) de P.1621-2 da **grosores de capa, no altitudes** — leerlas como
+   altitudes pone el techo de la atmósfera en 992 m en vez de 20 km, y ningún
+   número resultante parece raro. Y su Ec. (3) **no vale 1 en sus propias
+   condiciones de referencia** (se desvía 140 ppm): inconsistencia interna de la
+   recomendación, documentada y fijada por un test
+2. ✅ `channel/turbulence.py` — varianza de log-irradiancia, promediado de
+   apertura, r₀ y ángulo isoplanático, todo sobre momentos del perfil.
+   **Asimetría subida/bajada como parte del API**, no como nota: el uplink no
+   recibe promediado de apertura (P.1622 §4.1.1) y su función no tiene dónde
+   aceptar un diámetro. El V2 más fuerte del canal: las **ocho** varianzas
+   publicadas de la Tabla 2 de P.1622, reproducidas a la precisión impresa.
+   Rytov en régimen fuerte y frecuencia de Greenwood **siguen fuera** — pendientes
+   con su fuente, no implementadas a medias
+3. ✅ `channel/beam.py` — divergencia, acoplamiento geométrico y vaivén del haz.
+   **Se aparta de la forma publicada, con la razón medida:** el producto de
+   ganancias de Ntanos et al. Ecs. (3) y (5) es el límite de apertura pequeña de
+   la integral de truncación gaussiana `1 − exp(−D_r²/2W²)`, y esa integral es
+   la que se usa porque satura en 1 en vez de prometer más luz de la que se
+   transmitió. La Ec. (5) **tal como está impresa** (`(8/w_0)²` en vez de
+   `8/w_0²`) es 8 veces mayor, **9.03 dB optimista**, y con los parámetros del
+   propio paper devuelve una transmitancia de **1.36**. El vaivén es
+   **solo de subida** (P.1622 §4.3), y la razón vaivén/divergencia crece como
+   `D_T^(5/6)`: un transmisor de 1 m pasea su haz **3.15 anchos de haz**, así
+   que estrechar el haz deja de ayudar. El ensanchamiento por turbulencia queda
+   fuera por autoridad de P.1622 §4.4, no por olvido
+4. ✅ `channel/pointing.py` — pérdida de apuntado y **desvanecimiento** por
+   jitter. La salida no es un número, es una **distribución**: jitter gaussiano
+   en dos ejes → error radial Rayleigh → la transmitancia relativa sigue una
+   **ley de potencias** `F(x) = x^(gamma²)` con un solo parámetro,
+   `gamma = w_zeq/(2 sigma_s)`, el radio del haz medido en jitters (derivación
+   de tres líneas en el docstring). **La trampa que da forma al módulo:** la
+   Ec. (9) de Farid & Hranilovic lleva un factor `A_0` que **es** el
+   acoplamiento geométrico de `beam.py`, así que multiplicar «pérdida
+   geométrica × pérdida de apuntado» tal como está publicada cuenta `A_0` dos
+   veces — **17.5 dB inventados** en la geometría de referencia. Todas las
+   funciones devuelven el factor **relativo**, normalizado a 1 con apuntado
+   perfecto. **Dos fuentes independientes concuerdan** en el exponente
+   (`gamma² = 19.42` de Farid & Hranilovic contra `beta_p = 19.23` de Ntanos et
+   al.: 0.01 dB en la pérdida al 1 % de outage), y el residuo está **atribuido**
+   a la corrección de apertura finita, no tolerado. La condición de validez que
+   los autores publican (`W/a > 6`) **falla** para el telescopio de 2.3 m del
+   sistema de referencia, y eso sale en `warnings[]` con la medida de lo que
+   cuesta. Sin boresight (hueco 3 del ADR 0009) y sin correlación temporal (eso
+   es `system/correlated_fading.py`)
+5. ✅ `channel/background.py` — radiancia de cielo, fondo solar/lunar y gating
+   temporal. **Las dos ecuaciones publicadas son la misma ecuación** —la Ec. (1)
+   de P.1621-2 y la Ec. (19) de Ntanos et al.— y discrepan en las **unidades**
+   del campo de visión bajo el mismo nombre: pasar el ángulo a la forma que
+   quiere estereorradianes son **41.05 dB**, y leerlo como semiángulo en vez de
+   ángulo completo son **6.02 dB**. La convención va en el nombre del argumento.
+   **La trampa que da forma al módulo:** su Ec. (20) llama «probability» a
+   `t_gate × cps`, que es el **número esperado** de cuentas; con la luz solar
+   brillante que la propia UIT tabula a 850 nm, su receptor y su puerta de 1 ns,
+   esa «probabilidad» vale **3.42** (y 1.09 con su telescopio de 1.3 m). Se
+   devuelve `1 - exp(-µ)`, con aviso por encima de 0.1 cuentas por puerta —
+   umbral **derivado**: es donde la lectura lineal sobreestima un 5 %. El
+   **gating temporal** es el único parámetro libre del presupuesto de ruido, y se
+   cuantifica lo que la fuente solo nombra: el fondo escala lineal con la puerta
+   y la señal como `erf(T/2√2σ)`, así que pasar de 1 ns a 100 ps con el jitter de
+   50 ps declarado cuesta **0.08 dB de señal y quita 10 dB de fondo**, y el
+   óptimo de `S/√B` está en **2.80σ** (5.36 dB mejor que 1 ns, y ancho: 0.55 dB
+   entre 1.5σ y 5σ). **Cuatro huecos nuevos declarados y medidos**, todos en el
+   [ADR 0009](../docs/adr/0009-citation-policy.md): la Tabla 1 promete radiancia
+   **de la Tierra** en su título y no la trae, así que no hay fondo de subida; las
+   dos fuentes discrepan **un factor diez** de noche (1.24x de ruido total a
+   0.75 m, **2.83x** a 2.3 m contra 300 cps de cuentas oscuras); su «10 kcps con
+   luna llena» **no es reproducible** sin elegir telescopio (8.1 / 24.4 /
+   76.4 kcps); y la radiancia tabulada es **cenital**, sin dependencia angular
+   publicada (4.66 dB a 20° si siguiera a la masa de aire — no se aplica, y hay
+   un test que aserta que ninguna firma acepta una elevación). El hueco 4 pasa de
+   declarado a **medido**: interpolar a 785 nm da 0.48 dB de diferencia entre
+   reglas y **16-27 % de error** en un leave-one-out sobre la propia tabla, así
+   que se interpola registrando un `DEGRADED`, nunca en silencio
+6. ✅ `channel/detector.py` — cadena de eficiencia, cuentas oscuras,
+   afterpulsing y tiempo muerto. **La regla que da forma al módulo: las medias
+   se suman y la exponencial se hace una vez, al final** — porque las tres
+   formas publicadas que reproduce son truncamientos a primer orden de eso
+   (`1 - 2 p_dc` de Lim, su `D_k(1 + p_ap)`, y el `Y_0 = P_dc + P_noise` de la
+   Ec. (A6) de Ntanos), excelentes en su punto de operación (7e-12, 0.16 % y
+   1.2e-6) y las tres por encima de 1 en el barrido diurno de este proyecto
+   (1.93, 1.006 y 3.42). **La trampa que evita:** la cadena de eficiencia se
+   aplica a todo lo que entró por la apertura y a nada que naciera dentro del
+   detector — aplicársela también a las cuentas oscuras esconde **0.94 dB** de
+   ruido y mueve su peso del 7 % al 25 % del presupuesto nocturno. **El hallazgo
+   que condiciona a `background.py`:** el gating no toca el afterpulsing, porque
+   escala con la tasa de clics y no con la puerta, así que estrechar de 1 ns a
+   100 ps vale **10 dB con el nanohilo de Ntanos y 0.22 dB con el APD de InGaAs
+   de Lim** — «estrecha la puerta» es condicional y la condición es el detector
+   (hueco 5 del [ADR 0009](../docs/adr/0009-citation-policy.md), que pasa de
+   declarado a **medido**). Reproduce la `D_k` de Lim et al. a 3e-7 relativo con
+   cota **derivada** (`p_dc²/(η k + 2 p_dc) ≤ p_dc/2`) y sin necesitar la
+   anchura de puerta que ese paper nunca declara, porque se cancela. Dos
+   umbrales derivados: los modelos de tiempo muerto se separan un 5 % en
+   `R·τ = 0.3554` (11.8 Mcps a 30 ns) y los dos de afterpulsing en
+   `p_ap = sqrt(1/21)`, con `WARNING` y las dos cifras dentro. El paralizable
+   **no se invierte** (16.3 y 59.4 Mcps dan la misma lectura de 10 Mcps), así
+   que `incident_count_rate_cps` existe solo para el otro. Y una afirmación
+   publicada que **sí** reproduce: la §4.2 de Ntanos sobre no saturar por tiempo
+   muerto es correcta con dos órdenes de magnitud de margen (500 kcps contra un
+   techo de 33.3 Mcps, 1.5 % de pérdida). Las dos leyes de tiempo muerto y la
+   fracción de puertas vivas `1/(1 + b·p)` están verificadas V1 contra Monte
+   Carlo del proceso del que se derivan
+7. ✅ `channel/link_budget.py` — **ensambla** los anteriores en pérdida total y
+   ruido total. **El hallazgo:** dos de los seis módulos no devuelven un número
+   —apuntado devuelve una distribución y turbulencia una varianza— y la práctica
+   publicada de **sumar el cuantil al 1 % de cada uno** no da un presupuesto al
+   1 %. Las dos colas tienen forma cerrada *en decibelios*: la de apuntado es
+   **exactamente exponencial** (sustituir `L = -10 log10 x` en la ley de
+   potencias `F(x) = x^(γ²)` lo demuestra en una línea) y la de escintilación
+   **exactamente gaussiana**, así que su suma es una gaussiana modificada
+   exponencialmente y el cuantil conjunto es **exacto, sin Monte Carlo**:
+   1.668 dB donde la suma publicada da 2.312 dB. Son 0.644 dB de margen que
+   nadie pidió y, sobre todo, una etiqueta falsa — ese presupuesto es del
+   **0.066 %** de outage, quince veces más estricto que el 1 % impreso al lado.
+   `FadeCombination` tiene dos miembros y ningún defecto escondido: `EXACT` por
+   defecto, `ADDITIVE` para reproducir lo publicado, y la diferencia sale de la
+   misma llamada. Verificado V1 contra 4e6 muestras del jitter gaussiano en dos
+   ejes y de la lognormal, y V3 reevaluando la propia función de distribución en
+   la respuesta. **La trampa que da forma al módulo:** `click_probability` toma
+   una `efficiency` y un presupuesto quiere la cadena del receptor como línea,
+   así que hacer las dos cosas la cuenta **dos veces — 12.71 dB en vez de
+   6.36**, un factor 4.3 en tasa de clave. El API guarda las dos transmitancias
+   con nombre (`transmittance` completa, `channel_transmittance` hasta la
+   apertura) y ninguna es el producto de la otra por algo que haya que recordar.
+   Dos cosas más que salieron: la Ec. (18) de Ntanos et al. **devuelve un número
+   negativo y lo llama pérdida** (es el nivel, no la caída: sumarla como está
+   impresa deja el total equivocado en el doble del desvanecimiento), y su total
+   de 20 dB de §4.2.1 **no se reproduce**. Por eso la extinción es un
+   **argumento obligatorio sin defecto** y no un modelo: hueco 14 del
+   [ADR 0009](../docs/adr/0009-citation-policy.md), porque la UIT publica
+   absorción y dispersión **solo como figuras**. **Y el término que faltaba no
+   estaba en la atmósfera, estaba en el transmisor** (hueco 15): `beam.py`
+   propaga una gaussiana **sin truncar**, y el borde de la apertura corta el
+   13.5 % del haz. El número tentador —0.632 dB de potencia recortada— es la
+   respuesta a otra pregunta: en el eje lo que integra es la **amplitud** y la
+   intensidad es su cuadrado, así que el modelo sin truncar sobreestima
+   `[1-exp(-α²)]²/[1-exp(-2α²)]`, que a `α = 1` son **3.352 dB**. Con él, el
+   presupuesto de Ntanos et al. pasa de 15.741 a **19.094 dB** y su residuo de
+   4.259 dB (que exigía `L_zen = 0.375`, absurdo) a **0.906 dB** (`L_zen =
+   0.812`, ordinario). Compatible, no reproducido. Y `tests/golden/README.md`
+   tenía este término predicho en 0.63 dB desde antes de que el módulo
+   existiera: está corregido allí, con la forma cerrada verificada contra la
+   integral de difracción por cuadratura
 
 ### 2.3 `qkd/` — de canal a clave
 1. `qkd/base.py` — interfaz común de protocolo (entra transmitancia+ruido, sale tasa+QBER) y registro de protocolos

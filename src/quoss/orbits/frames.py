@@ -124,6 +124,7 @@ __all__ = [
     "itrf_to_teme",
     "itrf_to_teme_state",
     "jd_to_calendar",
+    "resolve_frame",
     "teme_to_itrf",
     "teme_to_itrf_state",
 ]
@@ -212,6 +213,69 @@ class Frame(StrEnum):
     ITRF = "itrf"
     ENU = "enu"
     GCRF = "gcrf"
+
+
+def resolve_frame(frame: Frame | str) -> Frame:
+    """Return the :class:`Frame` **member** equal to ``frame``.
+
+    Every container that stores a frame calls this first, and the reason is a
+    trap specific to :class:`~enum.StrEnum`. Because ``Frame`` inherits from
+    ``str``, the expression ``"teme" == Frame.TEME`` is ``True``, so a membership
+    test written the obvious way — ``if frame not in (Frame.TEME, Frame.GCRF)`` —
+    *accepts* the plain string and then stores the string. Nothing raises, the
+    ``repr`` is indistinguishable, and every test that passes members keeps
+    passing:
+
+    ``coe.frame is Frame.TEME`` is then ``False`` while ``coe.frame ==
+    Frame.TEME`` is ``True``. The day a consumer writes the identity form — which
+    is the idiomatic one, and the one the tests in this module already use — it
+    takes the wrong branch **with no error**. That is precisely the failure the
+    enum exists to close, per ``docs/adr/0002-frames-and-time-scales.md``: a tag so
+    that a TEME position cannot be silently consumed as GCRF.
+
+    Accepting the string is deliberate, not a loophole: a scenario field is YAML
+    text, and the same discipline applies as everywhere else in the package —
+    permissive at the boundary, strict inside. This function is the boundary.
+
+    It resolves and nothing more. Whether a *particular* frame is admissible is
+    the caller's rule and carries the caller's message: a set of orbital elements
+    refuses a rotating frame because elements in a rotating frame are not
+    elements, which says more than "not a valid frame" and is a different mistake.
+
+    Parameters
+    ----------
+    frame : Frame or str
+        The member, or a string equal to one of its values.
+
+    Returns
+    -------
+    Frame
+        The member, so that ``is`` comparisons downstream are meaningful.
+
+    Raises
+    ------
+    DomainError
+        If the value names no frame.
+
+    Examples
+    --------
+    >>> resolve_frame("teme") is Frame.TEME
+    True
+    >>> resolve_frame(Frame.ITRF) is Frame.ITRF
+    True
+    >>> resolve_frame("ecef")
+    Traceback (most recent call last):
+        ...
+    quoss.core.errors.DomainError: 'ecef' is not a frame. Valid values are 'teme', 'itrf', 'enu', 'gcrf'. ECEF is spelled 'itrf' here; see docs/adr/0002-frames-and-time-scales.md.
+    """
+    try:
+        return Frame(frame)
+    except ValueError as exc:
+        valid = ", ".join(repr(str(member)) for member in Frame)
+        raise DomainError(
+            f"{frame!r} is not a frame. Valid values are {valid}. ECEF is spelled "
+            f"'itrf' here; see docs/adr/0002-frames-and-time-scales.md."
+        ) from exc
 
 
 # --------------------------------------------------------------------------- #
