@@ -1,7 +1,7 @@
 # QuOSS — Últimos cambios y cosas a considerar
 
 > Bitácora viva. Se actualiza al cerrar cada etapa del [`ROADMAP.md`](ROADMAP.md).
-> Última actualización: **2026-09-12** — **tercer módulo de la Etapa 2.3**,
+> Última actualización: **2026-09-12** — **tercer y último módulo de la Etapa 2.3**,
 > `qkd/finite_key.py` (§25): la cota finite-key componible, y con ella el
 > [ADR 0010](../docs/adr/0010-decoy-and-finite-key.md) que la etapa tenía
 > aplazado. **La fuente no es la que el roadmap pedía:** decía «Tomamichel» y lo
@@ -271,30 +271,37 @@
 
 | | |
 |---|---|
-| Etapa cerrada | **1 — `core/`**, **2.1 — `orbits/`** y **2.2 — `channel/`** |
-| En curso | **2.3 — `qkd/`**, sin empezar. La 2.2 cierra con sus siete módulos: `atmosphere.py`, `turbulence.py`, `beam.py` (§18), `pointing.py` (§19), `background.py` (§20), `detector.py` (§21) y `link_budget.py` (§22). Es donde el proyecto se jugaba la credibilidad, porque ahí nadie detecta a ojo que 45 dB debería ser 39 dB: ver la política de citas ([ADR 0009](../docs/adr/0009-citation-policy.md)), con **catorce huecos declarados y ninguno rellenado** |
-| Física implementada | Marcos y escalas de tiempo · dos cuerpos · gravedad zonal J2/J3/J4 y teoría secular de J2 · propagación sobre una rejilla temporal, con época y método explícitos · **el tipo de elemento (osculador/medio) como parte del tipo, no como aviso** · **parseo de TLE y propagación SGP4**, con época propia y sin construir jamás un `ClassicalElements` medio · **ángulos de visión, distancia oblicua, velocidad de rango y point-ahead** desde una `Trajectory` en TEME · Walker-Delta, SSO y traza repetida (escrito, aparcado) · **perfil `C_n²(h)` y refracción · escintilación, promediado de apertura, `r0` y ángulo isoplanático · divergencia, acoplamiento geométrico y vaivén del haz · desvanecimiento por jitter de apuntado, como distribución · radiancia de cielo, fondo y puerta temporal · cadena de eficiencia, cuentas oscuras, afterpulsing y tiempo muerto · presupuesto de enlace y de ruido completos, con el cuantil conjunto de los dos desvanecimientos en forma cerrada** |
-| Novedad de esta entrada | **`channel/link_budget.py`** (§22), y con él **la Etapa 2.2 queda cerrada**. Dos hallazgos. (1) Sumar dos cuantiles al 1 % **no da un presupuesto al 1 %**: las dos colas tienen forma cerrada en dB (exponencial y gaussiana), su suma es una gaussiana modificada exponencialmente, y el cuantil conjunto exacto son **1.668 dB** contra los **2.312 dB** de la suma publicada — un outage real del **0.066 %**, quince veces más estricto que la etiqueta. (2) Persiguiendo los 4.259 dB que le faltaban al total de 20 dB de Ntanos et al., apareció un término que no estaba en la atmósfera sino en el **transmisor**: truncar la gaussiana en la apertura cuesta **3.352 dB** y no los 0.63 dB que el propio repo tenía predichos. Residuo final **0.906 dB** (`L_zen = 0.812`): compatible, no reproducido |
-| Novedad de la entrada anterior | **`channel/detector.py`** (§21). **Las medias se suman y la exponencial se hace una vez, al final**, porque las tres formas publicadas que reproduce pasan de 1 en el barrido diurno (1.93, 1.006 y 3.42). Aplicar la cadena de eficiencia a las cuentas oscuras esconde **0.94 dB** de ruido, y el gating **no toca el afterpulsing**: estrechar la puerta vale 10 dB con un nanohilo y **0.22 dB** con un APD de InGaAs |
-| Novedad de dos entradas atrás | **`channel/background.py`** (§20). Las dos ecuaciones publicadas son la misma y discrepan en las **unidades** del campo de visión (41.05 dB pasarlo mal, 6.02 dB leerlo como semiángulo), y la Ec. (20) llama «probability» a un número esperado de cuentas que con la luz solar tabulada por la UIT vale **3.42** |
+| Etapa cerrada | **1 — `core/`**, **2.1 — `orbits/`**, **2.2 — `channel/`** y **2.3 — `qkd/`** |
+| En curso | Ninguna. La 2.3 cierra con **tres** módulos y no con seis: `base.py` (§23), `bb84.py` (§24) y `finite_key.py` (§25). **E91, CV-QKD, MDI-QKD y TF-QKD se retiraron del roadmap el 2026-09-12** — el alcance es BB84 con pulsos coherentes débiles y decoy, y el punto de extensión es `QkdProtocol` + `ProtocolRegistry`, no una lista de ficheros pendientes. La política de citas ([ADR 0009](../docs/adr/0009-citation-policy.md)) va por **dieciséis huecos declarados y ninguno rellenado** — los dos últimos los abrió esta etapa: el 15 es el truncamiento de la apertura transmisora y el 16 el modelo de canal de Lim et al. Siguiente: **Etapa 3 — `system/`**, que empieza por `passes.py` y `key_volume.py` |
+| Física implementada | Marcos y escalas de tiempo · dos cuerpos · gravedad zonal J2/J3/J4 y teoría secular de J2 · propagación sobre una rejilla temporal, con época y método explícitos · **el tipo de elemento (osculador/medio) como parte del tipo, no como aviso** · **parseo de TLE y propagación SGP4**, con época propia y sin construir jamás un `ClassicalElements` medio · **ángulos de visión, distancia oblicua, velocidad de rango y point-ahead** desde una `Trajectory` en TEME · Walker-Delta, SSO y traza repetida (escrito, aparcado) · **perfil `C_n²(h)` y refracción · escintilación, promediado de apertura, `r0` y ángulo isoplanático · divergencia, acoplamiento geométrico y vaivén del haz · desvanecimiento por jitter de apuntado, como distribución · radiancia de cielo, fondo y puerta temporal · cadena de eficiencia, cuentas oscuras, afterpulsing y tiempo muerto · presupuesto de enlace y de ruido completos, con el cuantil conjunto de los dos desvanecimientos en forma cerrada** · **la frontera canal→protocolo (`LinkConditions` → `KeyRate`), BB84 con pulsos coherentes débiles y decoy vacío+débil con las cotas de Ma et al., y la longitud de clave finite-key componible de Lim et al. sobre un bloque** |
+| Novedad de esta entrada | **`qkd/finite_key.py`** (§25), y con él **la Etapa 2.3 queda cerrada**. Entra un **bloque** de cuentas acumuladas y sale una **longitud en bits**, no una tasa con un factor: en el enlace de referencia a cenit con el reparto 16:1:4, un bloque de 1e10 pulsos —cien segundos de una fuente de 100 MHz— certifica **1.1387e-05 bits por pulso** contra los **6.0239e-05** del límite asintótico del mismo protocolo, el **18.9 %**; a 1e9 pulsos, nada. **El hallazgo que solo este módulo ve:** asintóticamente los pulsos decoy son coste puro y su fracción óptima es cero, pero con un bloque de pase el óptimo está **cerca del 50 %** y vale un factor **3.4**, porque la desviación de Hoeffding la comparten las tres intensidades |
+| Novedad de la entrada anterior | **`qkd/bb84.py`** (§24). Se usa el rendimiento **exacto** de Ma et al. Ec. (7) —que **es** `click_probability`— y no su aproximación Ec. (10), que por encima de **7.152 cuentas por puerta devuelve una ganancia mayor que uno**; el QBER se escribe como **mezcla** para que `E ≤ ½` se cumpla en coma flotante, cosa que el numerador publicado no hace a partir de **3.912 cuentas por puerta**. **La intuición corregida:** la cota decoy no falla por pérdida —de η = 1 a 1e-08 sigue positiva— sino por **intensidad**, por encima de µ = 3.72 |
+| Novedad de dos entradas atrás | **`qkd/base.py`** (§23). La frontera, sin física dentro. *Una media no es una probabilidad*: leer las cuentas por puerta de `NoiseBudget` como `Y_0` sobreestima **3.58 %** en el telescopio de 2.3 m y **0.38 %** en el de 0.75 m bajo el día claro de Ntanos et al.; y *la transmitancia ya lleva el receptor dentro*, así que hay **un** campo de transmitancia y **ninguno** de eficiencia, y el doble conteo de 6.36 dB de §22 no tiene por dónde entrar |
+| Novedad de tres entradas atrás | **`channel/link_budget.py`** (§22), que cerró la Etapa 2.2. Sumar dos cuantiles al 1 % **no da un presupuesto al 1 %**: el cuantil conjunto exacto son **1.668 dB** contra los **2.312 dB** de la suma publicada — un outage real del **0.066 %**, quince veces más estricto que la etiqueta. Y los 4.259 dB que le faltaban al total de 20 dB de Ntanos et al. no estaban en la atmósfera sino en el **transmisor**: truncar la gaussiana en la apertura cuesta **3.352 dB** |
 
-Verificación ejecutada **el 2026-09-12, con `channel/link_budget.py` en el
+Verificación ejecutada **el 2026-09-12, con los tres módulos de `qkd/` en el
 árbol** (estos números sí se han vuelto a correr, por la misma regla que costó
 los «219 km» de §14.1):
 
 ```bash
 uv run ruff check .          # All checks passed!
-uv run ruff format --check . # 52 files already formatted
-uv run mypy                  # Success: no issues found in 52 source files
-uv run pytest                # 1227 passed in 24.42s
-uv run pytest --cov          # 99 % global (2194 sentencias, 454 ramas, 8 sin cubrir)
+uv run ruff format --check . # 58 files already formatted
+uv run mypy                  # Success: no issues found in 58 source files
+uv run pytest                # 2058 passed in 32.73s
+uv run pytest --cov          # 99 % global (2974 sentencias, 654 ramas, 8 sin cubrir)
 ```
 
-Cobertura de `channel/`: los siete módulos —`atmosphere`, `turbulence`, `beam`,
-`pointing`, `background`, `detector`, `link_budget`— y el compartido
-`_validation` al **100 %**, ramas incluidas. Las 8 sentencias sin cubrir del
-total están todas fuera de `channel/`: cuatro en `orbits/constellations.py` (que
-está aparcado), una en `core/rng.py` y tres en `core/types.py`.
+Cobertura de `qkd/`: los tres módulos al **100 %** de líneas y de ramas —`base`
+200 sentencias, `bb84` 184, `finite_key` 396—. Cobertura de `channel/`: los
+siete módulos —`atmosphere`, `turbulence`, `beam`, `pointing`, `background`,
+`detector`, `link_budget`— y el compartido `_validation`, también al **100 %**
+con ramas.
+
+Las 8 sentencias sin cubrir del total están todas fuera de `qkd/` y de
+`channel/`, y son las mismas ocho de la entrada anterior: cuatro en
+`orbits/constellations.py` (que está aparcado), una en `core/rng.py` y tres en
+`core/types.py`. Que sigan siendo ocho mientras el total sube de 2194 a 2974
+sentencias es el dato que importa: las 780 sentencias nuevas entraron cubiertas.
 
 Cobertura por módulo de `orbits/`: `frames`, `kepler`, `perturbations`,
 `propagator`, `geometry`, `tle` y `_validation` al **100 %**, ramas incluidas.
@@ -302,9 +309,10 @@ Cobertura por módulo de `orbits/`: `frames`, `kepler`, `perturbations`,
 las ramas de fallo de `brentq` en la traza repetida, y quedan así a propósito
 porque el módulo está aparcado.
 
-La suite está en **36 s**. El coste añadido de esta entrada son los dos Monte
-Carlo de 4e6 muestras que verifican el cuantil conjunto (marcados `physics`);
-todo el coste base siguen siendo las integraciones DOP853, que son el oráculo de
+La suite está en **33 s** (51 s con `--cov`, que instrumenta cada línea). El
+coste añadido de esta etapa son los tres tests marcados `slow` que reproducen la
+Fig. 1 de Lim et al. optimizando cinco parámetros por punto, y son 7 s; todo el
+coste base siguen siendo las integraciones DOP853, que son el oráculo de
 `perturbations.py` y no tienen forma barata.
 
 ---
@@ -4162,6 +4170,35 @@ reproducción de su Fig. 1, que optimiza cinco parámetros por punto— van marc
 `slow` y tardan 7 s. `ruff`, `ruff format` y `mypy` (estricto para `quoss.qkd.*`)
 limpios, y la suite entera —2058 tests— en verde.
 
-Lo siguiente de la etapa 2.3 son `qkd/entanglement.py`, `qkd/cv.py` y
-`qkd/mdi_tf.py`; ninguno de los tres tiene hoy un nombre en el registro de
-protocolos, y no lo tendrá hasta que exista su implementación.
+### La etapa 2.3 se cierra con tres módulos, no con seis
+
+**Decisión del 2026-09-12:** `qkd/entanglement.py` (E91), `qkd/cv.py` (CV-QKD) y
+`qkd/mdi_tf.py` (MDI-QKD y TF-QKD) **salen del roadmap**. El alcance del proyecto
+es BB84 con pulsos coherentes débiles y decoy vacío+débil, y si alguno de los
+otros hace falta más adelante, entra entonces.
+
+**Por qué esto se puede decidir ahora y no cuesta nada.** El punto de extensión no
+era nunca la lista de ficheros, era `QkdProtocol` + `ProtocolRegistry`, y eso es lo
+que §23 dejó escrito y verificado —incluido el test que le pasa a la interfaz una
+implementación rota a propósito para comprobar que caza el fallo—. Añadir un
+protocolo es escribir una clase con su `_key_rate` y registrar un nombre; lo que
+cruza la frontera es `LinkConditions` → `KeyRate`, y los cuatro protocolos
+retirados consumen lo mismo (una transmitancia y un fondo) y producen lo mismo (una
+tasa y un QBER), así que ninguno habría cambiado esos dos tipos. El coste de volver
+es **un fichero**. Si fuera un refactor, retirarlos sería decidirlo a escondidas.
+
+**Lo que no cambia, y ahora vale más:** los controles negativos sobre el registro
+real. Que `PROTOCOLS.resolve("e91")` levante `ConfigurationError`, y que ninguno de
+los ocho deletreos (`e91`, `entanglement`, `cv`, `cv-qkd`, `mdi`, `mdi-qkd`, `tf`,
+`tf-qkd`) esté presente, **se queda tal cual** en `tests/qkd/test_base.py`. Antes
+protegía contra que un escenario seleccionara algo todavía sin escribir; ahora
+protege contra que seleccione algo que no va a existir, que es cuando fallar en voz
+alta importa más. Igual se queda el test que exige que el docstring de `base.py`
+nombre los cuatro: un alcance declarado por su nombre es lo que impide leer una
+ausencia como un descuido.
+
+**Lo siguiente del proyecto es por tanto la Etapa 3 — `system/`**, y arranca donde
+los tres módulos de esta etapa dejaron su pendiente escrito: `system/passes.py`
+(segmentar un pase) y `system/key_volume.py` (integrar la tasa sobre él), que es
+quien posee un bloque y por tanto quien puede hacer de `finite_key.py` el defecto
+activo.

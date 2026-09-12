@@ -98,10 +98,13 @@ is ``system/key_volume.py``, one stage later.
 What this module deliberately does not have
 -------------------------------------------
 **Any protocol but BB84.** The registry is empty until ``bb84.py`` imports, and
-it will never hold a name for E91, CV-QKD, MDI-QKD or TF-QKD while those are
-unimplemented. This is the rule ``docs/adr/0005-propagation.md`` settled for
-``PropagationMethod``: an absent name forces a question at the call site, a
-present and unimplemented one invites a scenario to select it.
+it holds no name for E91, CV-QKD, MDI-QKD or TF-QKD, which are out of scope
+rather than pending. This is the rule ``docs/adr/0005-propagation.md`` settled
+for ``PropagationMethod``: an absent name forces a question at the call site, a
+present and unimplemented one invites a scenario to select it. Adding a protocol
+later means writing a class that implements :meth:`QkdProtocol._key_rate` and
+registering its name; nothing outside this package would change, because what
+crosses the boundary is :class:`LinkConditions` in and :class:`KeyRate` out.
 
 **A block-level finite-key entry point.** :meth:`QkdProtocol.key_rate` maps
 instants to instants. A finite-key bound is a statement about a *block* of

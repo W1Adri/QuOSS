@@ -356,8 +356,9 @@ cita más plausible.
    implementación rota a propósito detrás de cada comprobación. **Dos ausencias
    con motivo:** no hay entrada de finite-key por bloques (un bloque es una
    integral sobre el pase: `system/key_volume.py`), así que toda tasa sale
-   etiquetada `ASYMPTOTIC`; y el registro no tendrá nunca un nombre para E91,
-   CV-QKD, MDI-QKD ni TF-QKD mientras no estén implementados, por la regla del
+   etiquetada `ASYMPTOTIC`; y el registro no tiene ni tendrá un nombre para E91,
+   CV-QKD, MDI-QKD ni TF-QKD, que quedan **fuera del alcance** y no solo sin
+   escribir (ver el cierre de esta etapa, más abajo), por la regla del
    [ADR 0005](../docs/adr/0005-propagation.md). 100 % de cobertura de líneas y
    ramas, 102 tests
 2. ✅ `qkd/bb84.py` — BB84 con pulsos coherentes débiles y decoy vacío+débil, la
@@ -413,9 +414,37 @@ cita más plausible.
    líneas y ramas, 158 tests. **El «por defecto activo» que esta línea pedía no
    se puede fijar todavía**: quien posee un pase —y por tanto un bloque— es
    `system/key_volume.py`
-4. `qkd/entanglement.py` — E91
-5. `qkd/cv.py` — CV-QKD
-6. `qkd/mdi_tf.py` — MDI-QKD y TF-QKD con relay no confiable
+**La etapa 2.3 se cierra aquí, con un solo protocolo — decisión del 2026-09-12.**
+Las tres líneas que ocupaban este sitio —`qkd/entanglement.py` (E91), `qkd/cv.py`
+(CV-QKD) y `qkd/mdi_tf.py` (MDI-QKD y TF-QKD con relay no confiable)— **se retiran
+del plan**. No es un juicio sobre esos protocolos: es que no son el protocolo de
+este trabajo, y una línea de roadmap que nadie va a escribir envejece igual de mal
+que un número sin test — con la diferencia de que además hace parecer incompleto
+algo que está terminado. Si alguno hace falta más adelante, vuelve a esta lista
+cuando haya alguien que lo vaya a escribir.
+
+**Por qué retirarlas no cuesta nada estructural, que es la parte que hay que
+defender.** El punto de extensión de este paquete no es la lista, es la pareja
+`QkdProtocol` + `ProtocolRegistry` de `base.py`, y esa ya está escrita, con su
+verificación y con un test que le pasa una implementación rota a propósito para
+comprobar que la interfaz caza el fallo. Añadir un protocolo consiste entonces en
+escribir una clase que implemente `_key_rate` y registrar su nombre: ni
+`channel/`, ni `system/`, ni `engine/` se enteran, porque lo único que cruza la
+frontera es `LinkConditions` → `KeyRate`, y ninguno de los cuatro protocolos
+retirados cambiaría esos dos tipos —los cuatro consumen una transmitancia y un
+fondo, y los cuatro producen una tasa y un QBER—. El coste de volver es **un
+fichero**, no un refactor. Eso es exactamente lo que hace honesto retirarlas: si
+el coste de volver fuera un refactor, retirarlas sería tomar la decisión a
+escondidas.
+
+**Lo que no se retira, y ahora guarda más que antes:** la regla de que el registro
+no tiene un nombre sin implementación detrás. Los controles negativos de
+`tests/qkd/test_base.py` sobre el registro real —que `resolve("e91")` levanta
+`ConfigurationError`, y que ninguno de los ocho deletreos (`e91`, `entanglement`,
+`cv`, `cv-qkd`, `mdi`, `mdi-qkd`, `tf`, `tf-qkd`) está presente— **se quedan
+donde están**. Antes protegían contra seleccionar un módulo que aún no existía;
+ahora protegen contra seleccionar uno que no va a existir, que es el caso en el
+que fallar en voz alta importa más.
 
 ### 2.4 `kernels/` — solo cuando el profiler lo pida
 1. `kernels/base.py` — interfaz del backend numérico

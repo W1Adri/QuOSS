@@ -56,7 +56,7 @@ My_simulator/
 │   ├── core/                 # tipos, unidades, constantes, errores, RNG, logging
 │   ├── orbits/               # kepler, perturbaciones, SGP4/TLE, walker, ground track
 │   ├── channel/              # atmósfera, turbulencia, link budget, fondo, detector
-│   ├── qkd/                  # protocolos, decoy, finite-key, MDI/TF
+│   ├── qkd/                  # BB84 con decoy, finite-key (sin otros protocolos)
 │   ├── system/               # passes, key volume, relay, multi-OGS, scheduling
 │   ├── scenario/             # esquema del escenario + carga/validación/hash
 │   ├── engine/               # orquestador del pipeline, caché, paralelización
