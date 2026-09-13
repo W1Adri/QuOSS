@@ -340,12 +340,111 @@ cita más plausible.
    integral de difracción por cuadratura
 
 ### 2.3 `qkd/` — de canal a clave
-1. `qkd/base.py` — interfaz común de protocolo (entra transmitancia+ruido, sale tasa+QBER) y registro de protocolos
-2. `qkd/bb84.py` — BB84 WCP + decoy/GLLP
-3. `qkd/finite_key.py` — finite-key componible (Tomamichel). **Por defecto activo**
-4. `qkd/entanglement.py` — E91
-5. `qkd/cv.py` — CV-QKD
-6. `qkd/mdi_tf.py` — MDI-QKD y TF-QKD con relay no confiable
+1. ✅ `qkd/base.py` — la frontera: `LinkConditions` (entra transmitancia +
+   ruido), `KeyRate` (sale tasa + QBER), `QkdProtocol` (la interfaz) y
+   `ProtocolRegistry` (el nombre que escribe un escenario). **Sin física
+   dentro.** Las tres trampas que le dan forma: (1) `NoiseBudget` da una
+   **media** y un protocolo necesita la **probabilidad** `Y_0 = 1 - exp(-µ)` —
+   leer una por la otra sobreestima **3.58 %** con el telescopio de 2.3 m y
+   **0.38 %** con el de 0.75 m bajo el día claro de 6 W/(m²·µm·sr) de Ntanos et
+   al., y la conversión **es** `click_probability`, no una segunda copia de la
+   exponencial; (2) la transmitancia ya lleva el receptor dentro, así que hay
+   **un** campo de transmitancia y **ninguno** de eficiencia, y el doble conteo
+   de 6.36 dB no tiene por dónde entrar; (3) solo se guarda la tasa **por
+   pulso** y la de por segundo se deriva. La interfaz **comprueba a sus
+   implementaciones** —forma, tasa de pulsos copiada y nombre— con un test de
+   implementación rota a propósito detrás de cada comprobación. **Dos ausencias
+   con motivo:** no hay entrada de finite-key por bloques (un bloque es una
+   integral sobre el pase: `system/key_volume.py`), así que toda tasa sale
+   etiquetada `ASYMPTOTIC`; y el registro no tiene ni tendrá un nombre para E91,
+   CV-QKD, MDI-QKD ni TF-QKD, que quedan **fuera del alcance** y no solo sin
+   escribir (ver el cierre de esta etapa, más abajo), por la regla del
+   [ADR 0005](../docs/adr/0005-propagation.md). 100 % de cobertura de líneas y
+   ramas, 102 tests
+2. ✅ `qkd/bb84.py` — BB84 con pulsos coherentes débiles y decoy vacío+débil, la
+   primera implementación de `QkdProtocol`. Modelo de Ma et al. 2005 Ecs. (7)-(11)
+   y cotas decoy Ecs. (34), (35) y (37); tasa GLLP de su Ec. (1), que es la Ec. (1)
+   de Ntanos et al. **Cuatro decisiones con su número:** (1) se usa el rendimiento
+   **exacto** —la primera línea de su Ec. (7), que **es** `click_probability`— y no
+   la aproximación `Y_0 + 1 − e^(−ηµ)` de su Ec. (10) y de la (A4) de Ntanos et
+   al., que difiere **0.0000787 %** de noche y **0.070965 %** de día en el telescopio de
+   0.75 m, y por encima de **7.152 cuentas por puerta devuelve una probabilidad
+   mayor que uno**; (2) el QBER se escribe como **mezcla** de la moneda del fondo y
+   el error de la óptica, así que `E ≤ ½` se cumple en coma flotante — el numerador
+   publicado junto a la ganancia exacta lo rompe a **3.912 cuentas por puerta**, y
+   el sol brillante de la ITU está un 12.6 % por debajo; (3) donde la cota no
+   certifica nada se devuelve `e_1 = ½` y **no** `e_1 = 0`, que dibujaría un canal
+   perfecto donde falló el análisis; (4) `q` incluye la fracción de pulsos de
+   señal, así que toda tasa es **por pulso emitido**. **La intuición corregida:**
+   la cota no falla por pérdida —de η = 1 a 1e-08 sigue positiva y converge a
+   `Y_0`— sino por **intensidad**, por encima de µ = 3.72 con ν = 0.1.
+   **Verificación:** V3 contra el **programa lineal** del que la Ec. (34) es forma
+   cerrada, resuelto con `scipy.optimize.linprog` (coinciden a 1e-09); V2 contra el
+   óptimo analítico de µ de su Ec. (12), **0.7687**, reproducido al **0.1 %** con
+   tolerancia derivada del tamaño de lo que esa ecuación desprecia; V2 del estado
+   de vacío (Ec. 33) exacto. Y una inconsistencia de la fuente escrita en vez de
+   arreglada: «4:1:16» y «q = 2/5» en la misma frase de Ntanos et al. §4.1 no
+   concuerdan por un factor 4.2, y el orden que reproduce su `q` es 16:1:4. 100 %
+   de cobertura de líneas y ramas, 552 tests
+3. ✅ `qkd/finite_key.py` — la cota finite-key componible, y **no la de
+   Tomamichel que esta línea pedía**: el protocolo que hay es decoy con pulsos
+   coherentes débiles, así que la fuente es **Lim et al. 2014** (*PRA* 89,
+   022307), cuyas Ecs. (1)-(5) analizan exactamente eso y están construidas
+   sobre la relación de incertidumbre entrópica de Tomamichel y Renner. Entra un
+   bloque de cuentas acumuladas, sale una **longitud en bits** con sus dos
+   probabilidades de fallo: no es una tasa con corrección, y la interfaz de
+   `base.py` no podría expresarlo —una afirmación finite-key habla de un bloque,
+   y un bloque es una integral sobre el pase—. **Lo que mide, en el enlace de
+   referencia a cenit con el reparto 16:1:4:** un bloque de 1e10 pulsos (cien
+   segundos a 100 MHz) certifica **1.1387e-05 bits por pulso** contra los
+   **6.0239e-05** del límite asintótico del mismo protocolo — el **18.9 %** —, y
+   a 1e9 pulsos no certifica nada. **El hallazgo que solo este módulo ve:**
+   asintóticamente los pulsos decoy son coste puro y su fracción óptima es cero;
+   con un bloque de pase el óptimo está **cerca del 50 %** y vale un factor
+   **3.4** sobre gastar una décima parte, porque la desviación de Hoeffding la
+   comparten las tres intensidades. **Verificación:** V3 entre fuentes —con
+   `mu_3 = 0` y bloque grande, su Ec. (3) **es** la Ec. (34) de Ma et al. que
+   implementa `bb84.py`, y el residuo cae exactamente como `1/sqrt(N)`
+   (4.33e-04 a 1e16 pulsos, 4.33e-08 a 1e24)—; V2 contra su Fig. 1, cuyo cociente
+   publicado de 1.75 entre bloques de 1e9 y 1e7 se reproduce en **1.79**, y ese
+   cociente es además lo que **decide** una ambigüedad de su modelo de error
+   (hueco 16 del [ADR 0009](../docs/adr/0009-citation-policy.md)). Lo que **no**
+   se reproduce y queda escrito: su curva de bloque 1e4. Ver
+   [ADR 0010](../docs/adr/0010-decoy-and-finite-key.md). 100 % de cobertura de
+   líneas y ramas, 158 tests. **El «por defecto activo» que esta línea pedía no
+   se puede fijar todavía**: quien posee un pase —y por tanto un bloque— es
+   `system/key_volume.py`
+**La etapa 2.3 se cierra aquí, con un solo protocolo — decisión del 2026-09-12.**
+Las tres líneas que ocupaban este sitio —`qkd/entanglement.py` (E91), `qkd/cv.py`
+(CV-QKD) y `qkd/mdi_tf.py` (MDI-QKD y TF-QKD con relay no confiable)— **se retiran
+del plan**. No es un juicio sobre esos protocolos: es que no son el protocolo de
+este trabajo, y una línea de roadmap que nadie va a escribir envejece igual de mal
+que un número sin test — con la diferencia de que además hace parecer incompleto
+algo que está terminado. Si alguno hace falta más adelante, vuelve a esta lista
+cuando haya alguien que lo vaya a escribir.
+
+**Por qué retirarlas no cuesta nada estructural, que es la parte que hay que
+defender.** El punto de extensión de este paquete no es la lista, es la pareja
+`QkdProtocol` + `ProtocolRegistry` de `base.py`, y esa ya está escrita, con su
+verificación y con un test que le pasa una implementación rota a propósito para
+comprobar que la interfaz caza el fallo. Añadir un protocolo consiste entonces en
+escribir una clase que implemente `_key_rate` y registrar su nombre: ni
+`channel/`, ni `system/`, ni `engine/` se enteran, porque lo único que cruza la
+frontera es `LinkConditions` → `KeyRate`, y ninguno de los cuatro protocolos
+retirados cambiaría esos dos tipos —los cuatro consumen una transmitancia y un
+fondo, y los cuatro producen una tasa y un QBER—. El coste de volver es **un
+fichero**, no un refactor. Eso es exactamente lo que hace honesto retirarlas: si
+el coste de volver fuera un refactor, retirarlas sería tomar la decisión a
+escondidas.
+
+**Lo que no se retira, y ahora guarda más que antes:** la regla de que el registro
+no tiene un nombre sin implementación detrás. Los controles negativos de
+`tests/qkd/test_base.py` sobre el registro real —que `resolve("e91")` levanta
+`ConfigurationError`, y que ninguno de los ocho deletreos (`e91`, `entanglement`,
+`cv`, `cv-qkd`, `mdi`, `mdi-qkd`, `tf`, `tf-qkd`) está presente— **se quedan
+donde están**. Antes protegían contra seleccionar un módulo que aún no existía;
+ahora protegen contra seleccionar uno que no va a existir, que es el caso en el
+que fallar en voz alta importa más.
 
 ### 2.4 `kernels/` — solo cuando el profiler lo pida
 1. `kernels/base.py` — interfaz del backend numérico

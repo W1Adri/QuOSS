@@ -327,6 +327,40 @@ Esta lista es la parte que hace que la de arriba signifique algo.
     contra la integral de difracción evaluada por cuadratura
     (`TestTheTransmitterClipsItsOwnBeam`), no contra el álgebra que la produjo.
 
+16. **El modelo de canal de la §Evaluation de Lim et al. 2014 es internamente
+    inconsistente, y su curva de bloque 1e4 no se reproduce.** Su tasa de error
+    impresa es `e_k = p_dc + e_mis [1 - exp(-eta_ch k)] + p_ap D_k / 2`, con
+    `eta_ch` —solo la fibra— en el término de desalineamiento, mientras que la
+    tasa de detección de al lado lleva `eta_sys = eta_ch eta_Bob`, **diez veces
+    menor**. Ese término aporta entonces **3.9 puntos** de QBER a pérdida cero y
+    4.8 a 100 km en un sistema cuya óptica está especificada al 0.5 %; con
+    `eta_sys` aporta **0.48** a cualquier distancia, que es `e_mis` diluido por
+    los afterpulses. El cociente entre las dos lecturas es **8.07** a pérdida
+    cero y **9.98** a 100 km —el `1/eta_Bob` que sobra— y, como el término
+    impreso no escala con la eficiencia del detector mientras las detecciones de
+    al lado sí, la tasa de error óptico que implica mejora al mejorar el
+    detector, cosa que no hace ninguna óptica.
+
+    **Medido al implementar `qkd/finite_key.py` (2026-09-12), que es lo que
+    convierte la ambigüedad en una decisión:** cruzando esa lectura con la de si
+    `e_k` cuenta errores por puerta o por detección salen cuatro modelos, y sus
+    cocientes de tasa entre bloques de 1e9 y 1e7 a 100 km son **1.79**, 2.73,
+    1.46 y 1.47. El paper dice, de su propia Fig. 1, «about 1.75». Solo la
+    lectura físicamente consistente —`eta_sys` en los dos sitios, errores por
+    puerta— cae sobre su número, así que es la que se implementa, y la elección
+    descansa en una cifra publicada y no en el gusto.
+
+    **Lo que sigue sin reproducirse:** dicen que «even if we use a block size of
+    1e4, cryptographic keys can still be distributed over a fiber length of
+    135 km». Con esa lectura, un bloque de 1e4 detecciones no certifica clave **a
+    ninguna distancia**, ni siquiera a pérdida cero. El desajuste es de
+    exactamente una década —nuestra curva de 1e5 es su curva de 1e4: positiva a
+    135 km, muerta antes de 150 km— y las dos causas candidatas, un convenio
+    distinto sobre qué cuenta `n_X` y una resolución distinta de la ambigüedad de
+    arriba, no están decididas por nada impreso. `tests/qkd/test_finite_key.py`
+    **asierta el desacuerdo**, para que dejar de tenerlo obligue a reescribir
+    esto. Ver [ADR 0010](0010-decoy-and-finite-key.md).
+
 ### El caveat de Ntanos et al. 2021, que es la fuente V2 de punta a punta
 
 Es el mejor candidato a reproducción completa —parámetros declarados, ecuaciones
@@ -417,6 +451,14 @@ Y la parte útil de su modelo de error es un cruce, no una fórmula: sus dos
 términos de ruido son `p_dc` y `p_ap·D_k/2`, así que el afterpulsing domina en
 cuanto `D_k > 2 p_dc/p_ap = 3e-5`, es decir **por debajo de 42 dB de pérdida
 total** con µ = 0.5 — o sea en todo el rango útil de un enlace satelital.
+
+**Ampliado el 2026-09-12, al usar su §Evaluation por segunda vez para
+`qkd/finite_key.py`:** el tercer término de ese mismo `e_k` lleva `eta_ch` donde
+la tasa de detección de al lado lleva `eta_sys`, y esa asimetría no es un detalle
+—multiplica por 8 la contribución del desalineamiento al QBER, de 0.48 a 3.9
+puntos a pérdida cero—. Cuál de las dos lecturas es la
+suya se decidió contra su propio cociente publicado entre tamaños de bloque; es el
+hueco 16 de la lista de arriba, con las cuatro cifras que lo deciden.
 
 ## Consecuencias
 
