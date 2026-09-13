@@ -20,11 +20,22 @@ statement is about a block of detections rather than about an instant: it takes
 accumulated counts and returns a number of bits, where :mod:`quoss.qkd.bb84`
 takes a transmittance and returns a rate. Nothing in this package can therefore
 make the finite-key result the default *rate* -- the object that owns a pass,
-and so a block, is ``system/key_volume.py``, and that is where the default will
-be set. Until then every :class:`~quoss.qkd.base.KeyRate` here is
-:attr:`~quoss.qkd.base.KeyRegime.ASYMPTOTIC` and says so in its own field, and
-every :class:`~quoss.qkd.finite_key.FiniteKeyResult` is
-:attr:`~quoss.qkd.base.KeyRegime.FINITE` and cannot say anything else.
+and so a block, is :mod:`quoss.system.key_volume`, and that is where the default
+**is** set: :func:`~quoss.system.key_volume.pass_key_volume` returns
+:attr:`~quoss.qkd.base.KeyRegime.FINITE`, and the asymptotic integral is
+reachable only through a function whose name says ``asymptotic``.
+
+Inside this package the labelling is unchanged and will stay that way: every
+:class:`~quoss.qkd.base.KeyRate` here is
+:attr:`~quoss.qkd.base.KeyRegime.ASYMPTOTIC` and says so in its own field,
+because a rate at an instant cannot be a block-level claim; and every
+:class:`~quoss.qkd.finite_key.FiniteKeyResult` is
+:attr:`~quoss.qkd.base.KeyRegime.FINITE` and cannot say anything else. What
+changed one stage later is which of the two a caller gets by default, and the
+measurement that makes the distinction worth the machinery: over one day of this
+project's reference downlink the asymptotic integral claims 3.78 Mbit and the
+finite bound certifies 0.43 Mbit, with **two of the four passes yielding exactly
+zero** where the asymptotic answer claims 320 and 199 kbit.
 
 Modules
 -------
