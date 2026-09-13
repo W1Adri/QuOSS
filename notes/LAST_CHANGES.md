@@ -1,7 +1,48 @@
 # QuOSS — Últimos cambios y cosas a considerar
 
 > Bitácora viva. Se actualiza al cerrar cada etapa del [`ROADMAP.md`](ROADMAP.md).
-> Última actualización: **2026-09-12** — **tercer y último módulo de la Etapa 2.3**,
+> Última actualización: **2026-09-13** — **los dos primeros módulos de la Etapa 3**,
+> `system/passes.py` (§26) y `system/key_volume.py` (§27), con el
+> [ADR 0011](../docs/adr/0011-the-block-is-the-pass.md). Entre los dos cierran la
+> decisión que el ADR 0010 dejó aplazada: **el bloque es el pase**, y con eso la
+> cota finite-key pasa a ser el defecto del proyecto — `pass_key_volume` devuelve
+> `FINITE` y **no hay ningún argumento `regime=`**, porque el número asintótico
+> solo se alcanza llamando a una función que se llama `asymptotic_…`.
+>
+> **La cifra que resume la etapa.** Un día del enlace de referencia (estación de
+> Castelldefels, telescopio de 0.75 m, SSO a 700 km, noche clara, máscara de 10°):
+> la integral asintótica reclama **3.78 Mbit** y la cota finita certifica
+> **0.43 Mbit**, el **11.5 %**. Y el cociente no es lo importante: **dos de los
+> cuatro pases no certifican nada**, donde el asintótico reclama 320 y 199 kbit.
+> El error de reportar la cifra asintótica no es «unas ocho veces optimista», es
+> **ilimitado**, justo en los pases bajos que un planificador estaría decidiendo
+> si agendar. Y muere de golpe, no poco a poco: el pase 4 tiene 309 867
+> detecciones —no es poco— y lo mata la **tasa de error de fase**, que a ese
+> tamaño de bloque devuelve `phi = 0.5` y anula el término de un fotón entero
+> mientras la corrección de errores se sigue cobrando sobre todos los bits.
+>
+> **El hallazgo que solo esta etapa puede ver:** la **máscara de elevación tiene
+> óptimo interior**, cerca de **8°**. La columna asintótica es monótona en la
+> máscara —el recorte a cero muestra a muestra la protege, y por debajo de 5° las
+> muestras extra aportan *exactamente* cero— y la finita no lo es: bajar de 8° a
+> 2° compra un **71 % más** de segundos útiles y **destruye el 6.0 %** de la clave
+> del día, porque las muestras de baja elevación meten sus errores en el bloque
+> agrupado, donde la corrección de errores se cobra sobre todas las detecciones.
+> Por eso `find_passes` exige la máscara **sin defecto**.
+>
+> **Y la parte que una leyenda de figura casi siempre falla:** sumar los pases de
+> un día suma **longitudes**, que está permitido, pero la clave resultante es
+> `n·eps`-segura y **no** `eps`-segura. `composed_security` lo calcula y
+> `DailyKeyVolume` lo lleva. La otra dirección está tasada: un día honestamente
+> `1e-10`-seguro, con cada bloque a `eps/4`, cuesta el **6.5 %** de la clave.
+>
+> **Lo que decidió la forma de los contenedores:** el bloque es el pase, ni la
+> muestra ni el día. Un bloque por muestra da **cero bits del día entero** (cero
+> de 1800 muestras certifica un bit) — la cota **no es aditiva sobre
+> sub-bloques**. Un bloque por día mezclaría el QBER del 1.9 % de los pases
+> muertos con el 1.24–1.26 % de los buenos, y entre pases no se envía ningún pulso.
+>
+> Entrada anterior: **tercer y último módulo de la Etapa 2.3**,
 > `qkd/finite_key.py` (§25): la cota finite-key componible, y con ella el
 > [ADR 0010](../docs/adr/0010-decoy-and-finite-key.md) que la etapa tenía
 > aplazado. **La fuente no es la que el roadmap pedía:** decía «Tomamichel» y lo
@@ -272,36 +313,46 @@
 | | |
 |---|---|
 | Etapa cerrada | **1 — `core/`**, **2.1 — `orbits/`**, **2.2 — `channel/`** y **2.3 — `qkd/`** |
-| En curso | Ninguna. La 2.3 cierra con **tres** módulos y no con seis: `base.py` (§23), `bb84.py` (§24) y `finite_key.py` (§25). **E91, CV-QKD, MDI-QKD y TF-QKD se retiraron del roadmap el 2026-09-12** — el alcance es BB84 con pulsos coherentes débiles y decoy, y el punto de extensión es `QkdProtocol` + `ProtocolRegistry`, no una lista de ficheros pendientes. La política de citas ([ADR 0009](../docs/adr/0009-citation-policy.md)) va por **dieciséis huecos declarados y ninguno rellenado** — los dos últimos los abrió esta etapa: el 15 es el truncamiento de la apertura transmisora y el 16 el modelo de canal de Lim et al. Siguiente: **Etapa 3 — `system/`**, que empieza por `passes.py` y `key_volume.py` |
-| Física implementada | Marcos y escalas de tiempo · dos cuerpos · gravedad zonal J2/J3/J4 y teoría secular de J2 · propagación sobre una rejilla temporal, con época y método explícitos · **el tipo de elemento (osculador/medio) como parte del tipo, no como aviso** · **parseo de TLE y propagación SGP4**, con época propia y sin construir jamás un `ClassicalElements` medio · **ángulos de visión, distancia oblicua, velocidad de rango y point-ahead** desde una `Trajectory` en TEME · Walker-Delta, SSO y traza repetida (escrito, aparcado) · **perfil `C_n²(h)` y refracción · escintilación, promediado de apertura, `r0` y ángulo isoplanático · divergencia, acoplamiento geométrico y vaivén del haz · desvanecimiento por jitter de apuntado, como distribución · radiancia de cielo, fondo y puerta temporal · cadena de eficiencia, cuentas oscuras, afterpulsing y tiempo muerto · presupuesto de enlace y de ruido completos, con el cuantil conjunto de los dos desvanecimientos en forma cerrada** · **la frontera canal→protocolo (`LinkConditions` → `KeyRate`), BB84 con pulsos coherentes débiles y decoy vacío+débil con las cotas de Ma et al., y la longitud de clave finite-key componible de Lim et al. sobre un bloque** |
-| Novedad de esta entrada | **`qkd/finite_key.py`** (§25), y con él **la Etapa 2.3 queda cerrada**. Entra un **bloque** de cuentas acumuladas y sale una **longitud en bits**, no una tasa con un factor: en el enlace de referencia a cenit con el reparto 16:1:4, un bloque de 1e10 pulsos —cien segundos de una fuente de 100 MHz— certifica **1.1387e-05 bits por pulso** contra los **6.0239e-05** del límite asintótico del mismo protocolo, el **18.9 %**; a 1e9 pulsos, nada. **El hallazgo que solo este módulo ve:** asintóticamente los pulsos decoy son coste puro y su fracción óptima es cero, pero con un bloque de pase el óptimo está **cerca del 50 %** y vale un factor **3.4**, porque la desviación de Hoeffding la comparten las tres intensidades |
-| Novedad de la entrada anterior | **`qkd/bb84.py`** (§24). Se usa el rendimiento **exacto** de Ma et al. Ec. (7) —que **es** `click_probability`— y no su aproximación Ec. (10), que por encima de **7.152 cuentas por puerta devuelve una ganancia mayor que uno**; el QBER se escribe como **mezcla** para que `E ≤ ½` se cumpla en coma flotante, cosa que el numerador publicado no hace a partir de **3.912 cuentas por puerta**. **La intuición corregida:** la cota decoy no falla por pérdida —de η = 1 a 1e-08 sigue positiva— sino por **intensidad**, por encima de µ = 3.72 |
-| Novedad de dos entradas atrás | **`qkd/base.py`** (§23). La frontera, sin física dentro. *Una media no es una probabilidad*: leer las cuentas por puerta de `NoiseBudget` como `Y_0` sobreestima **3.58 %** en el telescopio de 2.3 m y **0.38 %** en el de 0.75 m bajo el día claro de Ntanos et al.; y *la transmitancia ya lleva el receptor dentro*, así que hay **un** campo de transmitancia y **ninguno** de eficiencia, y el doble conteo de 6.36 dB de §22 no tiene por dónde entrar |
-| Novedad de tres entradas atrás | **`channel/link_budget.py`** (§22), que cerró la Etapa 2.2. Sumar dos cuantiles al 1 % **no da un presupuesto al 1 %**: el cuantil conjunto exacto son **1.668 dB** contra los **2.312 dB** de la suma publicada — un outage real del **0.066 %**, quince veces más estricto que la etiqueta. Y los 4.259 dB que le faltaban al total de 20 dB de Ntanos et al. no estaban en la atmósfera sino en el **transmisor**: truncar la gaussiana en la apertura cuesta **3.352 dB** |
+| En curso | **Etapa 3 — `system/`**, por sus dos primeros módulos: `passes.py` (§26) y `key_volume.py` (§27), que entre los dos cierran la decisión aplazada del ADR 0010 y hacen de la cota finite-key el **defecto activo** del proyecto. Quedan los cinco de la lista: `monte_carlo.py` (la dispersión entre pases, que es lo que estas cifras **no** dicen), `correlated_fading.py`, `pcflos.py`, `multi_ogs.py` y `relay.py`. La 2.3 cerró con **tres** módulos y no con seis: `base.py` (§23), `bb84.py` (§24) y `finite_key.py` (§25) — **E91, CV-QKD, MDI-QKD y TF-QKD se retiraron del roadmap el 2026-09-12**, el alcance es BB84 con pulsos coherentes débiles y decoy, y el punto de extensión es `QkdProtocol` + `ProtocolRegistry`, no una lista de ficheros pendientes. La política de citas ([ADR 0009](../docs/adr/0009-citation-policy.md)) sigue en **dieciséis huecos declarados y ninguno rellenado**: esta etapa no abrió ninguno nuevo ni cerró ninguno, y la transmitancia cenital sigue siendo el que hace de las cifras de §27 una cota superior sobre la atmósfera y una afirmación exacta sobre todo lo demás |
+| Física implementada | Marcos y escalas de tiempo · dos cuerpos · gravedad zonal J2/J3/J4 y teoría secular de J2 · propagación sobre una rejilla temporal, con época y método explícitos · **el tipo de elemento (osculador/medio) como parte del tipo, no como aviso** · **parseo de TLE y propagación SGP4**, con época propia y sin construir jamás un `ClassicalElements` medio · **ángulos de visión, distancia oblicua, velocidad de rango y point-ahead** desde una `Trajectory` en TEME · Walker-Delta, SSO y traza repetida (escrito, aparcado) · **perfil `C_n²(h)` y refracción · escintilación, promediado de apertura, `r0` y ángulo isoplanático · divergencia, acoplamiento geométrico y vaivén del haz · desvanecimiento por jitter de apuntado, como distribución · radiancia de cielo, fondo y puerta temporal · cadena de eficiencia, cuentas oscuras, afterpulsing y tiempo muerto · presupuesto de enlace y de ruido completos, con el cuantil conjunto de los dos desvanecimientos en forma cerrada** · **la frontera canal→protocolo (`LinkConditions` → `KeyRate`), BB84 con pulsos coherentes débiles y decoy vacío+débil con las cotas de Ma et al., y la longitud de clave finite-key componible de Lim et al. sobre un bloque** · **segmentación de pases contra una máscara de elevación, con los bordes y la culminación refinados fuera de la rejilla, y la integral sobre el pase → clave por pase y por día con la cota finita aplicada al bloque correcto y el `eps` del día compuesto** |
+| Novedad de esta entrada | **`system/passes.py`** (§26) y **`system/key_volume.py`** (§27), y con ellos **la cota finite-key como defecto del proyecto**. En un día del enlace de referencia la integral asintótica reclama **3.78 Mbit** y la cota finita certifica **0.43 Mbit**, el **11.5 %** — y **dos de los cuatro pases no certifican nada** donde el asintótico reclama 320 y 199 kbit, así que el error no es un factor sino algo **ilimitado** en los pases bajos. **El hallazgo que solo esta etapa ve:** la máscara de elevación tiene **óptimo interior cerca de 8°** — la columna asintótica es monótona porque el recorte a cero por muestra la protege, la finita no, y bajar de 8° a 2° compra un 71 % más de segundos y destruye el **6.0 %** de la clave. **Y el bloque es el pase:** un bloque por muestra da **cero bits del día entero** |
+| Novedad de la entrada anterior | **`qkd/finite_key.py`** (§25), y con él **la Etapa 2.3 queda cerrada**. Entra un **bloque** de cuentas acumuladas y sale una **longitud en bits**, no una tasa con un factor: en el enlace de referencia a cenit con el reparto 16:1:4, un bloque de 1e10 pulsos —cien segundos de una fuente de 100 MHz— certifica **1.1387e-05 bits por pulso** contra los **6.0239e-05** del límite asintótico del mismo protocolo, el **18.9 %**; a 1e9 pulsos, nada. **El hallazgo que solo este módulo ve:** asintóticamente los pulsos decoy son coste puro y su fracción óptima es cero, pero con un bloque de pase el óptimo está **cerca del 50 %** y vale un factor **3.4**, porque la desviación de Hoeffding la comparten las tres intensidades |
+| Novedad de dos entradas atrás | **`qkd/bb84.py`** (§24). Se usa el rendimiento **exacto** de Ma et al. Ec. (7) —que **es** `click_probability`— y no su aproximación Ec. (10), que por encima de **7.152 cuentas por puerta devuelve una ganancia mayor que uno**; el QBER se escribe como **mezcla** para que `E ≤ ½` se cumpla en coma flotante, cosa que el numerador publicado no hace a partir de **3.912 cuentas por puerta**. **La intuición corregida:** la cota decoy no falla por pérdida —de η = 1 a 1e-08 sigue positiva— sino por **intensidad**, por encima de µ = 3.72 |
+| Novedad de tres entradas atrás | **`qkd/base.py`** (§23). La frontera, sin física dentro. *Una media no es una probabilidad*: leer las cuentas por puerta de `NoiseBudget` como `Y_0` sobreestima **3.58 %** en el telescopio de 2.3 m y **0.38 %** en el de 0.75 m bajo el día claro de Ntanos et al.; y *la transmitancia ya lleva el receptor dentro*, así que hay **un** campo de transmitancia y **ninguno** de eficiencia, y el doble conteo de 6.36 dB de §22 no tiene por dónde entrar |
+| Novedad de cuatro entradas atrás | **`channel/link_budget.py`** (§22), que cerró la Etapa 2.2. Sumar dos cuantiles al 1 % **no da un presupuesto al 1 %**: el cuantil conjunto exacto son **1.668 dB** contra los **2.312 dB** de la suma publicada — un outage real del **0.066 %**, quince veces más estricto que la etiqueta. Y los 4.259 dB que le faltaban al total de 20 dB de Ntanos et al. no estaban en la atmósfera sino en el **transmisor**: truncar la gaussiana en la apertura cuesta **3.352 dB** |
 
-Verificación ejecutada **el 2026-09-12, con los tres módulos de `qkd/` en el
-árbol** (estos números sí se han vuelto a correr, por la misma regla que costó
-los «219 km» de §14.1):
+Verificación ejecutada **el 2026-09-13, con los dos primeros módulos de
+`system/` en el árbol** (estos números sí se han vuelto a correr, por la misma
+regla que costó los «219 km» de §14.1):
 
 ```bash
 uv run ruff check .          # All checks passed!
-uv run ruff format --check . # 58 files already formatted
-uv run mypy                  # Success: no issues found in 58 source files
-uv run pytest                # 2058 passed in 32.73s
-uv run pytest --cov          # 99 % global (2974 sentencias, 654 ramas, 8 sin cubrir)
+uv run ruff format --check . # 65 files already formatted
+uv run mypy                  # Success: no issues found in 65 source files
+uv run pytest                # 2237 passed in 36.60s
+uv run pytest --cov          # 99 % global (3487 sentencias, 796 ramas, 6 sin cubrir)
 ```
 
-Cobertura de `qkd/`: los tres módulos al **100 %** de líneas y de ramas —`base`
-200 sentencias, `bb84` 184, `finite_key` 396—. Cobertura de `channel/`: los
-siete módulos —`atmosphere`, `turbulence`, `beam`, `pointing`, `background`,
-`detector`, `link_budget`— y el compartido `_validation`, también al **100 %**
-con ramas.
+Cobertura de `system/`: los dos módulos al **100 %** de líneas y de ramas —
+`passes` 284 sentencias, `key_volume` 227—. Cobertura de `qkd/`: los tres
+módulos al **100 %** —`base` 200, `bb84` 184, `finite_key` 396—. Cobertura de
+`channel/`: los siete módulos —`atmosphere`, `turbulence`, `beam`, `pointing`,
+`background`, `detector`, `link_budget`— y el compartido `_validation`, también
+al **100 %** con ramas.
 
-Las 8 sentencias sin cubrir del total están todas fuera de `qkd/` y de
-`channel/`, y son las mismas ocho de la entrada anterior: cuatro en
-`orbits/constellations.py` (que está aparcado), una en `core/rng.py` y tres en
-`core/types.py`. Que sigan siendo ocho mientras el total sube de 2194 a 2974
-sentencias es el dato que importa: las 780 sentencias nuevas entraron cubiertas.
+Las 6 sentencias sin cubrir del total están todas fuera de `system/`, de `qkd/` y
+de `channel/`: cuatro en `orbits/constellations.py` (que está aparcado), una en
+`core/rng.py` y una en `core/types.py`. Eran ocho en la entrada anterior, y han
+bajado a seis **sin que nadie escribiera un test para ellas**, que es un dato
+sobre la etapa y no sobre la cobertura: las dos que se cerraron son el cuerpo de
+`TimeGrid.is_uniform` para una rejilla de tres muestras o más y
+`TimeGrid.__repr__`, y se cerraron porque `passes.py` es el primer módulo del
+proyecto que de verdad construye rejillas **no uniformes** (el vértice parabólico
+está escrito para espaciado desigual y hay un test que lo ejercita) y el primero
+cuyo `__repr__` embebe el de la rejilla. Comprobado corriendo la suite sin
+`tests/system`: ahí `core/types.py` se queda en tres sin cubrir, las líneas 350 y
+389-390. Que el total suba de 2974 a 3487 sentencias y las sin cubrir bajen de 8
+a 6 es lo que importa: las 513 sentencias nuevas entraron cubiertas.
 
 Cobertura por módulo de `orbits/`: `frames`, `kepler`, `perturbations`,
 `propagator`, `geometry`, `tle` y `_validation` al **100 %**, ramas incluidas.
@@ -309,11 +360,19 @@ Cobertura por módulo de `orbits/`: `frames`, `kepler`, `perturbations`,
 las ramas de fallo de `brentq` en la traza repetida, y quedan así a propósito
 porque el módulo está aparcado.
 
-La suite está en **33 s** (51 s con `--cov`, que instrumenta cada línea). El
-coste añadido de esta etapa son los tres tests marcados `slow` que reproducen la
-Fig. 1 de Lim et al. optimizando cinco parámetros por punto, y son 7 s; todo el
-coste base siguen siendo las integraciones DOP853, que son el oráculo de
-`perturbations.py` y no tienen forma barata.
+La suite está en **35 s** (53 s con `--cov`, que instrumenta cada línea). Los 159
+tests nuevos de `system/` añaden **1.6 s**, y no porque sean triviales: la
+geometría del día de referencia —86 401 muestras de propagación más ángulos de
+visión— está memoizada sobre `(paso, duración)` en `tests/system/reference.py`,
+que es lo que hace asequible el barrido de máscaras (nueve pipelines completos) y
+el de resoluciones (una docena de propagaciones). **Ninguno de los tests de esta
+etapa está marcado `slow`**, y eso es deliberado: la primera versión marcó así los
+siete del barrido de resolución, se midieron en 0.7 s, y una etiqueta que reclama
+un coste que no existe solo consigue esconder siete mediciones de un `-m "not
+slow"`. Los únicos `slow` del proyecto siguen siendo los tres de la Fig. 1 de Lim
+et al., que optimizan cinco parámetros por punto y cuestan 7 s; todo el coste base
+siguen siendo las integraciones DOP853, que son el oráculo de `perturbations.py` y
+no tienen forma barata.
 
 ---
 
@@ -1318,7 +1377,7 @@ los elementos medios de un TLE — que es lo que la bandera hace cumplir.
 | ~~`propagator.py`~~ | ~~**Forma de arrays multi-satélite**: `(n, S, 3)` vs `(S, n, 3)`~~ **Hecho (2026-08-01)**: `(S, n, 3)`, satellite-major, siempre 3-D. Se adelanta a la etapa 3 porque `geometry.py` llega antes y tendría que inventarse una forma provisional. Desempata la memoria: `traj.r_km[s]` es contiguo y entra tal cual en `teme_to_itrf`; `r[:, s]` habría que copiarlo en cada llamada |
 | ~~`propagator.py`~~ | ~~**Época**: de dónde sale y si es obligatoria~~ **Hecho (2026-08-01)**: llega dentro del `TimeGrid`, que no se puede construir sin ella, y **no se lee numéricamente** — hay un test que aserta que dos rejillas que solo difieren en `epoch_jd` dan estados idénticos bit a bit |
 | `propagator.py` / `engine/` | **Paralelismo del bucle sobre satélites.** Hoy `ZONAL_NUMERIC` integra las S órbitas en serie. Es el sitio evidente para un pool de procesos, pero pertenece a `engine/parallel.py` (etapa 5), no a la capa de física. Medir antes: para una constelación de 60 y un día de rejilla, ¿cuánto tarda? |
-| `system/passes.py` | **Refinado de rejilla alrededor de un pase.** Un `Trajectory` da muestras en la rejilla que se le pidió y nada más — no interpola. Quien quiera resolución fina solo en los pases, o pide una rejilla no uniforme (que `TimeGrid` admite) o propaga dos veces. Decidir cuál cuando `passes.py` sepa qué necesita |
+| ~~`system/passes.py`~~ | ~~**Refinado de rejilla alrededor de un pase.**~~ **Hecho (2026-09-13, §26)**: `passes.py` no interpola la trayectoria. Refina los **bordes** y la **culminación** desde las muestras que existen, interpolando **en elevación** —que es el dato que sí está—, y nunca fabrica un vector de estado. Quien necesite resolución fina dentro del pase pide una rejilla más fina, que `TimeGrid` admite no uniforme, y eso es una segunda propagación y no un caso especial aquí. Lo que cuesta no refinar está medido: **3.79 s del día, el 0.21 % del tiempo y el 0.032 % de los bits** |
 | `tle.py` | **No construir un `ClassicalElements` con elementos medios de un TLE.** Son de Brouwer-Lyddane con corrección de Kozai, no los osculadores de `kepler.py`; y van con `WGS72_MU_KM3_S2`, no con EGM96. Ahora hay además `WGS72_ZONAL`, que es el juego consistente a usar. **Sigue siendo disciplina, no un tipo**: la bandera impide *usar* unos medios donde van osculadores, pero nadie impide etiquetar unos medios de TLE como `OSCULATING` a mano. Si `tle.py` acaba necesitando construirlos, ahí es cuando entra `MEAN_KOZAI_SGP4` (ADR 0006, subdecisión 2) |
 | `propagator.py` (adelantado desde `tle.py`) | **Transformación osculador↔medio (Brouwer-Lyddane).** Se adelanta porque el modo analítico no puede devolver un estado utilizable sin ella (§13, tabla de km). Sigue desbloqueando los términos seculares de segundo orden (§5). **Corregido:** que fuera «la misma pieza que `tle.py` necesita» está sobredimensionado — ver «El acoplamiento BL ↔ `tle.py`» arriba. **Es lo único que queda vivo de la bandera**: `ElementType` ya está (§6) y marca exactamente los dos puntos donde esta función se llamaría. Pendiente: elegir alcance (solo período corto, o corto + largo) y oráculo de validación |
 | `tle.py` | Añadir `sgp4` a dependencias **del núcleo** (no un extra). Verificar que la extensión C++ compila: `Satrec.sgp4_array` solo es vectorizada de verdad si lo hace, y no hay que fingir vectorización si cae al fallback Python |
@@ -4202,3 +4261,411 @@ los tres módulos de esta etapa dejaron su pendiente escrito: `system/passes.py`
 (segmentar un pase) y `system/key_volume.py` (integrar la tasa sobre él), que es
 quien posee un bloque y por tanto quien puede hacer de `finite_key.py` el defecto
 activo.
+
+---
+
+## 26. `system/passes.py` — qué cuenta como pase, y las cuatro cosas que una implementación ingenua calcula mal
+
+### Qué hace este módulo, para quien llegue nuevo
+
+Un satélite en órbita baja no está aparcado sobre una ciudad: sale, cruza el
+cielo en diez minutos o menos, y se pone. Un **pase** es una de esas travesías —
+el tramo contiguo de tiempo en que una estación concreta puede usar un satélite
+concreto. Es la unidad de trabajo: el telescopio gira hacia él, lo sigue, y para.
+Todo lo que una misión reporta por noche lo reporta por pase.
+
+**«Poder usar» no es «poder ver», y esa distinción es el primer trabajo del
+módulo.** Un satélite a un grado sobre el horizonte es geométricamente visible y
+prácticamente inútil: el haz cruza treinta veces más atmósfera que a cenit, el
+telescopio mira por el aire más caliente, más turbulento y más contaminado de luz
+que existe, y la distancia oblicua —y con ella la pérdida geométrica, que va con
+el cuadrado del rango— está en su peor valor. Así que un pase se define contra
+una **máscara de elevación**: un ángulo umbral por debajo del cual el enlace se
+declara inservible.
+
+`look_angles` ya dejó escrito en su docstring que el umbral es de este módulo, y
+devuelve elevaciones negativas sin filtrar precisamente por eso.
+
+### La decisión que parecía de trámite y no lo es: la máscara no tiene defecto
+
+`find_passes` exige `minimum_elevation_rad`, sin defecto y por palabra clave. La
+tentación era poner los 20° de Ntanos et al., que están ya en el paquete como
+`NTANOS_MINIMUM_ELEVATION_RAD`.
+
+La razón de no hacerlo la mide `key_volume.py` (§27) y se resume en una línea:
+**la máscara tiene óptimo interior cerca de 8°, y la diferencia entre 2° y 8°
+vale el 6.0 % de la clave del día.** Un defecto habría escondido un efecto
+medible detrás de una cita. Una cantidad con óptimo no puede ser una constante.
+
+### Las cuatro cosas que se calculan mal, cada una medida
+
+Todas las cifras son del **día de referencia**: estación de Castelldefels
+(41.2750 N, 1.9875 E, 30 m), satélite SSO a 700 km con el nodo a 30° este,
+2025-01-01, rejilla de 1 s, máscara de 10°. Cuatro pases, de 562.2, 376.6, 558.4
+y 302.7 s, con culminaciones a 52.9°, 17.6°, 58.8° y 14.2°.
+
+**1. Los bordes no están en la rejilla.** Un pase empieza cuando la elevación
+cruza la máscara, y ese instante cae **entre** dos muestras. Tomar la primera
+muestra por encima de la máscara como inicio tira la fracción de paso anterior,
+en los dos extremos: **1796.00 s en vez de 1799.79 s, o sea 3.79 s —el 0.21 %—
+simplemente ausentes.** `find_passes` refina los dos cruces por interpolación
+lineal en elevación.
+
+Que la interpolación sea lineal no es pereza, y merece una frase: la elevación
+frente al tiempo es lo más parecido a una recta justo en el horizonte, donde
+cambia más rápido, y lo más curvada en la culminación, donde da la vuelta. Los
+cruces están en el extremo del horizonte. La curvatura se trata aparte, donde
+importa, que es el punto 3.
+
+**2. El tiempo de permanencia de una muestra no es el paso de rejilla.** Las
+muestras de un pase no valen todas los mismos segundos: la primera y la última
+solo poseen la parte de su paso que cae dentro de la ventana refinada.
+`PassTable.samples()` devuelve un **tiempo de permanencia por muestra** bajo la
+regla del punto medio —cada muestra posee el intervalo entre su punto medio con
+la anterior y su punto medio con la siguiente, recortado a `[start_s, end_s]`—
+así que los tiempos de permanencia de un pase suman **exactamente** su duración
+refinada, cosa que el trapecio sobre las muestras crudas no hace.
+
+Esa exactitud es la que permite que `key_volume.py` use **un** vector de pesos
+para la integral asintótica y para el presupuesto de pulsos del bloque finito, de
+modo que comparar los dos regímenes mida la cota y no la cuadratura. Y hay una
+segunda razón, más física: estos pesos se multiplican por una tasa de pulsos para
+dar un **recuento de pulsos**, así que un peso es «cuántos pulsos se emitieron
+mientras el enlace lo describía mejor esta muestra» — una cantidad que tiene que
+ser positiva y sumar exactamente los pulsos que el pase emitió. El punto medio lo
+da por construcción; los pesos de borde del trapecio son medios pasos
+independientemente de dónde acabe el pase.
+
+**Y lo que cuesta el recorte, dicho también en la dirección pequeña:** los
+3.79 s recuperados son el 0.21 % del tiempo y solo el **0.032 %** de los bits,
+porque son los segundos de menor elevación. El refinamiento se hace porque es
+exacto y gratis, no porque cambie el resultado.
+
+**3. La muestra más alta no es la culminación.** La elevación máxima de un pase
+fija su rango mínimo y por tanto su mejor transmitancia, así que es el número que
+un planificador lee primero, y leerlo de las muestras lo sesga **a la baja** como
+el cuadrado del paso:
+
+| Rejilla | Máximo discreto, error | Vértice parabólico, error |
+|---|---|---|
+| 10 s | **0.029°** | **0.0006°** |
+| 30 s | **0.51°** | **0.081°** |
+
+El vértice es el de la parábola por la muestra máxima y sus dos vecinas, escrito
+en **forma de Newton** —válida para espaciado desigual— y no como la fórmula
+`x_1 + h(y_0−y_2)/(2(y_0−2y_1+y_2))` de paso constante. `TimeGrid` admite
+rejillas no uniformes, y ahí la fórmula de paso constante sería incorrecta de una
+forma que parece un pequeño error de modelado y no un bug. Hay un test con una
+parábola exacta sobre una rejilla deliberadamente irregular que la distingue.
+
+**El detalle que encontró el test y no la derivación.** El ajuste se acepta solo
+si `b_2 < 0`, si el vértice cae dentro del corchete de tres puntos **y de la
+ventana refinada**, y si el máximo del pase lo alcanza **una sola** muestra. Esa
+última condición no es relleno defensivo: por los puntos `(20, 30, 30)` el
+vértice vale **31.25**, una elevación que ninguna muestra vio. Un máximo
+alcanzado en más de una muestra es una meseta a la resolución de la rejilla, y
+entonces la muestra se queda — que es honesto y además el sentido conservador. Lo
+escribo porque la primera versión no lo tenía y el caso se descubrió escribiendo
+el test de la meseta, no razonando.
+
+**4. Un pase cortado por el borde de la rejilla no es un pase.** Si el satélite
+ya está por encima de la máscara en la primera muestra, o sigue por encima en la
+última, lo que la rejilla contiene es un **fragmento**: su duración, su
+culminación y todo bit integrado sobre él son **cotas inferiores**, y nada en los
+números lo dice. `truncated_start` y `truncated_end` lo dicen, y `find_passes`
+registra un `warning` con cuántos encontró. Medido sobre una ventana de 600 s
+abierta a mitad del primer pase: el fragmento es menos del 80 % del pase real.
+
+### El guardia que cuenta muestras en vez de estimar un error
+
+Una rejilla gruesa no difumina la clave integrada: **la infla**. Contra las
+432 985 bits de la rejilla de 1 s (§27):
+
+| Paso | Muestras en el pase más corto | Sesgo |
+|---|---|---|
+| 1 s | 303 | 0.0000 % |
+| 10 s | 30 | +0.026 % |
+| 25 s | 12 | +0.120 % |
+| 45 s | 7 | **+1.319 %** |
+| 60 s | 5 | **+2.018 %** |
+| 120 s | 2 | **+8.586 %** |
+
+Dos cosas. **El signo es positivo:** quien engrosa la rejilla para ahorrar tiempo
+recibe una clave *mayor*, sin síntoma en ninguna parte. Y el sesgo **no es
+monótono** en el paso —depende de dónde caigan las muestras respecto a la
+culminación—, así que 48 s aterriza en **+0.003 % por accidente** entre vecinos a
++1.3 % y +2.0 %.
+
+Por eso `MINIMUM_SAMPLES_PER_PASS = 12` guarda el **recuento de muestras**: una
+estimación de error sacada de una sola ejecución gruesa puede ser pequeña por
+coincidencia, y «este pase tiene cuatro muestras» no puede. El 12 es el punto más
+grueso de la tabla donde el sesgo se queda por debajo del 0.15 %, y el test lo
+**regenera** en vez de fiarse de los dígitos.
+
+### La forma del contenedor, y por qué es plana
+
+Los pases tienen longitudes distintas, así que el array natural
+`(n_pases, n_muestras_del_pase)` **no existe**. `PassSamples` es por tanto plano:
+cada par `(pase, muestra)` es una entrada, y las cuatro columnas comparten
+longitud.
+
+Esa forma es la que permite que `key_volume.py` evalúe el canal y el protocolo
+**una sola vez** sobre todos los instantes dentro de pase de un día entero, en una
+llamada vectorizada, y colapse el resultado por pase con una suma de segmentos
+(`np.bincount`) — en vez de iterar sobre pases, que es lo que un contenedor
+irregular obliga a hacer. No hay ningún bucle de Python sobre pases en toda la
+etapa. La segmentación misma también es vectorizada sobre los dos ejes: rellenar
+la máscara `(S, n)` con una columna falsa a cada lado convierte «aquí empieza un
+tramo» en una diferencia local, y dos `np.nonzero` segmentan un día de sesenta
+satélites a 1 s —5.2 millones de elevaciones, **240 pases en 0.07 s**— sin bucle.
+
+Esa última cifra **se corre**, no se cita:
+`TestTheConstellationCase::test_a_sixty_satellite_day_is_segmented_without_a_loop`
+apila sesenta copias del satélite de referencia y exige que cada fila reproduzca
+exactamente la tabla de un satélite. Sesenta copias no son una constelación
+realista —todas las filas tienen los mismos pases— pero son justo la forma que
+caza una segmentación que itera a escondidas, y la respuesta por fila se conoce de
+antemano.
+
+### Lo que este módulo deliberadamente no hace
+
+- **No interpola la trayectoria.** `Trajectory` da las muestras que se le pidieron
+  y nada entre ellas, y `notes/LAST_CHANGES.md` dejó abierto qué debía hacer
+  `passes.py` con eso. La respuesta: se refinan los **bordes** y la
+  **culminación** desde las muestras que existen, interpolando **en elevación**, y
+  nunca se fabrica un vector de estado. Quien necesite resolución fina dentro del
+  pase pide una rejilla más fina —que `TimeGrid` admite no uniforme—, que es una
+  segunda propagación y no un caso especial aquí. **Fila cerrada** de la tabla de
+  decisiones aplazadas.
+- **No decide si un pase da clave.** Un pase con cero bits sigue siendo un pase, y
+  cuáles son es la salida más interesante de §27. Meter un umbral de clave en la
+  segmentación los haría invisibles.
+- **No elige entre estaciones** (`multi_ogs.py`) **ni sabe de nubes**
+  (`pcflos.py`).
+- **No importa nada de `channel` ni de `qkd`**, comprobado sobre el AST y no sobre
+  el texto, porque el docstring los nombra a propósito.
+
+### Estado
+
+`src/quoss/system/passes.py`, 284 sentencias, **100 % de cobertura de líneas y de
+ramas**; `tests/system/test_passes.py`, 79 tests. Las conversiones de ángulo pasan
+por `core/units.py`, que es lo que exige
+`tests/unit/test_conventions.py` — la primera versión usaba `np.rad2deg` y el
+guardia de convenciones la cazó, que es exactamente para lo que se escribió antes
+de que existiera ningún módulo de física.
+
+---
+
+## 27. `system/key_volume.py` — el bloque es el pase, y con eso la cota finita pasa a ser el defecto
+
+### Qué hace este módulo, para quien llegue nuevo
+
+`qkd/` contesta «qué fracción de un pulso enviado **ahora mismo** se convierte en
+clave». Una misión pregunta «cuántos bits sacamos esta noche». Convertir lo
+primero en lo segundo parece multiplicar una tasa por una duración, y para la
+tasa asintótica casi lo es. Para el número que un sistema real entrega, no, y la
+diferencia es todo el contenido de este módulo.
+
+La razón es que **una afirmación finite-key habla de un bloque, no de un
+instante**. `qkd/finite_key.py` sabe poner precio a que Alice y Bob nunca observan
+una probabilidad sino un recuento, y ese precio depende del tamaño del bloque — o
+sea de una integral sobre un eje temporal. `qkd/` no tiene eje temporal, y por eso
+toda `KeyRate` que sale de `qkd/base.py` va etiquetada `ASYMPTOTIC`, y por eso
+`finite_key.py` podía calcular la cota pero **no** hacerla el defecto.
+
+Este módulo tiene el eje temporal, así que puede. Y lo hace.
+
+### La decisión central: la cota finita es el defecto, **estructuralmente**
+
+`pass_key_volume` —el nombre sin adjetivos, el que se escribe por inercia—
+devuelve `KeyRegime.FINITE`. El número asintótico solo se alcanza llamando a
+`asymptotic_pass_key_volume`, y **no existe ningún argumento `regime=`**.
+
+**Por qué no un argumento con defecto**, que era lo evidente: un defecto es un
+valor que alguien pasa distinto por descuido, y aquí el descuido no tiene
+síntoma. Las dos llamadas devuelven un número de bits positivo y plausible. Esto
+es lo que hay entre ellas, en el día de referencia de §26 con el telescopio de
+0.75 m, noche clara sin luna, reparto 16:1:4 de Ntanos et al. y
+`eps_cor = eps_sec = 1e-10`:
+
+| Pase | Asintótico | Finito | Culminación |
+|---|---|---|---|
+| 1 | 1 548 341 bits | **190 581** bits | 52.9° |
+| 2 | 319 898 bits | **0** bits | 17.6° |
+| 3 | 1 709 160 bits | **242 404** bits | 58.8° |
+| 4 | 199 281 bits | **0** bits | 14.2° |
+| **Día** | **3 776 681 bits** | **432 985 bits** | — |
+
+El cociente del día es el **11.5 %**, y no es lo importante. Lo importante es la
+columna por pase: **dos de los cuatro pases no certifican nada.** Así que el error
+de reportar la cifra asintótica no es «unas ocho veces optimista», es
+**ilimitado**, y lo es justo en los pases bajos que un planificador estaría
+decidiendo si merece la pena agendar.
+
+### Y muere de golpe, no poco a poco — la intuición que hubo que corregir
+
+«Bloque pequeño, clave pequeña» es la intuición equivocada. El pase 4 recoge
+**309 867** detecciones en la base de clave; no es un número pequeño. Lo que lo
+mata es la **tasa de error de fase**: la cota tiene que inferir, desde la base que
+Alice y Bob sí midieron, cuál habría sido el error en la base conjugada, y esa
+inferencia es un argumento de muestreo cuya anchura crece al encogerse los
+recuentos. Al tamaño de bloque del pase 4 la inferencia devuelve `phi = 0.5`, el
+máximo posible, donde `1 − h(phi) = 0` y el término de un fotón se anula **entero**
+— mientras la corrección de errores sigue cobrándose sobre los 309 867 bits.
+
+No hay régimen de «poca clave»: hay un acantilado, y
+`FiniteKeyResult.phase_error_rate` es el campo que dice cuál.
+
+### Qué es un bloque: ni la muestra ni el día, y las dos alternativas medidas
+
+Es la palanca más grande del módulo, y las dos tentaciones obvias fallan en
+direcciones opuestas.
+
+**Un bloque por muestra** —que es en lo que consistiría tratar la cota finita como
+una corrección por instante— da **cero bits del día entero**: cero de 1800
+muestras certifica un solo bit. Cada muestra tiene una mediana de 1615 detecciones en la
+base de clave contra un peaje fijo de 260 bits y una inferencia de error de fase
+que no tiene con qué trabajar. **La cota no es aditiva sobre sub-bloques**, y
+suponer que lo es lo pierde todo.
+
+**Un bloque por día** es la tentación opuesta: un bloque mayor paga el peaje una
+vez y tiene estadística más apretada. También es incorrecto. Entre pases el
+satélite está bajo el horizonte y **no se envía ningún pulso**, así que no es un
+bloque sino varias ejecuciones del protocolo separadas por horas. Y en concreto
+mezclaría las tasas de error: los dos pases muertos aportan 787 000 detecciones
+al 1.8–1.9 % de QBER a un bloque cuyos pases buenos están al 1.24–1.26 %, y la
+corrección de errores se cobra sobre todas. El módulo **no ofrece** esa función, y
+`daily_key_volume` suma **longitudes**, que es la operación que la
+componibilidad autoriza.
+
+### El hallazgo que solo este módulo puede ver: la máscara tiene óptimo interior
+
+§26 dejó dicho que la máscara es una variable de diseño. Aquí está por qué:
+
+| Máscara | Pases | Día finito | Día asintótico |
+|---|---|---|---|
+| 2° | 6 | 408 946 | 3 876 492 |
+| 5° | 5 | 426 988 | 3 876 492 |
+| 7° | 4 | 433 771 | 3 862 432 |
+| **8°** | 4 | **434 938** | 3 844 682 |
+| 10° | 4 | 432 985 | 3 776 681 |
+| 20° | 2 | 360 978 | 2 949 471 |
+
+Dos cosas distintas, y las dos son el punto.
+
+**La columna asintótica es monótona y la finita no.** La clave asintótica por
+pulso está recortada a cero muestra a muestra, así que añadir una muestra mala a
+un pase nunca puede restar clave: por debajo de 5° las muestras extra aportan
+**exactamente cero** y la columna deja de moverse del todo. Una cota a nivel de
+bloque no tiene esa protección — las muestras de baja elevación de los bordes
+meten sus errores en el bloque agrupado, donde la corrección de errores se cobra
+sobre **todas** las detecciones, aportando casi ningún evento certificado de un
+fotón. Bajar la máscara de 8° a 2° compra un **71 % más** de segundos útiles y
+**destruye el 6.0 %** de la clave del día, y el cálculo asintótico no puede verlo
+ocurrir.
+
+**El mecanismo, medido sobre un solo pase** al pasar de 10° a 5°: sus eventos
+certificados de un fotón suben un **2.6 %** (718 970 → 737 975) y su fuga de
+corrección de errores sube un **5.5 %** (246 574 → 260 144). La segunda adelanta a
+la primera, y el pase pierde el 1.7 % de su clave ganando el 22 % de su duración.
+
+Es la misma familia de hallazgo que el óptimo de la fracción decoy de §25: una
+cantidad a la que la fórmula asintótica es indiferente tiene un óptimo real en
+cuanto el bloque es finito.
+
+### Una cuadratura y una configuración, porque si no la comparación no mide la cota
+
+Una comparación entre dos números no vale nada si difieren en algo más que en lo
+que se compara. Dos precauciones, las dos con test:
+
+- **Un vector de pesos.** Los dos caminos integran sobre los tiempos de
+  permanencia de `PassTable.samples()`. El asintótico multiplica la tasa por
+  segundo por ellos; el finito multiplica la tasa de pulsos por ellos. Ninguno
+  tiene regla de cuadratura propia, así que ninguno puede ir por delante por una
+  razón que no sea la cota.
+- **Un objeto de configuración.** Los dos toman el mismo `Bb84DecoyProtocol`, y
+  `decoy_settings_from_protocol` deriva de él el `DecoySettings` que el camino
+  finito necesita. La alternativa —dos objetos configurados aparte— permitiría que
+  los dos caminos describieran experimentos distintos, y el fallo no tiene
+  síntoma: la comparación sigue dando un cociente. Hay un test que cambia µ y
+  exige que **se muevan las dos** columnas, para que el puente sea portante y no
+  decorativo.
+
+La única pieza que el protocolo asintótico no lleva es la tercera intensidad,
+porque su estado de vacío es un pulso exactamente vacío; `mu_3 = 0` se suministra
+aquí, con su defensa en `_VACUUM_INTENSITY`.
+
+### La parte que una leyenda de figura casi siempre falla: componer un día
+
+Cada pase es un bloque independiente, `eps_sec`-secreto y `eps_cor`-correcto **por
+su cuenta**. Concatenar `n` claves así da una clave cuya probabilidad de fallo
+está acotada por la unión de los `n` fallos: **`n · eps`, no `eps`**.
+`composed_security` lo calcula y `DailyKeyVolume.security` lo lleva, de modo que
+la clave de un día no viaja nunca sin el `eps` bajo el que de verdad es segura.
+
+Con cuatro pases a `1e-10` eso es un inofensivo `4e-10`. Es inofensivo y es **un
+número distinto del que se imprime al lado**, y crece con exactamente la cantidad
+que una misión intenta maximizar: cien pases de una constelación son `1e-8`, un
+año de cuatro pases diarios es `1.5e-7`.
+
+**Y la otra dirección también está tasada.** Para que el **día** sea `eps`-seguro
+en vez de cada pase, cada bloque tiene que correr a `eps / n`. Medido: **404 780
+bits en vez de 432 985**, o sea que un día honestamente `1e-10`-seguro cuesta el
+**6.5 %** de la clave. Barato, no nulo, y nada que nadie fuera a encontrar leyendo
+una gráfica de tasa.
+
+`composed_security` se **niega** a devolver una composición vacua: `n · eps >= 1`
+no es una probabilidad de fallo, es la ausencia de afirmación, y devolverla como
+número sería el `except: pass` que el README prohíbe.
+
+### El contrato de entrada, y por qué el orden es parte de él
+
+`pass_key_volume` recibe un `LinkConditions` ya evaluado en los instantes que
+`PassTable.samples()` lista, **en ese orden**. No toma ni una perilla óptica: lo
+contrario pondría doce argumentos de presupuesto en la firma y haría que
+`quoss.system` dependiera de cada perilla de `quoss.channel`.
+
+El contrato se comprueba por longitud, y el docstring dice explícitamente que el
+**orden** también es parte del contrato y no una convención — porque una longitud
+correcta en otro orden atribuiría cada transmitancia al instante equivocado y nada
+aguas abajo podría notarlo. Es el tipo de fallo que esta norma existe para dejar
+dicho en voz alta cuando no se puede comprobar.
+
+### La reserva que se traslada en vez de desaparecer
+
+`channel/link_budget.py` dice con todas las letras que hasta que exista
+`system/correlated_fading.py` «ninguna afirmación de ese módulo sobre clave *por
+pase* se sigue de una sobre clave *por puerta*». **Este módulo hace exactamente
+esa afirmación.** Así que la reserva se repite en su docstring en vez de
+desaparecer: un enlace real se desvanece a ráfagas de milisegundos, así que el
+número de puertas **consecutivas** perdidas no es el que implica el muestreo
+independiente, y qué le hace eso a un bloque es una pregunta abierta. Todas las
+cifras de arriba suponen que la estadística de desvanecimiento de un pase es la
+marginal.
+
+Y por la misma regla: todas las cuentas vienen de `expected_block_counts`, que
+devuelve **esperanzas**. Estas cifras son la clave que certifica un pase
+**típico**, sin P5/P95 — la dispersión entre pases es `monte_carlo.py`.
+
+### Lo que esto cierra
+
+- **La decisión aplazada del [ADR 0010](../docs/adr/0010-decoy-and-finite-key.md)**
+  («quien posee un pase —y por tanto un bloque— es `system/key_volume.py`») y la
+  frase equivalente del docstring de `quoss/qkd/__init__.py`, que decía en futuro
+  algo que ahora es presente. Las dos están reescritas; lo que decía
+  `KeyRegime.FINITE` —«lo que QuOSS reporta por defecto en cuanto exista
+  `finite_key.py`»— también, porque `finite_key.py` ya existía cuando se escribió
+  y el defecto no se fijaba allí.
+- **El entregable DB3**: clave por pase y por día, con la cota finite-key aplicada
+  al bloque correcto, el régimen en un campo del resultado y el `eps` compuesto
+  del día en otro.
+
+Todo lo demás de la etapa —la dispersión, el fading correlacionado, las nubes,
+varias estaciones, los relés, la optimización de parámetros— sigue declarado
+fuera, en el docstring y en el [ADR 0011](../docs/adr/0011-the-block-is-the-pass.md).
+
+### Estado
+
+`src/quoss/system/key_volume.py`, 227 sentencias, **100 % de cobertura de líneas y
+de ramas**; `tests/system/test_key_volume.py`, 80 tests. El ADR de la etapa es el
+[0011](../docs/adr/0011-the-block-is-the-pass.md), y cubre los dos módulos.

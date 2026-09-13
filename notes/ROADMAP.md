@@ -461,10 +461,66 @@ arriba).
 
 Aquí aparecen las cantidades que van al paper.
 
-1. `system/passes.py` — detección y segmentación de passes
-2. `system/key_volume.py` — integración de la tasa sobre el pase → clave por pase / día
-3. `system/monte_carlo.py` — ensembles de fading → **P5/P50/P95 y outage**. Estructural, no un extra
-4. `system/correlated_fading.py` — proceso temporalmente correlacionado (AR(1)) — el punto de novedad
+1. ✅ `system/passes.py` — detección y segmentación de passes contra una **máscara
+   de elevación**, que es argumento **obligatorio y sin defecto** porque tiene
+   óptimo interior (ver la línea 2). Las cuatro cosas que una implementación
+   ingenua calcula mal, cada una medida en el día de referencia: (1) **los bordes
+   no están en la rejilla** —tomar la primera muestra por encima de la máscara
+   tira **3.79 s de 1799.79, el 0.21 %**—, así que los dos cruces se refinan por
+   interpolación lineal en elevación, que es donde la curva es más recta; (2) **el
+   tiempo de permanencia de una muestra no es el paso**, así que los pesos son los
+   del **punto medio recortados a la ventana refinada** y suman la duración
+   *exactamente* —lo que permite que los dos regímenes de la línea 2 compartan un
+   solo vector de cuadratura, y lo que hace que un peso signifique «pulsos
+   emitidos mientras esta muestra describía el enlace»—; (3) **la muestra más alta
+   no es la culminación** —el máximo discreto queda **0.029°** bajo la verdad en
+   una rejilla de 10 s y **0.51°** en una de 30 s, y el vértice de tres puntos en
+   forma de Newton (válida para espaciado desigual) los baja a **0.0006°** y
+   **0.081°**—; (4) **un pase cortado por el borde de la rejilla es un fragmento**,
+   y sus números son cotas inferiores, así que va marcado y con `warning`. Y un
+   guardia que cuenta **muestras** y no estima un error, porque una rejilla gruesa
+   no difumina la clave sino que la **infla** (+2.0 % a 5 muestras por pase,
+   +8.6 % a 2) y el sesgo **no es monótono** en el paso. Vectorizado sobre los dos
+   ejes: dos `np.nonzero` segmentan un día de sesenta satélites a 1 s —5.2 millones
+   de elevaciones, 240 pases, 0.07 s— y hay un test que lo corre. 100 % de
+   cobertura de líneas y ramas, 79 tests
+2. ✅ `system/key_volume.py` — la integral sobre el pase → clave **por pase y por
+   día**, y con ella **el «por defecto activo» que la etapa 2.3 no podía fijar**:
+   `pass_key_volume` devuelve `FINITE` y **no hay ningún argumento `regime=`**,
+   porque el número asintótico solo se alcanza llamando a
+   `asymptotic_pass_key_volume`. **La decisión de fondo: el bloque es el pase** —
+   un bloque por muestra da **cero bits del día entero** (la cota no es aditiva
+   sobre sub-bloques) y uno por día mezclaría el QBER del 1.9 % de los pases
+   muertos con el 1.24 % de los buenos sobre horas en que no se envía un pulso.
+   **Lo que mide:** en un día del enlace de referencia la integral asintótica
+   reclama **3.78 Mbit** y la cota finita certifica **0.43 Mbit**, el **11.5 %** —
+   y **dos de los cuatro pases no certifican nada** donde el asintótico reclama
+   320 y 199 kbit, así que el error de reportar lo asintótico es **ilimitado** y no
+   un factor. Y muere **de golpe**: el pase 4 tiene 309 867 detecciones y lo mata
+   la tasa de error de fase, que devuelve `phi = 0.5` y anula el término de un
+   fotón entero. **El hallazgo que solo esta etapa ve:** la máscara de elevación
+   tiene **óptimo interior cerca de 8°** — la columna asintótica es monótona
+   porque el recorte a cero por muestra la protege (por debajo de 5° las muestras
+   extra aportan *exactamente* cero), la finita no, y bajar de 8° a 2° compra un
+   **71 %** más de segundos y destruye el **6.0 %** de la clave, con el mecanismo
+   medido (+2.6 % de eventos de un fotón contra +5.5 % de fuga de corrección).
+   **Y la componibilidad, que casi toda leyenda de figura falla:** sumar `n` pases
+   da una clave `n·eps`-segura, no `eps`-segura; `composed_security` lo calcula y
+   un día honestamente `1e-10`-seguro cuesta el **6.5 %**. Los dos regímenes
+   comparten **una** cuadratura y **un** objeto de configuración, con test de que
+   el puente es portante. Ver
+   [ADR 0011](../docs/adr/0011-the-block-is-the-pass.md). 100 % de cobertura de
+   líneas y ramas, 80 tests
+3. `system/monte_carlo.py` — ensembles de fading → **P5/P50/P95 y outage**.
+   Estructural, no un extra. **Es lo siguiente**, y es lo que las cifras de la
+   línea 2 explícitamente no dicen: todas vienen de `expected_block_counts`, que
+   devuelve **esperanzas**, así que son la clave que certifica un pase *típico* y
+   no un cuantil sobre la distribución de pases
+4. `system/correlated_fading.py` — proceso temporalmente correlacionado (AR(1)) —
+   el punto de novedad. La reserva que `channel/link_budget.py` dejó escrita
+   —«hasta que exista, ninguna afirmación sobre clave *por pase* se sigue de una
+   sobre clave *por puerta*»— ahora **aplica a la línea 2**, que hace justo esa
+   afirmación, y está repetida en su docstring en vez de haber desaparecido
 5. `system/pcflos.py` — probabilidad de línea de vista libre de nubes
 6. `system/multi_ogs.py` — selección/agregación entre estaciones
 7. `system/relay.py` — trusted-node store-and-forward, ISL

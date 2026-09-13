@@ -6,13 +6,23 @@ protocolo QKD → métricas de sistema (SKR, volumen de clave, outage).
 Núcleo Python puro y **vectorizado sobre el eje temporal**, sin dependencias web. La
 CLI, la API y el frontend son *consumidores* del mismo motor, no parte de él.
 
-> Estado: **Etapa 2.1 — `orbits/`**. Hecho: `frames.py`, `kepler.py`,
-> `perturbations.py`, `propagator.py`, la bandera osculador/medio que los tres
-> últimos comparten ([ADR 0006](docs/adr/0006-osculating-vs-mean-elements.md)),
-> y `tle.py` — parseo de TLE y propagación SGP4, sin construir jamás un
-> `ClassicalElements` con elementos medios
-> ([ADR 0007](docs/adr/0007-tle-and-sgp4-propagation.md)).
-> Siguiente: `geometry.py`.
+> Estado: **Etapa 3 — `system/`**, en curso. Cerradas la **1** (`core/`), la
+> **2.1** (`orbits/`: marcos, Kepler, perturbaciones zonales, propagación, TLE/SGP4,
+> ángulos de visión), la **2.2** (`channel/`: atmósfera, turbulencia, haz,
+> apuntado, fondo, detector y el presupuesto de enlace y de ruido) y la **2.3**
+> (`qkd/`: la frontera canal→protocolo, BB84 con decoy vacío+débil, y la cota
+> finite-key componible de Lim et al.). De la 3 hay ya `passes.py` y
+> `key_volume.py`; siguiente, `monte_carlo.py`.
+>
+> **Lo que eso permite afirmar hoy:** clave por pase y por día con la cota
+> finite-key aplicada al bloque que el pase realmente es
+> ([ADR 0011](docs/adr/0011-the-block-is-the-pass.md)). Y lo que midió al hacerlo:
+> en un día del enlace de referencia la tasa asintótica reclama **3.78 Mbit** y la
+> cota finita certifica **0.43 Mbit**, con **dos de los cuatro pases en cero**
+> donde la asintótica reclama 320 y 199 kbit. Por eso `pass_key_volume` devuelve
+> `FINITE` y el número asintótico solo se alcanza llamando a una función que se
+> llama `asymptotic_…`.
+>
 > Ver [`notes/ROADMAP.md`](notes/ROADMAP.md) para el orden de construcción,
 > [`notes/GUIA_REIMPLEMENTACION.md`](notes/GUIA_REIMPLEMENTACION.md) para el porqué de la
 > arquitectura y [`notes/LAST_CHANGES.md`](notes/LAST_CHANGES.md) para el estado actual.

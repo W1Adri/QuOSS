@@ -337,8 +337,11 @@ class KeyRegime(StrEnum):
     FINITE
         Computed for a block of stated length with a stated failure probability,
         so that the statistics carry confidence intervals. This is what a pass
-        actually yields, and what QuOSS reports by default once ``finite_key.py``
-        exists.
+        actually yields, and what QuOSS reports by default — through
+        :func:`quoss.system.key_volume.pass_key_volume`, which owns the time axis
+        a block is an integral over. No :class:`KeyRate` from this package ever
+        carries it, and that is not an omission: this interface maps instants to
+        instants, and an instant has no block.
     """
 
     ASYMPTOTIC = "asymptotic"
