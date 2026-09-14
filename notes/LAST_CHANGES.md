@@ -5423,3 +5423,145 @@ estación, con y sin Monte Carlo), en los cuatro formatos, leyendo cada fichero.
 `data/snapshots/cloud_cover/castelldefels_2025-01-01_02.json`,
 `tests/io/test_{cache,celestrak,openmeteo,snapshots,export,stations}.py`,
 `docs/adr/0015-external-data-isolation-and-snapshots.md`.
+
+---
+
+## 32. `validation/` no podía producir su propia tabla, y ese era el punto entero
+
+> **Nota de orden:** esta entrada sale de una rama hermana de la del puente de
+> `tests/e2e/`. Al integrar, la que entre segunda se renumera.
+
+### Qué es este paquete, para quien llegue nuevo
+
+`src/quoss/validation/` existe para que la palabra «validado» signifique algo
+comprobable. Un **caso de validación** es un número impreso en una fuente puesto
+al lado del mismo número recalculado por este proyecto, con cuatro cosas que
+hacen que la comparación signifique algo: un **localizador** (la ecuación o la
+página, para que el lector abra el documento en el sitio correcto), una
+**tolerancia** con su origen escrito al lado, un **test** (el nodo de pytest que
+mide lo mismo) y un **estado**.
+
+Y el estado no se escribe: se **deriva**. `ValidationCase` recalcula el suyo en
+`__post_init__` y levanta `DomainError` si no coincide con el que le pasaron. Es
+la defensa contra lo que el propio módulo llama una insignia que sobrevive al
+acuerdo que describía: si un refactor mueve un número, un `REPRODUCED` escrito a
+mano seguiría diciendo «reproducido» y uno derivado dice `NOT_REPRODUCED` la
+primera vez que alguien llama a `run_all`.
+
+### El defecto: la tabla no se podía producir
+
+`CASE_MODULES` —la tupla de módulos que `run_all()` recorre— listaba
+`quoss.validation.ntanos2021`. **Ese módulo nunca se escribió.** Así que
+`run_all()`, el único punto de entrada del paquete, levantaba
+`ModuleNotFoundError` en **todas** sus llamadas, desde la primera.
+
+No era solo un docstring optimista, que es como lo describía el diagnóstico de
+partida. Era esto:
+
+```python
+>>> from quoss.validation.base import run_all
+>>> run_all()
+ModuleNotFoundError: No module named 'quoss.validation.ntanos2021'
+```
+
+**El paquete escrito para impedir que «validado» fuera una etiqueta no podía
+emitir una sola fila.** Y nada lo detectaba: no había `tests/validation/`, así
+que `base.py` estaba al **59 %** de cobertura y era lo único que bajaba el global
+del proyecto del 100 %.
+
+Eran cuatro afirmaciones sin cumplir, no una:
+
+| Qué afirmaba | Qué pasaba |
+|---|---|
+| `__init__` lista `ntanos2021` entre los módulos | No existe |
+| `CASE_MODULES` lo recorre | `run_all()` siempre levanta |
+| `REGENERATE_COMMAND` = `python -m quoss.validation --write …` | No había `__main__.py` |
+| Nueve casos nombran `tests/validation/test_{satquma,micius}.py` | Los dos ficheros no existían |
+
+La última es la más instructiva, porque es la promesa que el propio diseño
+considera esencial —«una fila es trazable a una assertion que alguien puede
+correr»— y la rompía en **nueve de veintidós filas**.
+
+### Lo que se decidió, con su número
+
+1. **`ntanos2021` sale de `CASE_MODULES` y el hueco se declara.** Es la misma
+   regla del ADR 0009 aplicada a un módulo en vez de a una cita: **una tabla con
+   un hueco declarado dice más que una tabla que no se puede producir**. Y el
+   hueco no es menor, así que se dice en voz alta en tres sitios (el `__init__`,
+   el README y un test): *la fuente sobre la que está construido el enlace de
+   referencia entero —receptor, transmisor, protocolo y radiancia de Ntanos et
+   al. 2021— **no tiene ninguna fila en la tabla**.* Lo que hoy se reporte como
+   validado contra ese paper traza a las assertions de `tests/channel/` y
+   `tests/qkd/`, no a `docs/validation.md`.
+2. **Los seis desacuerdos de ese módulo se guardan, no se borran.**
+   `EXPECTED_DISAGREEMENTS` tenía siete claves y **seis no las producía ningún
+   módulo**: eran afirmaciones que ningún test podía comprobar en ninguna de las
+   dos direcciones. Pasan a `PENDING_DISAGREEMENTS`, y hay dos tests que fuerzan
+   que las dos tablas **particionen** — ninguna clave compartida, y ninguna
+   clave pendiente producida por un módulo que existe— para que el día que se
+   escriba `ntanos2021.py` el traslado no pueda quedarse a medias.
+3. **`__main__.py`, para que el comando que el fichero generado cita exista.**
+   `docs/validation.md` lleva `REGENERATE_COMMAND` en su primera línea como la
+   única forma de reescribirlo. Un fichero generado que nombra un comando que
+   nadie puede ejecutar es peor que uno sin cabecera: quien lo intenta no puede
+   distinguir si el fichero está caducado, mal, o bien.
+   **La decisión de diseño que tiene dentro:** sale con **cero aunque la tabla
+   contenga un `not reproduced`**. Una tabla con un desacuerdo es una tabla
+   *correcta* —derivar el estado en vez de declararlo existe precisamente para
+   que el desacuerdo se publique—, así que un generador que se negara a escribir
+   el documento empujaría a quien lo encontrase a hacer desaparecer el
+   desacuerdo. Lo que sí falla ante un desacuerdo no declarado es
+   `tests/validation/test_base.py`, contra `EXPECTED_DISAGREEMENTS`.
+4. **Los dos ficheros de test que los casos ya nombraban, escritos.** No se
+   reescribieron los nodos de pytest para que apuntaran a otro sitio: los casos
+   ya decían qué había que asertar, y lo que faltaba era asertarlo. Y hay un test
+   nuevo, `test_every_case_names_a_test_file_that_exists`, que recorre las 22
+   filas y comprueba que la mitad de fichero de cada nodo resuelve — el defecto
+   no puede volver en silencio.
+
+### Las cifras que la tabla da hoy
+
+**22 casos de tres fuentes: 14 reproducidos, 1 compatible, 1 no reproducido y 6
+huecos.** Las dos que merecen leerse:
+
+- **El único `not_reproduced` de todo el proyecto** es de Micius: Liao et al.
+  2017 imprimen «The diffraction loss is estimated to be 22 dB at 1200 km» en el
+  mismo párrafo que un transmisor de 300 mm y un receptor de 1 m, y esas dos
+  aperturas a 848.6 nm dan **9.95 dB**. No falla la ley de pérdidas: el haz que
+  el propio párrafo describe —«~10 µrad», «about 10 m» a 1200 km— es **2.8 veces
+  más ancho** de lo que una apertura de 300 mm puede difractar. Los 22 dB son del
+  haz real y la apertura impresa no los determina.
+- **El único `compatible`** es el presupuesto de Ntanos et al.: sus 20 dB contra
+  los 19.094 dB que dan sus propios parámetros, cerrado por una extinción que el
+  paper no declara y que solo puede añadir pérdida. Es la forma más débil de
+  compatibilidad —un término acotado por un solo lado— y la tabla dice cuáles
+  filas se apoyan en ella.
+
+Y una medida nueva, del lado de Micius, que la nota del caso afirmaba sin cifra:
+**«~1 kbit/s» es una cifra significativa**, y leerlo como 0.5 a 1.5 kbit/s mueve
+la pérdida implícita de **46.02 a 41.25 dB** — una ventana de 4.8 dB, más ancha
+que la mitad del rango publicado del propio presupuesto. El acuerdo es real y es
+un acuerdo entre dos intervalos.
+
+### Lo que queda fuera
+
+- **`docs/validation.md` no se commitea todavía.** El comando que lo escribe
+  funciona; lo que falta es decidir si se publica una tabla sin la fuente
+  principal, y el test que compare el fichero con el texto generado. Es el punto
+  4 de la etapa 8.
+- **`ntanos2021.py` sigue sin escribirse**, y con él la etapa 8 sigue abierta.
+
+### Verificación
+
+`tests/validation/`: **104 elementos** (95 tests más doctests), **100 % de líneas
+y ramas** en los seis módulos del paquete. Con eso el proyecto entero pasa a
+**100 % de cobertura global con ramas** (7 866 sentencias, 1 956 ramas, ninguna
+sin cubrir) — `validation/base.py` al 59 % era lo único que faltaba. Suite
+completa: **3 324 tests** (eran 3 229). `ruff check`, `ruff format --check` y
+`mypy` limpios.
+
+### Ficheros
+
+`src/quoss/validation/{__init__,base}.py`, `src/quoss/validation/__main__.py`
+(nuevo), `tests/validation/{__init__,cases,test_base,test_satquma,test_micius,test_main}.py`
+(nuevos), `notes/ROADMAP.md`.
