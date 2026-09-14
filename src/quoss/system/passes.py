@@ -363,6 +363,115 @@ class PassSamples:
         )
         return summed
 
+    def _segment_extremum(self, values: FloatArray, *, largest: bool) -> FloatArray:
+        """Shared body of :meth:`segment_max` and :meth:`segment_min`."""
+        array = np.asarray(values, dtype=np.float64)
+        if array.shape != self.shape:
+            raise DomainError(
+                f"values has shape {array.shape}, but there are {self.size} (pass, sample) "
+                "entries. A segment extremum needs one value per entry."
+            )
+        fill = -np.inf if largest else np.inf
+        out: FloatArray = np.full(self.table.n_passes, fill, dtype=np.float64)
+        reducer = np.maximum if largest else np.minimum
+        reducer.at(out, self.pass_index, array)
+        return out
+
+    def segment_max(self, values: FloatArray) -> FloatArray:
+        """Largest value in each pass, one number per row of the table.
+
+        The extremum counterpart of :meth:`segment_sum`, and the reduction a
+        *requirement* needs rather than a yield: a pass's key is the integral of
+        its rate, but a pass's demand on a transceiver is the worst instant in
+        it. Peak ``|Doppler|``, peak Doppler slew and peak point-ahead angle are
+        all this reduction.
+
+        **What it reduces over, which is the caveat.** The samples of a pass are
+        the grid instants **at or above the mask**, and the pass itself begins
+        and ends *between* samples (:attr:`PassTable.start_s`). Quantities that
+        peak at the horizon — every one named above does — therefore come back
+        as a **lower bound** on the true peak of the pass. How much of one is a
+        property of the grid and is measured rather than assumed: on the
+        reference day the largest per-pass ``|Doppler|`` is 4.272427 GHz on a
+        1 s grid and 4.273114 GHz on a 0.1 s one, 160 parts per million apart.
+        A designer sizing a capture range off this should take the bound as the
+        bound it is; a designer using a 30 s grid should refine it first.
+
+        Parameters
+        ----------
+        values : FloatArray
+            One value per entry, shape :attr:`shape`. Pass ``numpy.abs(x)`` for
+            a peak magnitude — the reduction is signed, deliberately, so that
+            "largest" and "largest in size" stay different questions.
+
+        Returns
+        -------
+        FloatArray
+            Shape ``(table.n_passes,)``. A pass with no entries gets ``-inf``,
+            which cannot happen for a table built by :func:`find_passes` and is
+            the honest answer if it ever did: no sample, no maximum. Not a
+            zero, which would be a value nobody measured.
+
+        Raises
+        ------
+        DomainError
+            If ``values`` does not have one entry per ``(pass, sample)`` pair.
+
+        Examples
+        --------
+        No sample can dwell longer than its whole pass, and the edge samples of
+        a pass dwell *longer than the grid step* — the midpoint rule stretches
+        them out to the refined crossing — which is why this is a reduction
+        over the samples and not over the step:
+
+        >>> import numpy as np
+        >>> samples = _reference_samples()
+        >>> peak = samples.segment_max(np.asarray(samples.dwell_s))
+        >>> bool(np.all(peak <= samples.table.duration_s))
+        True
+        >>> float(np.round(peak.max(), 6))
+        1.463918
+        """
+        return self._segment_extremum(values, largest=True)
+
+    def segment_min(self, values: FloatArray) -> FloatArray:
+        """Smallest value in each pass, one number per row of the table.
+
+        :meth:`segment_max` with the inequality turned round, and it exists as
+        its own method rather than as ``-segment_max(-x)`` because that idiom
+        needs a comment every time it is written and gets the sign wrong once.
+
+        Together the two give a **span**, which is what an actuator is sized
+        by: the point-ahead angle of the reference day's best pass runs from
+        24.685920 to 50.652309 microradians, so a fine-steering mirror holding
+        a fixed lead would be wrong by 26 microradians at one end of it.
+
+        Parameters
+        ----------
+        values : FloatArray
+            One value per entry, shape :attr:`shape`.
+
+        Returns
+        -------
+        FloatArray
+            Shape ``(table.n_passes,)``; ``+inf`` for a pass with no entries,
+            for the reason :meth:`segment_max` gives.
+
+        Raises
+        ------
+        DomainError
+            If ``values`` does not have one entry per ``(pass, sample)`` pair.
+
+        Examples
+        --------
+        >>> import numpy as np
+        >>> samples = _reference_samples()
+        >>> floor = samples.segment_min(np.asarray(samples.dwell_s))
+        >>> bool(np.all(floor > 0.0))
+        True
+        """
+        return self._segment_extremum(values, largest=False)
+
     def __repr__(self) -> str:
         return (
             f"PassSamples(size={self.size}, n_passes={self.table.n_passes}, "

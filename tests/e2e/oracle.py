@@ -52,11 +52,17 @@ from quoss.channel.link_budget import (
 )
 from quoss.channel.pointing import beam_to_jitter_ratio
 from quoss.channel.turbulence import downlink_log_irradiance_variance
+from quoss.core.constants import SPEED_OF_LIGHT_M_S
 from quoss.core.errors import DegradationLog
 from quoss.core.rng import RandomSource
 from quoss.core.types import TimeGrid
 from quoss.orbits.constellations import sun_synchronous_inclination_rad
-from quoss.orbits.geometry import LookAngles, look_angles
+from quoss.orbits.geometry import (
+    LookAngles,
+    doppler_rate_hz_s,
+    doppler_shift_hz,
+    look_angles,
+)
 from quoss.orbits.kepler import ClassicalElements
 from quoss.orbits.propagator import PropagationMethod, Trajectory, propagate
 from quoss.qkd.base import NTANOS_SOURCE_PULSE_RATE_HZ, LinkConditions
@@ -188,6 +194,43 @@ class HandLink:
     finite: PassKeyVolume
     asymptotic: PassKeyVolume
     station_height_m: float
+
+    @property
+    def acquisition(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """``(range_rate, doppler, doppler_rate, point_ahead)`` on the whole grid.
+
+        Written out the way a person would: take the carrier from the
+        wavelength, take the two geometric series `look_angles` already
+        returned, and differentiate the Doppler over the **full** grid rather
+        than inside each pass — a derivative taken inside a pass would see the
+        pass edge as a boundary and return a one-sided difference exactly at
+        the horizon, which is the instant the quantity is about.
+        """
+        carrier_hz = float(SPEED_OF_LIGHT_M_S / WAVELENGTH_M)
+        range_rate = np.asarray(self.angles.range_rate_km_s, dtype=np.float64)[0]
+        return (
+            range_rate,
+            np.asarray(doppler_shift_hz(range_rate, carrier_hz), dtype=np.float64),
+            np.asarray(
+                doppler_rate_hz_s(
+                    range_rate, t_s=np.asarray(self.grid.t_s), carrier_frequency_hz=carrier_hz
+                ),
+                dtype=np.float64,
+            ),
+            np.asarray(self.angles.point_ahead_angle_rad, dtype=np.float64)[0],
+        )
+
+    @property
+    def pass_acquisition(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """``(max|doppler|, max|doppler rate|, max point-ahead, min point-ahead)`` per pass."""
+        _, doppler, rate, point_ahead = self.acquisition
+        rows = np.asarray(self.samples.sample_index)
+        return (
+            self.samples.segment_max(np.abs(doppler[rows])),
+            self.samples.segment_max(np.abs(rate[rows])),
+            self.samples.segment_max(point_ahead[rows]),
+            self.samples.segment_min(point_ahead[rows]),
+        )
 
     @property
     def fade_inputs(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:

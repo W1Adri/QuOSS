@@ -333,6 +333,75 @@ class TestTheEngineAddsNothing:
             station.asymptotic.key_bits, by_hand.asymptotic.key_bits, "asymptotic.key_bits"
         )
 
+    def test_the_acquisition_series_are_the_hand_acquisition(
+        self, engine: Simulation, station: StationRun, by_hand: HandLink
+    ) -> None:
+        """Range-rate, Doppler, Doppler rate and point-ahead, on the whole grid.
+
+        Defined everywhere, unlike the channel: a satellite has a position and a
+        velocity whether or not the link is worth scoring, and an acquisition
+        question is asked precisely about the part of the sky the key stage
+        refuses. So these are compared over all 86 401 samples, not only the
+        1 800 in a pass.
+        """
+        (series,) = engine.result.series
+        range_rate, doppler, rate, point_ahead = by_hand.acquisition
+        for name, expected in (
+            ("range_rate_km_s", range_rate),
+            ("doppler_shift_hz", doppler),
+            ("doppler_rate_hz_s", rate),
+            ("point_ahead_angle_rad", point_ahead),
+        ):
+            values = np.asarray(getattr(series, name).values)
+            assert np.all(np.isfinite(values)), f"series.{name} is not defined everywhere"
+            assert_identical(values, expected, f"series.{name}")
+        assert_identical(
+            station.acquisition.doppler_shift_hz, doppler, "acquisition.doppler_shift_hz"
+        )
+
+    def test_the_per_pass_acquisition_extrema_are_the_hand_extrema(
+        self, engine: Simulation, by_hand: HandLink
+    ) -> None:
+        peak_doppler, peak_rate, widest, narrowest = by_hand.pass_acquisition
+        passes = engine.result.passes
+        assert_identical(passes.max_abs_doppler_hz, peak_doppler, "max_abs_doppler_hz")
+        assert_identical(passes.max_abs_doppler_rate_hz_s, peak_rate, "max_abs_doppler_rate_hz_s")
+        assert_identical(passes.max_point_ahead_angle_rad, widest, "max_point_ahead_angle_rad")
+        assert_identical(passes.min_point_ahead_angle_rad, narrowest, "min_point_ahead_angle_rad")
+
+    def test_what_the_reference_day_demands_of_a_transceiver(self, engine: Simulation) -> None:
+        """The numbers the acquisition columns exist to produce, on the reference link.
+
+        At 1550 nm (``f0 = 1.934e14`` Hz) the reference day's four passes demand
+        a capture range of **4.19, 2.85, 4.27 and 2.23 GHz** and a tracking rate
+        of **37.9, 19.2, 41.5 and 16.8 MHz/s**. The point-ahead lead runs from
+        24.7 to 50.7 microradians — a factor two *within a single pass*, which
+        is why the span and not only the peak is reported.
+
+        Read as a requirement: a transceiver whose capture range is under
+        ±4.3 GHz cannot acquire the best pass of this link at its horizon, and
+        one whose loop cannot slew 42 MHz/s cannot hold it there. That is the
+        TBIRD end-of-pass failure written as two columns of a result.
+        """
+        passes = engine.result.passes
+        assert np.asarray(passes.max_abs_doppler_hz).round(-6).tolist() == [
+            4_187_000_000.0,
+            2_847_000_000.0,
+            4_272_000_000.0,
+            2_226_000_000.0,
+        ]
+        assert np.asarray(passes.max_abs_doppler_rate_hz_s).round(-4).tolist() == [
+            37_930_000.0,
+            19_230_000.0,
+            41_550_000.0,
+            16_770_000.0,
+        ]
+        widest = np.asarray(passes.max_point_ahead_angle_rad)
+        narrowest = np.asarray(passes.min_point_ahead_angle_rad)
+        assert np.all(widest > narrowest)
+        assert float(widest.max()) == pytest.approx(50.66e-6, rel=1e-3)
+        assert float(narrowest.min()) == pytest.approx(24.69e-6, rel=1e-3)
+
     def test_the_daily_table_sums_the_passes_and_nothing_else(self, engine: Simulation) -> None:
         daily = engine.result.daily
         assert daily.day_number.tolist() == [2_460_677]

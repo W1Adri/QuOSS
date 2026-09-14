@@ -397,6 +397,12 @@ class PassRecord:
         ``end - start``, s.
     culmination_elevation_rad : float
         Peak elevation, rad.
+    max_abs_doppler_hz : float
+        Largest ``|Doppler shift|`` over the pass's samples, Hz.
+    max_abs_doppler_rate_hz_s : float
+        Largest ``|d(Doppler)/dt|`` over the pass's samples, Hz/s.
+    max_point_ahead_angle_rad, min_point_ahead_angle_rad : float
+        Widest and narrowest point-ahead lead over the pass, rad.
     finite_bits, asymptotic_bits : float
         Key under the finite bound and under the asymptotic rate.
     has_key : bool
@@ -416,6 +422,10 @@ class PassRecord:
     culmination_jd: float
     duration_s: float
     culmination_elevation_rad: float
+    max_abs_doppler_hz: float
+    max_abs_doppler_rate_hz_s: float
+    max_point_ahead_angle_rad: float
+    min_point_ahead_angle_rad: float
     finite_bits: float
     asymptotic_bits: float
     has_key: bool
@@ -442,8 +452,24 @@ class PassResults:
         Refined instants, s.
     culmination_elevation_rad : FloatArray
         Peak elevation per pass, rad.
+    max_abs_doppler_hz : FloatArray
+        Largest ``|Doppler shift|`` of each pass, Hz — the offset a receiver's
+        **capture range** has to cover.
+    max_abs_doppler_rate_hz_s : FloatArray
+        Largest ``|d(Doppler)/dt|`` of each pass, Hz/s — the sweep its
+        **tracking loop** has to follow, which is the separate requirement.
+    max_point_ahead_angle_rad, min_point_ahead_angle_rad : FloatArray
+        Widest and narrowest point-ahead lead of each pass, rad. The *span*
+        between them is what a fine-steering mirror is sized by.
     finite_bits, asymptotic_bits : FloatArray
         Key per pass under each regime.
+
+    Note on the four acquisition columns: each is reduced over the grid samples
+    **inside** the pass, and a pass begins and ends between samples, so each is
+    a bound rather than the exact extremum of the continuous pass — a lower
+    bound for the three maxima, an upper bound for the minimum. The size of
+    that gap is a property of the grid and is measured at
+    :meth:`~quoss.system.passes.PassSamples.segment_max`.
     truncated_start, truncated_end : BoolArray
         Whether the grid cut the pass at either edge.
     day_number : IntArray
@@ -462,6 +488,10 @@ class PassResults:
     end_s: FloatArray
     culmination_s: FloatArray
     culmination_elevation_rad: FloatArray
+    max_abs_doppler_hz: FloatArray
+    max_abs_doppler_rate_hz_s: FloatArray
+    max_point_ahead_angle_rad: FloatArray
+    min_point_ahead_angle_rad: FloatArray
     finite_bits: FloatArray
     asymptotic_bits: FloatArray
     truncated_start: BoolArray
@@ -532,6 +562,10 @@ _PASS_FIELDS: tuple[tuple[str, type[np.generic]], ...] = (
     ("end_s", np.float64),
     ("culmination_s", np.float64),
     ("culmination_elevation_rad", np.float64),
+    ("max_abs_doppler_hz", np.float64),
+    ("max_abs_doppler_rate_hz_s", np.float64),
+    ("max_point_ahead_angle_rad", np.float64),
+    ("min_point_ahead_angle_rad", np.float64),
     ("finite_bits", np.float64),
     ("asymptotic_bits", np.float64),
     ("truncated_start", np.bool_),
@@ -638,8 +672,26 @@ class SeriesResults:
 
     Outside a pass the channel is not evaluated, so ``transmittance``,
     ``loss_total_db``, ``noise_per_gate`` and ``asymptotic_secure_bit_s`` hold
-    NaN there; ``elevation_rad``, ``azimuth_rad`` and ``range_km`` are defined
-    everywhere.
+    NaN there. **Everything geometric is defined everywhere** — the look angles,
+    the range-rate, the Doppler pair and the point-ahead angle — because the
+    satellite has a position whether or not the link is worth evaluating, and
+    an acquisition question is asked precisely about the part of the sky the
+    key stage refuses to score.
+
+    Why the Doppler is here at all, when the range-rate already is
+    --------------------------------------------------------------
+    ``doppler_shift_hz`` is ``range_rate_km_s`` times a constant, so one of the
+    two is redundant — deliberately. They answer to different people. The
+    range-rate is the geometry and carries no assumption; the Doppler is that
+    geometry **committed to a carrier**, and it is the number a transceiver's
+    capture range is written in. Carrying only the first would leave every
+    reader to multiply, each choosing their own speed of light and their own
+    reading of the sign; carrying only the second would bury the carrier
+    assumption inside a column nobody can undo.
+
+    The carrier is the scenario's own ``transmitter.wavelength_nm``, through
+    ``f0 = c / lambda``. A system with a separate classical downlink at another
+    wavelength has a second carrier and this series is not it.
 
     Parameters
     ----------
@@ -649,6 +701,16 @@ class SeriesResults:
         The axis every series is on.
     elevation_rad, azimuth_rad, range_km : TimeSeries
         Look angles.
+    range_rate_km_s : TimeSeries
+        Rate of change of slant range, km/s. Positive while receding.
+    doppler_shift_hz : TimeSeries
+        First-order Doppler shift of the scenario's carrier, Hz. Negative — a
+        redshift — while receding, so it runs opposite to the range-rate.
+    doppler_rate_hz_s : TimeSeries
+        How fast that shift is sweeping, Hz/s: the receiver's *tracking rate*
+        requirement, as distinct from its capture range.
+    point_ahead_angle_rad : TimeSeries
+        Angle a monostatic terminal must lead its transmit beam by, radians.
     transmittance, loss_total_db, noise_per_gate, asymptotic_secure_bit_s : TimeSeries
         Channel and rate.
 
@@ -663,6 +725,10 @@ class SeriesResults:
     elevation_rad: TimeSeries
     azimuth_rad: TimeSeries
     range_km: TimeSeries
+    range_rate_km_s: TimeSeries
+    doppler_shift_hz: TimeSeries
+    doppler_rate_hz_s: TimeSeries
+    point_ahead_angle_rad: TimeSeries
     transmittance: TimeSeries
     loss_total_db: TimeSeries
     noise_per_gate: TimeSeries
@@ -698,6 +764,10 @@ _SERIES_FIELDS: tuple[str, ...] = (
     "elevation_rad",
     "azimuth_rad",
     "range_km",
+    "range_rate_km_s",
+    "doppler_shift_hz",
+    "doppler_rate_hz_s",
+    "point_ahead_angle_rad",
     "transmittance",
     "loss_total_db",
     "noise_per_gate",
@@ -995,6 +1065,10 @@ class SimulationResult:
                 culmination_jd=float(p.culmination_jd[i]),
                 duration_s=float(p.duration_s[i]),
                 culmination_elevation_rad=float(p.culmination_elevation_rad[i]),
+                max_abs_doppler_hz=float(p.max_abs_doppler_hz[i]),
+                max_abs_doppler_rate_hz_s=float(p.max_abs_doppler_rate_hz_s[i]),
+                max_point_ahead_angle_rad=float(p.max_point_ahead_angle_rad[i]),
+                min_point_ahead_angle_rad=float(p.min_point_ahead_angle_rad[i]),
                 finite_bits=float(p.finite_bits[i]),
                 asymptotic_bits=float(p.asymptotic_bits[i]),
                 has_key=bool(p.has_key[i]),

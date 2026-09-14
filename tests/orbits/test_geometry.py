@@ -23,7 +23,12 @@ from quoss.core.constants import (
 from quoss.core.errors import DomainError
 from quoss.core.types import TimeGrid
 from quoss.orbits.frames import Frame, geodetic_to_itrf, gmst_rad, itrf_to_teme_state
-from quoss.orbits.geometry import LookAngles, doppler_shift_hz, look_angles
+from quoss.orbits.geometry import (
+    LookAngles,
+    doppler_rate_hz_s,
+    doppler_shift_hz,
+    look_angles,
+)
 from quoss.orbits.kepler import ClassicalElements
 from quoss.orbits.propagator import PropagationMethod, Trajectory, propagate
 
@@ -346,6 +351,108 @@ class TestDopplerShift:
     def test_rejects_non_finite_range_rate(self) -> None:
         with pytest.raises(DomainError):
             doppler_shift_hz(np.array([float("nan")]), 1.934e14)
+
+
+class TestDopplerRate:
+    """How fast the shift sweeps: a different requirement from how far it moves.
+
+    A coherent receiver has a **capture range** (how far off it can still find
+    the carrier) and a **tracking rate** (how fast a loop can follow it once
+    locked). A pass can sit inside the first and leave the second behind, and
+    when it does the symptom is a lock that holds all pass and drops near the
+    horizon — the shape of the TBIRD end-of-pass Doppler problem.
+    """
+
+    @pytest.mark.physics
+    def test_a_constant_range_rate_is_not_sweeping(self) -> None:
+        rate = doppler_rate_hz_s(np.full(7, 4.0), t_s=np.arange(7.0), carrier_frequency_hz=1.934e14)
+        assert np.allclose(rate, 0.0, atol=0.0)
+
+    @pytest.mark.physics
+    def test_against_the_closed_form_on_a_quadratic_range(self) -> None:
+        """V1 against the exact derivative, which a quadratic makes available.
+
+        For ``R(t) = R0 + b t^2 / 2`` the range-rate is ``b t`` and the Doppler
+        rate is exactly ``-f0 b / c``, a constant, so a second-order central
+        difference of a linear range-rate is exact up to float rounding. That
+        isolates the discretisation from the formula: if this fails, the factor
+        or the sign is wrong, not the grid.
+        """
+        b = 0.37  # km/s^2
+        t = np.linspace(0.0, 30.0, 61)
+        rate = doppler_rate_hz_s(b * t, t_s=t, carrier_frequency_hz=1.934e14)
+        exact = -1.934e14 * (b * 1e3) / SPEED_OF_LIGHT_M_S
+        assert np.allclose(rate, exact, rtol=1e-12)
+
+    @pytest.mark.physics
+    def test_the_sign_is_the_shift_falling_and_not_the_range_growing(self) -> None:
+        """The sign trips people up, so it is asserted against a physical picture.
+
+        A satellite going from approaching to receding has a range-rate rising
+        through zero and a Doppler shift falling through zero — blueshift to
+        redshift. So a positive range acceleration is a **negative** Doppler
+        rate, opposite to the intuition that "getting further, faster" should
+        raise something.
+        """
+        t = np.arange(5.0)
+        rate = doppler_rate_hz_s(np.arange(-2.0, 3.0), t_s=t, carrier_frequency_hz=1.934e14)
+        shift = doppler_shift_hz(np.arange(-2.0, 3.0), 1.934e14)
+        assert np.all(rate < 0.0)
+        assert shift[0] > 0.0 > shift[-1]
+
+    @pytest.mark.physics
+    def test_it_is_the_derivative_of_the_shift_it_is_named_after(self) -> None:
+        """Integrating the rate back over the window recovers the change in shift."""
+        t = np.linspace(0.0, 120.0, 241)
+        range_rate = 5.0 * np.cos(2.0 * np.pi * t / 400.0)
+        shift = doppler_shift_hz(range_rate, 1.934e14)
+        rate = doppler_rate_hz_s(range_rate, t_s=t, carrier_frequency_hz=1.934e14)
+        recovered = float(np.trapezoid(rate, t))
+        assert recovered == pytest.approx(float(shift[-1] - shift[0]), rel=1e-6)
+
+    def test_it_differentiates_the_sample_axis_of_a_satellite_stack(self) -> None:
+        """``LookAngles`` fields are ``(satellite, sample)``; the rate is per satellite."""
+        t = np.arange(6.0)
+        stack = np.vstack([t, 2.0 * t, -t])
+        rate = doppler_rate_hz_s(stack, t_s=t, carrier_frequency_hz=1.934e14)
+        assert rate.shape == stack.shape
+        assert np.allclose(rate[1], 2.0 * rate[0], rtol=1e-12)
+        assert np.allclose(rate[2], -rate[0], rtol=1e-12)
+
+    def test_a_non_uniform_grid_is_handled_and_not_silently_assumed_uniform(self) -> None:
+        """`TimeGrid` permits non-uniform spacing, so the derivative has to as well.
+
+        Checked against the same linear range-rate sampled unevenly: a finite
+        difference that divided by a single mean step would be wrong here and
+        right on a uniform grid, which is how such a bug survives.
+        """
+        t = np.array([0.0, 0.5, 2.0, 5.0, 9.0, 14.0])
+        rate = doppler_rate_hz_s(0.4 * t, t_s=t, carrier_frequency_hz=1.934e14)
+        exact = -1.934e14 * (0.4 * 1e3) / SPEED_OF_LIGHT_M_S
+        assert np.allclose(rate, exact, rtol=1e-10)
+
+    @pytest.mark.parametrize(
+        ("t_s", "match"),
+        [
+            (np.array([0.0]), "at least two samples"),
+            (np.array([0.0, 0.0, 1.0]), "strictly increasing"),
+            (np.array([0.0, 2.0, 1.0]), "strictly increasing"),
+            (np.array([0.0, np.nan, 1.0]), "non-finite"),
+            (np.zeros((2, 2)), "one-dimensional"),
+        ],
+    )
+    def test_a_time_axis_that_is_not_one_is_refused(self, t_s: Any, match: str) -> None:
+        with pytest.raises(DomainError, match=match):
+            doppler_rate_hz_s(np.zeros(3), t_s=t_s, carrier_frequency_hz=1.934e14)
+
+    def test_a_length_mismatch_is_refused_rather_than_broadcast(self) -> None:
+        """Two axes that are meant to be the same axis, so a quiet broadcast is wrong."""
+        with pytest.raises(DomainError, match="same time axis"):
+            doppler_rate_hz_s(np.zeros(5), t_s=np.arange(4.0), carrier_frequency_hz=1.934e14)
+
+    def test_a_bad_carrier_is_refused_by_the_shift_it_delegates_to(self) -> None:
+        with pytest.raises(DomainError, match="carrier_frequency_hz"):
+            doppler_rate_hz_s(np.zeros(3), t_s=np.arange(3.0), carrier_frequency_hz=0.0)
 
 
 # --------------------------------------------------------------------------- #

@@ -33,6 +33,7 @@ import pytest
 from quoss.core.errors import DegradationLog, DomainError, ScenarioError, Severity
 from quoss.core.rng import RandomSource
 from quoss.engine.pipeline import STAGES, _onto_days, run, simulate
+from quoss.engine.sweep import apply_point
 from quoss.scenario.defaults import reference_castelldefels
 from quoss.scenario.io import load_scenario
 from quoss.scenario.models import (
@@ -324,6 +325,106 @@ class TestTheSeries:
 
         inside = station.series.asymptotic_secure_bit_s.values[station.samples.sample_index]
         np.testing.assert_allclose(inside, np.asarray(rate))
+
+
+class TestTheAcquisitionStage:
+    """Doppler and point-ahead: what a terminal has to track, whatever the key says.
+
+    The stage is geometry only, and its independence from the link budget is the
+    property worth pinning: a station that certifies nothing still has a
+    satellite sweeping a carrier over it, and an acquisition question is asked
+    about exactly the part of the sky the key stage refuses to score.
+    """
+
+    def test_the_carrier_is_the_scenarios_own_wavelength_and_not_a_constant(self) -> None:
+        """``f0 = c / lambda`` of the transmitter, so a run cannot carry a foreign carrier.
+
+        Halving the wavelength doubles every Doppler number and leaves the
+        geometry — range-rate and point-ahead — untouched, which is the whole
+        content of "the carrier is an assumption and the geometry is not".
+        """
+        base = reference_castelldefels()
+        halved = base.model_copy(
+            update={
+                "transmitter": base.transmitter.model_copy(
+                    update={"wavelength_nm": base.transmitter.wavelength_nm / 2.0}
+                )
+            }
+        )
+        a = simulate(base, degradations=DegradationLog()).stations[0].acquisition
+        b = simulate(halved, degradations=DegradationLog()).stations[0].acquisition
+        assert b.carrier_frequency_hz == pytest.approx(2.0 * a.carrier_frequency_hz, rel=1e-12)
+        assert np.allclose(b.doppler_shift_hz, 2.0 * np.asarray(a.doppler_shift_hz), rtol=1e-12)
+        assert np.allclose(b.max_abs_doppler_hz, 2.0 * np.asarray(a.max_abs_doppler_hz), rtol=1e-12)
+        assert np.array_equal(b.range_rate_km_s, a.range_rate_km_s)
+        assert np.array_equal(b.point_ahead_angle_rad, a.point_ahead_angle_rad)
+
+    def test_the_series_are_defined_where_the_channel_is_not(self) -> None:
+        """Finite over the whole grid, against a channel that is NaN outside a pass."""
+        result = run(reference_castelldefels(), degradations=DegradationLog())
+        (series,) = result.series
+        assert np.any(np.isnan(series.transmittance.values))
+        for name in (
+            "range_rate_km_s",
+            "doppler_shift_hz",
+            "doppler_rate_hz_s",
+            "point_ahead_angle_rad",
+        ):
+            assert np.all(np.isfinite(getattr(series, name).values)), name
+
+    def test_a_station_with_no_pass_still_has_the_series_and_has_no_extrema(self) -> None:
+        """Zero passes is a shape here too: full series, an empty extremum column.
+
+        Not zeros of length four, and not an exception. The satellite went over
+        the sky; no pass cleared the mask, so there is no pass to take an
+        extremum of.
+        """
+        result = run(no_pass_scenario(), degradations=DegradationLog())
+        (series,) = result.series
+        assert np.all(np.isfinite(series.doppler_shift_hz.values))
+        assert result.passes.n_passes == 0
+        assert result.passes.max_abs_doppler_hz.shape == (0,)
+        assert result.passes.min_point_ahead_angle_rad.shape == (0,)
+
+    def test_the_peak_doppler_of_a_pass_is_at_its_edges_and_not_its_culmination(self) -> None:
+        """Which is why an end-of-pass Doppler problem is a thing at all.
+
+        At culmination the satellite is moving across the line of sight, so the
+        range-rate — and with it the shift — passes through zero. The extremes
+        are at the horizon, where the elevation is lowest and the link is worst:
+        the receiver has to work hardest exactly where it has least signal.
+        """
+        simulation = simulate(reference_castelldefels(), degradations=DegradationLog())
+        station = simulation.stations[0]
+        doppler = np.asarray(station.acquisition.doppler_shift_hz)
+        table = station.table
+        for index in range(table.n_passes):
+            first = int(table.first_index[index])
+            last = int(table.last_index[index])
+            culmination = int(
+                np.argmin(np.abs(np.asarray(table.grid.t_s) - table.culmination_s[index]))
+            )
+            edge = max(abs(doppler[first]), abs(doppler[last]))
+            assert abs(doppler[culmination]) < edge
+
+    def test_the_extrema_are_bounds_and_the_grid_says_how_tight(self) -> None:
+        """A pass begins between samples, so a sampled peak is a lower bound.
+
+        Refining the grid can only raise the reported maximum, never lower it,
+        and on this link ten times finer sampling moves it by less than
+        0.1 % — which is the measurement that licenses quoting the 1 s number
+        as a requirement at all.
+        """
+        coarse = run(reference_castelldefels(), degradations=DegradationLog())
+        fine = run(
+            apply_point(reference_castelldefels(), {"time.step_s": 0.1}),
+            degradations=DegradationLog(),
+        )
+        peak_coarse = np.asarray(coarse.passes.max_abs_doppler_hz)
+        peak_fine = np.asarray(fine.passes.max_abs_doppler_hz)
+        assert peak_fine.shape == peak_coarse.shape
+        assert np.all(peak_fine >= peak_coarse - 1.0)
+        assert np.all((peak_fine - peak_coarse) / peak_fine < 1e-3)
 
 
 class TestTheDayAxis:

@@ -107,13 +107,18 @@ from quoss.channel.link_budget import (
 )
 from quoss.channel.pointing import beam_to_jitter_ratio
 from quoss.channel.turbulence import downlink_log_irradiance_variance
-from quoss.core.constants import SECONDS_PER_DAY
+from quoss.core.constants import SECONDS_PER_DAY, SPEED_OF_LIGHT_M_S
 from quoss.core.errors import DegradationLog, DomainError, ScenarioError
 from quoss.core.rng import RandomSource
 from quoss.core.types import FloatArray, IntArray, TimeGrid, TimeSeries
 from quoss.engine.parallel import map_workers
 from quoss.engine.profiling import StageTimer
-from quoss.orbits.geometry import LookAngles, look_angles
+from quoss.orbits.geometry import (
+    LookAngles,
+    doppler_rate_hz_s,
+    doppler_shift_hz,
+    look_angles,
+)
 from quoss.orbits.propagator import Trajectory, propagate
 from quoss.orbits.tle import propagate_tle
 from quoss.qkd.base import KeyRegime, LinkConditions
@@ -186,6 +191,46 @@ STAGES: tuple[str, ...] = (
 # Containers
 # --------------------------------------------------------------------------- #
 @dataclass(frozen=True, eq=False, slots=True)
+class Acquisition:
+    """What a terminal has to track, on the whole grid and reduced per pass.
+
+    Separate from :class:`~quoss.scenario.result.SeriesResults` because it is
+    computed before the pass table is scored and read afterwards, and separate
+    from the key stage because **none of it depends on the link budget**. A
+    satellite that certifies no key still sweeps a carrier and still has to be
+    pointed ahead; the numbers here say whether a transceiver could have
+    followed it, which is a different question from whether it was worth it.
+
+    Why it exists as a named object rather than four loose arrays: the four are
+    read together (a capture range and a tracking rate are one specification)
+    and they share one assumption — the carrier — which a container can carry
+    and four arrays cannot.
+
+    Attributes
+    ----------
+    carrier_frequency_hz : float
+        ``c / lambda`` of the scenario's transmitter. The one assumption
+        behind ``doppler_shift_hz`` and ``doppler_rate_hz_s``.
+    range_rate_km_s, doppler_shift_hz, doppler_rate_hz_s, point_ahead_angle_rad : FloatArray
+        Shape ``(n_samples,)``, the whole grid, defined everywhere.
+    max_abs_doppler_hz, max_abs_doppler_rate_hz_s : FloatArray
+        Shape ``(n_passes,)``, reduced over the samples inside each pass.
+    max_point_ahead_angle_rad, min_point_ahead_angle_rad : FloatArray
+        Shape ``(n_passes,)``.
+    """
+
+    carrier_frequency_hz: float
+    range_rate_km_s: FloatArray
+    doppler_shift_hz: FloatArray
+    doppler_rate_hz_s: FloatArray
+    point_ahead_angle_rad: FloatArray
+    max_abs_doppler_hz: FloatArray
+    max_abs_doppler_rate_hz_s: FloatArray
+    max_point_ahead_angle_rad: FloatArray
+    min_point_ahead_angle_rad: FloatArray
+
+
+@dataclass(frozen=True, eq=False, slots=True)
 class StationRun:
     """Everything the per-station stages produced, before it is moved into a result.
 
@@ -220,6 +265,10 @@ class StationRun:
         Its per-day quantiles.
     series : SeriesResults
         The station's series as they go into the result.
+    acquisition : Acquisition
+        The Doppler pair and the point-ahead angle, on the whole grid and
+        reduced per pass. Geometry only, so a station with no pass still has
+        the series and simply has no rows of extrema.
     seconds : dict[str, float]
         Seconds spent per stage for this station.
     """
@@ -238,6 +287,7 @@ class StationRun:
     monte_carlo: MonteCarloKeyVolume | None
     monte_carlo_daily: MonteCarloDailyKeyVolume | None
     series: SeriesResults
+    acquisition: Acquisition
     seconds: dict[str, float]
 
 
@@ -681,7 +731,10 @@ def _run_station(task: _StationTask, degradations: DegradationLog) -> StationRun
                 )
 
     with timer.stage("series"):
-        series = _series(station.name, grid, angles, samples, loss, noise, conditions, protocol)
+        acquisition = _acquisition(scenario, angles, samples, grid)
+        series = _series(
+            station.name, grid, angles, samples, loss, noise, conditions, protocol, acquisition
+        )
 
     return StationRun(
         name=station.name,
@@ -698,6 +751,7 @@ def _run_station(task: _StationTask, degradations: DegradationLog) -> StationRun
         monte_carlo=monte_carlo,
         monte_carlo_daily=monte_carlo_daily,
         series=series,
+        acquisition=acquisition,
         seconds=timer.to_dict(),
     )
 
@@ -771,6 +825,58 @@ def _channel(
     return loss, noise, conditions
 
 
+def _acquisition(
+    scenario: Scenario, angles: LookAngles, samples: PassSamples, grid: TimeGrid
+) -> Acquisition:
+    """Return the Doppler pair and the point-ahead angle, on the grid and per pass.
+
+    Two things are worth reading rather than skipping.
+
+    **The series are computed over the whole grid and only then indexed.** A
+    derivative taken inside a pass would see the pass boundary as an edge and
+    return a one-sided difference there — exactly at the horizon, which is the
+    instant the whole quantity exists to describe. Differentiating the full
+    grid and slicing afterwards has no such edge.
+
+    **The carrier is derived, not configured.** ``f0 = c / lambda`` of the
+    scenario's own transmitter, so a run cannot carry a Doppler for a carrier
+    the scenario does not transmit. A system with a separate classical downlink
+    has a second carrier; it needs a second field, and inventing one here would
+    be a value nobody declared.
+    """
+    carrier_frequency_hz = float(SPEED_OF_LIGHT_M_S / scenario.transmitter.wavelength_m)
+    range_rate = np.asarray(angles.range_rate_km_s, dtype=np.float64)[0]
+    point_ahead = np.asarray(angles.point_ahead_angle_rad, dtype=np.float64)[0]
+    shift = np.asarray(doppler_shift_hz(range_rate, carrier_frequency_hz), dtype=np.float64)
+    rate = np.asarray(
+        doppler_rate_hz_s(
+            range_rate, t_s=np.asarray(grid.t_s), carrier_frequency_hz=carrier_frequency_hz
+        ),
+        dtype=np.float64,
+    )
+    rows = np.asarray(samples.sample_index)
+    empty = np.zeros(samples.table.n_passes, dtype=np.float64)
+    return Acquisition(
+        carrier_frequency_hz=carrier_frequency_hz,
+        range_rate_km_s=range_rate,
+        doppler_shift_hz=shift,
+        doppler_rate_hz_s=rate,
+        point_ahead_angle_rad=point_ahead,
+        max_abs_doppler_hz=(
+            empty if samples.size == 0 else samples.segment_max(np.abs(shift[rows]))
+        ),
+        max_abs_doppler_rate_hz_s=(
+            empty if samples.size == 0 else samples.segment_max(np.abs(rate[rows]))
+        ),
+        max_point_ahead_angle_rad=(
+            empty if samples.size == 0 else samples.segment_max(point_ahead[rows])
+        ),
+        min_point_ahead_angle_rad=(
+            empty if samples.size == 0 else samples.segment_min(point_ahead[rows])
+        ),
+    )
+
+
 def _empty_volume(
     samples: PassSamples,
     regime: KeyRegime,
@@ -810,6 +916,7 @@ def _series(
     noise: NoiseBudget | None,
     conditions: LinkConditions | None,
     protocol: Bb84DecoyProtocol,
+    acquisition: Acquisition,
 ) -> SeriesResults:
     """Return the station's series on the whole grid; channel and rate only inside passes.
 
@@ -853,6 +960,18 @@ def _series(
         elevation_rad=TimeSeries(grid, elevation, name="elevation", unit="rad"),
         azimuth_rad=TimeSeries(grid, azimuth, name="azimuth", unit="rad"),
         range_km=TimeSeries(grid, slant, name="range", unit="km"),
+        range_rate_km_s=TimeSeries(
+            grid, acquisition.range_rate_km_s, name="range_rate", unit="km/s"
+        ),
+        doppler_shift_hz=TimeSeries(
+            grid, acquisition.doppler_shift_hz, name="doppler_shift", unit="Hz"
+        ),
+        doppler_rate_hz_s=TimeSeries(
+            grid, acquisition.doppler_rate_hz_s, name="doppler_rate", unit="Hz/s"
+        ),
+        point_ahead_angle_rad=TimeSeries(
+            grid, acquisition.point_ahead_angle_rad, name="point_ahead", unit="rad"
+        ),
         transmittance=TimeSeries(
             grid,
             inside(None if loss is None else np.asarray(loss.transmittance)),
@@ -892,6 +1011,18 @@ def _pass_results(grid: TimeGrid, stations: Sequence[StationRun]) -> PassResults
         culmination_s=_concatenate([t.culmination_s for t in tables], np.float64),
         culmination_elevation_rad=_concatenate(
             [t.culmination_elevation_rad for t in tables], np.float64
+        ),
+        max_abs_doppler_hz=_concatenate(
+            [s.acquisition.max_abs_doppler_hz for s in stations], np.float64
+        ),
+        max_abs_doppler_rate_hz_s=_concatenate(
+            [s.acquisition.max_abs_doppler_rate_hz_s for s in stations], np.float64
+        ),
+        max_point_ahead_angle_rad=_concatenate(
+            [s.acquisition.max_point_ahead_angle_rad for s in stations], np.float64
+        ),
+        min_point_ahead_angle_rad=_concatenate(
+            [s.acquisition.min_point_ahead_angle_rad for s in stations], np.float64
         ),
         finite_bits=_concatenate([s.finite.key_bits for s in stations], np.float64),
         asymptotic_bits=_concatenate([s.asymptotic.key_bits for s in stations], np.float64),
