@@ -39,6 +39,33 @@ where the satellite is. In this model it does **not** change during a pass, so
 what lets the expensive profile integral be computed once per scenario instead of
 once per time sample.
 
+What "above ground level" means here, which is not what it sounds like
+----------------------------------------------------------------------
+Every height in this module is measured from **mean sea level**, not from the
+dirt under the telescope, and the recommendation's own wording makes that worth
+spelling out once rather than rediscovering.
+
+P.1621-2 defines the profile variable of equation (6) as "``h``: height above
+ground level (m)" and the station parameter of equations (8a)-(13) as "``h0``:
+height of the earth station above ground-level (m)". Read literally, ``h0``
+would be the height of the telescope above the field it stands in — a few
+metres anywhere on Earth. It is not, and the recommendation says so itself in
+the sentence after equation (13) (§5.1.2, p. 11): the approximation "has been
+derived ... for an **earth station altitude between 0 km and 5 km above sea
+level**". A range of 0 to 5 km is a range of *sites*, not of masts. So
+"ground-level" in P.1621-2 means "the ground, i.e. the sea-level datum the
+profile is anchored to", and ``h0`` is the site's altitude.
+
+That reading is what :class:`~quoss.scenario.models.StationSpec` wires: one
+``altitude_m`` per station, which is both where the station is for the geometry
+and where the turbulence integral starts. It is also what the difference is
+worth: integrating from 2 168 m instead of 0 m leaves **9.8 times** less
+turbulence overhead, because the surface term of equation (6) has a 100 m scale
+height, and on the reference day that is a third of Calar Alto's key
+(``tests/e2e/test_reference_scenarios.py``). The other reading would put every
+mountain observatory back under the whole boundary layer, which is the opposite
+of why observatories are on mountains.
+
 Units
 -----
 Heights and wavelengths here are in **metres**, following the recommendation's
@@ -50,7 +77,7 @@ from :mod:`quoss.orbits` are in kilometres and convert on entry via
 ======================  ====================================================
 Symbol                  Meaning
 ======================  ====================================================
-``h``                   height above ground level (m)
+``h``                   height above the sea-level datum (m); see above
 ``v_g``                 ground wind speed (m/s)
 ``v_rms``               r.m.s. wind speed along the vertical path (m/s)
 ``C_0``                 nominal ``C_n^2`` at ground level (m^(-2/3))
@@ -224,7 +251,9 @@ def hufnagel_valley_cn2_m23(
     Parameters
     ----------
     height_m
-        Height above ground level, m. Any shape; scalars are accepted.
+        Height above mean sea level, m (the module docstring says why
+        the recommendation calls this "above ground level"). Any shape;
+        scalars are accepted.
     rms_wind_speed_m_s
         The r.m.s. wind speed from :func:`bufton_rms_wind_speed_m_s`, m/s.
     ground_cn2_m23
@@ -267,14 +296,14 @@ def hufnagel_valley_cn2_m23(
         raise DomainError("height_m contains non-finite values.")
     if np.any(heights < 0.0):
         raise DomainError(
-            "height_m must be a height above ground level, so it cannot be negative. "
+            "height_m must be a height above mean sea level, so it cannot be negative. "
             f"Minimum given: {float(np.min(heights))} m."
         )
     if np.any(heights > _MAX_MODEL_HEIGHT_M):
         raise DomainError(
             "height_m above the Karman line (100 km) is outside any atmosphere; "
             f"maximum given: {float(np.max(heights))} m. Note heights here are in "
-            "metres above ground level, not kilometres — pass km_to_m(...) if that "
+            "metres above mean sea level, not kilometres — pass km_to_m(...) if that "
             "was the mistake."
         )
     wind = float(rms_wind_speed_m_s)
@@ -352,7 +381,7 @@ def itu_layer_heights_m() -> FloatArray:
     Returns
     -------
     FloatArray
-        Mid-point heights above ground level in metres, shape ``(139,)``.
+        Mid-point heights above mean sea level in metres, shape ``(139,)``.
 
     Examples
     --------
@@ -402,8 +431,9 @@ def integrated_cn2_m13(
     ground_cn2_m23
         Nominal ``C_n^2`` at ground level, m^(-2/3).
     station_height_m
-        Height of the ground station above ground level, m. Layers below it do
-        not contribute.
+        Altitude of the ground station above mean sea level, m — P.1621-2's
+        ``h0``, whose 0-5 km validity range settles the reading (module
+        docstring). Layers below it do not contribute.
 
     Returns
     -------
@@ -442,7 +472,7 @@ def integrated_cn2_m13(
         raise DomainError(
             f"station_height_m of {station} m is at or above the {ITU_TURBULENCE_TOP_HEIGHT_M} m "
             "top of the turbulent atmosphere, leaving no path to integrate. Heights here are "
-            "metres above ground level, not kilometres."
+            "metres above mean sea level, not kilometres."
         )
 
     heights = itu_layer_heights_m()

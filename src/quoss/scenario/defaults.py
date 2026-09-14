@@ -206,8 +206,20 @@ def reference_castelldefels() -> Scenario:
     On this link ``docs/adr/0011-the-block-is-the-pass.md`` measured four
     passes, 432 985 finite bits against 3.78 Mbit asymptotic
     (``tests/system/test_key_volume.py::TestWhatTheAsymptoticRateOverstates``).
+
+    **Run through the engine this scenario gives 433 442 finite bits, not
+    432 985, and the 457-bit difference is one term.** The stage-3 fixture
+    leaves the turbulence profile at its default starting height of 0 m while
+    placing the station at 30 m for the geometry; :attr:`StationSpec.altitude_m`
+    is both, so the engine starts the profile at 30 m and there is that much
+    less air above the telescope. Both figures are reproduced to the bit, from
+    one hand-wired chain with only that argument changed, by
+    ``tests/e2e/test_reference_scenarios.py``; see
+    ``docs/adr/0016-the-engine-adds-nothing-and-one-altitude.md`` for why the
+    engine's is the one to report.
     ``tests/scenario/test_defaults.py::TestReferenceCastelldefels`` asserts the
-    conversion reproduces every physics input of ``tests/system/reference.py``.
+    conversion reproduces the physics inputs of ``tests/system/reference.py``
+    field by field, passing that one height explicitly on the hand-built side.
 
     Returns
     -------

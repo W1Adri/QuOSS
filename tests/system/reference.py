@@ -55,7 +55,20 @@ from quoss.system.passes import PassSamples, PassTable, find_passes
 STATION_LATITUDE_RAD = float(np.deg2rad(41.2750))
 STATION_LONGITUDE_RAD = float(np.deg2rad(1.9875))
 STATION_ALTITUDE_KM = 0.030
-"""CTTC's own station at Castelldefels, the same one `orbits/geometry.py` uses."""
+"""CTTC's own station at Castelldefels, the same one `orbits/geometry.py` uses.
+
+**This altitude reaches the geometry and not the turbulence, and that is the one
+place this fixture differs from the scenario of the same name.** `conditions_at`
+below leaves every turbulence function at its default starting height of 0 m,
+while `StationSpec.altitude_m` — which the engine wires — is both where the
+station is and where the profile starts. So every finite-key number measured on
+this fixture is 0.106 % below what `run(reference_castelldefels())` reports:
+432 985 bits a day against 433 442. It is not a defect on either side, it is two
+links; `tests/e2e/test_reference_scenarios.py` reproduces both to the bit from
+one hand-wired chain with only that argument changed, and
+`docs/adr/0016-the-engine-adds-nothing-and-one-altitude.md` says why the
+engine's is the one to report and why these are not re-measured.
+"""
 
 ORBIT_ALTITUDE_KM = 700.0
 ORBIT_ECCENTRICITY = 0.001

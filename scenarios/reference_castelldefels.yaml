@@ -1,8 +1,12 @@
 # QuOSS reference scenario. Must equal `quoss.scenario.defaults.reference_castelldefels()`
-# field for field (asserted by tests/scenario/test_scenario_files.py), and converts into
-# exactly the physics inputs of tests/system/reference.py — the link on which
-# docs/adr/0011-the-block-is-the-pass.md measured 4 passes, 432 985 finite bits and
-# 3.78 Mbit asymptotic per UTC day.
+# field for field (asserted by tests/scenario/test_scenario_files.py). It is the link on
+# which docs/adr/0011-the-block-is-the-pass.md measured 4 passes, 432 985 finite bits and
+# 3.78 Mbit asymptotic per UTC day — with ONE input different, and it is worth 457 bits:
+# the stage-3 fixture (tests/system/reference.py) starts the turbulence profile at 0 m
+# while placing the station at 30 m, and `altitude_m` below is both, so run through the
+# engine this file gives 433 442 finite bits. Both numbers are reproduced to the bit by
+# tests/e2e/test_reference_scenarios.py; docs/adr/0016-the-engine-adds-nothing-and-one-altitude.md
+# says why the engine's is the one to report.
 #
 # Units are the user's (deg, km, m, nm, urad, ns, ps, dB, cps); the schema converts once.
 # Every value below is either a published constant (its NTANOS_* name is given) or a
@@ -30,7 +34,7 @@ stations:
   - name: castelldefels
     latitude_deg: 41.275        # CTTC, Castelldefels; the coordinates orbits/geometry.py uses
     longitude_deg: 1.9875
-    altitude_m: 30.0
+    altitude_m: 30.0          # above the WGS-84 ellipsoid; ALSO where the turbulence starts
     receive_aperture_m: 0.75    # the smallest Ntanos et al. 2021 telescope (Cholomondas)
     ground_cn2_m23: 1.7e-14     # ITU-R P.1621-2 Eq. (6) reference site
     rms_wind_speed_m_s: 21.0    # HV 5/7 r.m.s. wind, the turbulence functions' default
