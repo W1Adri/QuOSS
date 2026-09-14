@@ -5647,3 +5647,57 @@ mueven ninguna línea ejecutable.
 `src/quoss/validation/__init__.py`, `scenarios/reference_castelldefels.yaml`,
 `tests/system/reference.py`, `tests/scenario/test_defaults.py`,
 `notes/ROADMAP.md`, `notes/INCONSISTENCIAS.md`.
+
+---
+
+## 33. El README decía «Etapa 3 en curso» con las etapas 0-6 en el árbol
+
+Una entrada corta y sin física: el bloque de estado del README describía un
+proyecto que ya no era este.
+
+**Qué decía:** «Estado: **Etapa 3 — `system/`**, en curso», con `passes.py` y
+`key_volume.py` como lo último y `monte_carlo.py` como lo siguiente.
+
+**Qué hay:** las etapas **0 a 6 cerradas** —`core/`, `orbits/`, `channel/`,
+`qkd/`, `system/` entero, `scenario/`, `engine/` e `io/`—, más `viz/` y
+`validation/` a medias. `run(scenario) → result` funciona de punta a punta.
+
+**Por qué es un defecto y no una nota desactualizada.** El bloque de estado es lo
+primero que lee cualquiera que evalúe el proyecto, y **subestimarse tiene el mismo
+coste que exagerar**: un lector que cree que falta desde la etapa 3 no busca el
+motor, no encuentra `scenarios/`, y concluye que no puede correr nada. La regla
+del proyecto —«prohibido degradar en silencio»— es sobre números, pero un estado
+falso es la misma clase de afirmación sin comprobar.
+
+### Lo que el bloque nuevo dice, y por qué en ese orden
+
+1. **Una tabla de tres filas: cerrado, a medias, no existe.** Con los `.gitkeep`
+   nombrados, porque un directorio vacío en el árbol parece código.
+2. **«Lo que se puede afirmar hoy», separado de «lo que está implementado».** Son
+   cosas distintas y el proyecto entero descansa en esa distinción: se puede
+   afirmar la clave por pase con la cota finita aplicada al bloque correcto
+   (ADR 0011) y que el motor no añade nada al orquestarla (ADR 0016); **no** se
+   puede afirmar que los números estén validados contra literatura, porque eso es
+   la etapa 8 y es justo la que está a medias.
+3. **Las dos cifras del día de referencia, las dos, con su causa.** 433 442 por
+   `run()` y 432 985 por el *fixture* de la etapa 3; ver §32.
+4. **El hueco que hace de todo lo anterior una cota superior.** `zenith_transmittance`
+   vale `1.0` en el escenario de referencia porque ninguna fuente abierta publica
+   la extinción (hueco 14 del ADR 0009). Sale en el README y no solo en el ADR,
+   porque es la advertencia que tiene que viajar **con** la cifra.
+5. **Un ejemplo de uso que se ejecuta**, en vez del `quoss.__version__` que había.
+   Los tres números que imprime están comprobados corriéndolo.
+
+### El defecto que apareció al escribirlo
+
+`tests/viz/test_plots.py` importa `matplotlib` en la cabecera del módulo, así que
+**sin el extra `viz` la recogida de `tests/viz/` falla en vez de saltarse**. El
+paquete sí degrada bien —`quoss.viz` levanta `ConfigurationError` diciendo qué
+instalar—; es el test el que no. Es el mismo defecto que el de `pyarrow` en
+`tests/io/test_export.py`, con la misma forma: **la guarda de dependencia tiene
+que estar aguas arriba de lo que la necesita.** Queda escrito en el README como
+pendiente en vez de arreglado aquí, porque esta entrada es de documentación.
+
+### Ficheros
+
+`README.md`.
