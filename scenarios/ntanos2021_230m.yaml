@@ -1,0 +1,95 @@
+# Ntanos et al. 2021, Photonics 8(12):544 — the Helmos (2.3 m) downlink, their best case
+# (§4.2.1: "the total link loss for a 600 km link distance can get as low as 20 dB",
+# which docs/adr/0009-citation-policy.md gap 14 records as compatible, not reproduced).
+# Must equal `quoss.scenario.defaults.ntanos_2021(2.3)` (tests/scenario/test_scenario_files.py).
+# See ntanos2021_075m.yaml for what is the paper's and what is a QuOSS choice.
+#
+# caveat — the paper prints "longitude: 37.9855, latitude: 22.1984" for Helmos; the
+#          labels are swapped (Helmos is in the Peloponnese, 38.0 N 22.2 E).
+
+name: ntanos2021_helmos
+description: 'Ntanos et al. 2021 (Photonics 8(12):544) downlink to Helmos (2.3 m):
+  600 km orbit at the printed 97.4 deg inclination, §4.1 transmitter, receiver and
+  protocol, study-night radiance, 20 deg floor. RAAN, anomaly, epoch and circular shape
+  are QuOSS choices; the paper does not state them.'
+schema_version: 1
+
+orbit:
+  kepler:
+    altitude_km: 600.0          # NTANOS_ORBIT_HEIGHT_KM
+    eccentricity: 0.0           # choice
+    inclination_deg: 97.4       # §4.3 as printed
+    sun_synchronous: false
+    raan_deg: 0.0               # choice
+    argp_deg: 0.0
+    true_anomaly_deg: 0.0
+    method: two_body
+  tle: null
+
+stations:
+  - name: helmos
+    latitude_deg: 37.9855       # §2, labels corrected
+    longitude_deg: 22.1984
+    altitude_m: 2340.0          # §2
+    receive_aperture_m: 2.3     # §4.1, NTANOS_OGS_APERTURES_M[2]
+    ground_cn2_m23: 1.7e-14
+    rms_wind_speed_m_s: 21.0
+    cloud_fraction: null
+
+transmitter:
+  wavelength_nm: 1550.0
+  aperture_m: 0.15
+  truncation_ratio: 1.0
+  pointing_jitter_urad: 0.75
+  pulse_rate_hz: 100000000.0
+
+channel:
+  zenith_transmittance: 1.0
+  static_loss_db: 0.0
+  outage_probability: 0.01
+  fade_combination: exact
+
+receiver:
+  detector_efficiency: 0.85
+  optical_loss_db: 5.65
+  dark_count_rate_cps: 300.0
+  detector_count: 2
+  afterpulse_probability: 0.0
+  dead_time_ns: 30.0
+  gate_ns: 1.0
+  timing_jitter_fwhm_ps: 50.0
+  field_of_view_urad: 100.0
+  filter_bandwidth_nm: 0.2
+
+background:
+  sky_radiance_w_m2_um_sr: 0.00015
+  condition: null
+
+protocol:
+  name: bb84-decoy
+  signal_intensity: 0.56
+  decoy_intensity: 0.11
+  signal_probability: 0.7619047619047619
+  decoy_probability: 0.047619047619047616
+  vacuum_probability: 0.19047619047619047
+  error_correction_efficiency: 1.22
+  misalignment_error: 0.01
+  key_basis_probability: 0.5
+
+security:
+  correctness: 1.0e-10
+  secrecy: 1.0e-10
+  compose_daily: true
+
+time:
+  epoch_utc: '2025-01-01T00:00:00Z'
+  duration_s: 86400.0
+  step_s: 1.0
+
+passes:
+  minimum_elevation_deg: 20.0
+  minimum_duration_s: 0.0
+
+monte_carlo: null
+multi_station: null
+relay: null

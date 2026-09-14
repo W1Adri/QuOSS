@@ -40,12 +40,24 @@ passes
 key_volume
     The integral over a pass: bits per pass and bits per day, with the
     finite-key bound applied to the block the pass actually is.
-
-Not written yet, in roadmap order (``notes/ROADMAP.md`` stage 3):
-``monte_carlo.py`` (how much the answer scatters between passes, which is the
-question :func:`~quoss.qkd.finite_key.expected_block_counts` explicitly does
-not answer), ``correlated_fading.py``, ``pcflos.py``, ``multi_ogs.py``,
-``relay.py``.
+correlated_fading
+    Scintillation and pointing fades as Ornstein-Uhlenbeck processes in time,
+    averaged over each sample's dwell, and the durations of the fades they
+    produce.
+monte_carlo
+    Ensembles of those fades pushed through the same counts model and the same
+    finite bound: P5/P50/P95 and outage per pass and per day, which is the
+    question :func:`~quoss.qkd.finite_key.expected_block_counts` explicitly does
+    not answer.
+pcflos
+    Cloud-free line-of-sight probability: whether a pass happens at all, and
+    site diversity between stations.
+multi_ogs
+    Several ground stations: independent harvests summed, or one satellite
+    terminal scheduled exactly over conflicting pass windows.
+relay
+    The satellite as a trusted node: key stored on board until a pass over the
+    other station can pair it, with latency and the key left stranded.
 
 No re-exports, deliberately — see :mod:`quoss.core` for the reasoning. Import
 from the module that defines the name.

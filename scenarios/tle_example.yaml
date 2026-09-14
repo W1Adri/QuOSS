@@ -1,0 +1,115 @@
+# A TLE-driven scenario: the ISS over Castelldefels for one day, with every optional
+# stage switched on, so that the file also documents the full schema.
+#
+# The TLE is a real element set, fetched from
+#   https://celestrak.org/NORAD/elements/gp.php?CATNR=25544&FORMAT=TLE
+# on 2026-09-13 (TLE epoch 26256.17555434 = 2026-09-13T04:12:47.9Z). It passes
+# `quoss.orbits.tle.parse_tle`'s checksum (tests/scenario/test_scenario_files.py).
+# It is a historical snapshot and is not refreshed: this file must load offline, and an
+# SGP4 fit is only accurate within days of its epoch, so the time window below starts
+# at that epoch.
+#
+# The ISS is not a QKD satellite; it is the best-tracked object in orbit, which is what
+# an example of the TLE path needs. Everything below the orbit is the reference receiver.
+
+name: tle_example_iss
+description: 'ISS (ZARYA) over Castelldefels for one day from the TLE epoch, SGP4
+  propagated, with Monte Carlo, multi-station and relay options present so the whole
+  schema is exercised. Illustrative, not a validation case.'
+schema_version: 1
+
+orbit:
+  kepler: null
+  tle:
+    name: ISS (ZARYA)
+    line1: '1 25544U 98067A   26256.17555434  .00004898  00000+0  96695-4 0  9992'
+    line2: '2 25544  51.6307 224.6171 0004917 134.6730 225.4659 15.49096932585393'
+
+stations:
+  - name: castelldefels
+    latitude_deg: 41.275
+    longitude_deg: 1.9875
+    altitude_m: 30.0
+    receive_aperture_m: 0.75
+    ground_cn2_m23: 1.7e-14
+    rms_wind_speed_m_s: 21.0
+    cloud_fraction: 0.35        # illustrative mean cloud cover for the pCFLOS model
+  - name: skinakas               # a second station so multi_station and relay have work
+    latitude_deg: 35.2118
+    longitude_deg: 24.8981
+    altitude_m: 1750.0
+    receive_aperture_m: 1.3
+    ground_cn2_m23: 1.7e-14
+    rms_wind_speed_m_s: 21.0
+    cloud_fraction: 0.25
+
+transmitter:
+  wavelength_nm: 1550.0
+  aperture_m: 0.15
+  truncation_ratio: 1.0
+  pointing_jitter_urad: 0.75
+  pulse_rate_hz: 100000000.0
+
+channel:
+  zenith_transmittance: 0.812   # the L_zen that closes Ntanos et al.'s 20 dB budget (ADR 0009
+                                # gap 14) — a plausible clear-sky value, not a published one
+  static_loss_db: 0.3           # NTANOS_POLARISATION_LOSS_DB, carried as a static term
+  outage_probability: 0.01
+  fade_combination: additive    # the paper's convention: sum of the two marginal quantiles
+
+receiver:
+  detector_efficiency: 0.85
+  optical_loss_db: 5.65
+  dark_count_rate_cps: 300.0
+  detector_count: 2
+  afterpulse_probability: 0.0
+  dead_time_ns: 30.0
+  gate_ns: 1.0
+  timing_jitter_fwhm_ps: 50.0
+  field_of_view_urad: 100.0
+  filter_bandwidth_nm: 0.2
+
+background:
+  sky_radiance_w_m2_um_sr: 1.5e-05  # NTANOS_MOONLESS_NIGHT_RADIANCE_W_M2_UM_SR
+  condition: null
+
+protocol:
+  name: bb84-decoy
+  signal_intensity: 0.56
+  decoy_intensity: 0.11
+  signal_probability: 0.7619047619047619
+  decoy_probability: 0.047619047619047616
+  vacuum_probability: 0.19047619047619047
+  error_correction_efficiency: 1.22
+  misalignment_error: 0.01
+  key_basis_probability: 0.5
+
+security:
+  correctness: 1.0e-10
+  secrecy: 1.0e-10
+  compose_daily: true
+
+time:
+  epoch_utc: '2026-09-13T04:12:48Z'   # the TLE epoch, rounded to the second
+  duration_s: 86400.0
+  step_s: 1.0
+
+passes:
+  minimum_elevation_deg: 10.0
+  minimum_duration_s: 60.0      # drop grazing passes shorter than a minute
+
+monte_carlo:
+  realisations: 200
+  seed: 20260731                # the suite's seed; null would draw one and record it
+  sample_counts: true
+  scintillation_correlation_time_s: 0.01
+  pointing_correlation_time_s: 0.1
+  quantiles: [0.05, 0.5, 0.95]
+
+multi_station:
+  policy: best_available        # one satellite terminal: overlapping passes conflict
+  cloud_decorrelation_length_km: 500.0
+
+relay:
+  pairs:
+    - [castelldefels, skinakas]

@@ -167,3 +167,25 @@ class TestStatisticalSanity:
         x = RandomSource.from_seed(2024).generator.uniform(size=100_000)
         assert 0.0 <= x.min() < 0.001
         assert 0.999 < x.max() <= 1.0
+
+
+class TestTheSeedSequenceIsExposedForSpawningOnly:
+    def test_it_is_the_sequence_the_children_come_from(self) -> None:
+        """The one accessor that is not a generator, and the reason it exists.
+
+        :meth:`RandomSource.spawn` is the supported way to get independent
+        streams. The sequence is exposed because a caller integrating with code
+        that spawns its own children — a worker pool, another library's API —
+        needs the object itself; it is not a second way to draw numbers, and
+        nothing in this project draws from it.
+        """
+        source = RandomSource.from_seed(2024)
+        assert isinstance(source.seed_sequence, np.random.SeedSequence)
+        assert source.seed_sequence.entropy == 2024
+
+        # A child keeps the parent's entropy and extends its spawn key, which is
+        # what makes the children independent of each other and reproducible from
+        # the parent's seed alone.
+        (child,) = source.spawn(1)
+        assert child.seed_sequence.entropy == source.seed_sequence.entropy
+        assert child.seed_sequence.spawn_key == (*source.seed_sequence.spawn_key, 0)
