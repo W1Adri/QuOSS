@@ -1,0 +1,96 @@
+# QuOSS reference scenario. Must equal `quoss.scenario.defaults.reference_castelldefels()`
+# field for field (asserted by tests/scenario/test_scenario_files.py), and converts into
+# exactly the physics inputs of tests/system/reference.py — the link on which
+# docs/adr/0011-the-block-is-the-pass.md measured 4 passes, 432 985 finite bits and
+# 3.78 Mbit asymptotic per UTC day.
+#
+# Units are the user's (deg, km, m, nm, urad, ns, ps, dB, cps); the schema converts once.
+# Every value below is either a published constant (its NTANOS_* name is given) or a
+# project choice, and says which.
+
+name: reference_castelldefels
+description: 'QuOSS reference downlink: Castelldefels 0.75 m, 700 km SSO, Ntanos et
+  al. 2021 receiver and protocol, clear moonless study night, 10 deg mask, one UTC
+  day at 1 s.'
+schema_version: 1
+
+orbit:
+  kepler:
+    altitude_km: 700.0          # project choice; semi-major axis = 6378.137 + 700 km
+    eccentricity: 0.001         # nearly circular; nonzero so the argp is defined
+    inclination_deg: null       # derived: sun_synchronous fixes it (98.19 deg here)
+    sun_synchronous: true
+    raan_deg: 30.0              # project choice; fixes which passes the day contains
+    argp_deg: 0.0
+    true_anomaly_deg: 0.0       # at the ascending node at the epoch
+    method: two_body            # unperturbed ellipse, as tests/system/reference.py
+  tle: null
+
+stations:
+  - name: castelldefels
+    latitude_deg: 41.275        # CTTC, Castelldefels; the coordinates orbits/geometry.py uses
+    longitude_deg: 1.9875
+    altitude_m: 30.0
+    receive_aperture_m: 0.75    # the smallest Ntanos et al. 2021 telescope (Cholomondas)
+    ground_cn2_m23: 1.7e-14     # ITU-R P.1621-2 Eq. (6) reference site
+    rms_wind_speed_m_s: 21.0    # HV 5/7 r.m.s. wind, the turbulence functions' default
+    cloud_fraction: null        # clouds not modelled
+
+transmitter:
+  wavelength_nm: 1550.0
+  aperture_m: 0.15              # NTANOS_TRANSMIT_APERTURE_M (§4.1)
+  truncation_ratio: 1.0         # aperture radius / beam waist; the beam module's convention
+  pointing_jitter_urad: 0.75    # NTANOS_POINTING_JITTER_RAD (§4.1), per axis
+  pulse_rate_hz: 100000000.0    # NTANOS_SOURCE_PULSE_RATE_HZ (§4.2), 100 MHz
+
+channel:
+  zenith_transmittance: 1.0     # REQUIRED, no default. 1.0 declares "no extinction modelled"
+                                # (ADR 0009 gap 14: no openable source publishes the value)
+  static_loss_db: 0.0
+  outage_probability: 0.01      # NTANOS_OUTAGE_PROBABILITY (§4.1)
+  fade_combination: exact       # joint quantile of the two fades; 'additive' reproduces the paper's sum
+
+receiver:
+  detector_efficiency: 0.85     # NTANOS_SNSPD_EFFICIENCY
+  optical_loss_db: 5.65         # NTANOS_FILTER_INSERTION_LOSS_DB (3.0) + NTANOS_RECEIVER_LOSS_DB (2.65)
+  dark_count_rate_cps: 300.0    # NTANOS_SNSPD_DARK_COUNT_RATE_CPS, per detector
+  detector_count: 2
+  afterpulse_probability: 0.0   # NTANOS_SNSPD_AFTERPULSE_PROBABILITY ("no after-pulsing effect")
+  dead_time_ns: 30.0            # NTANOS_SNSPD_DEAD_TIME_S
+  gate_ns: 1.0                  # NTANOS_SNSPD_GATE_DURATION_S
+  timing_jitter_fwhm_ps: 50.0   # NTANOS_SNSPD_TIMING_JITTER_FWHM_S
+  field_of_view_urad: 100.0     # NTANOS_RECEIVER_FIELD_OF_VIEW_RAD, full angle
+  filter_bandwidth_nm: 0.2      # NTANOS_FILTER_BANDWIDTH_M
+
+background:
+  sky_radiance_w_m2_um_sr: 0.00015  # NTANOS_STUDY_NIGHT_RADIANCE_W_M2_UM_SR (§4.2.2)
+  condition: null
+
+protocol:
+  name: bb84-decoy
+  signal_intensity: 0.56        # NTANOS_SIGNAL_INTENSITY (mu)
+  decoy_intensity: 0.11         # NTANOS_DECOY_INTENSITY (nu)
+  signal_probability: 0.7619047619047619    # 16/21 } NTANOS_STATE_COUNTS = (16, 1, 4);
+  decoy_probability: 0.047619047619047616   #  1/21 } written as the doubles the builder
+  vacuum_probability: 0.19047619047619047   #  4/21 } produces, so the file equals it exactly
+  error_correction_efficiency: 1.22         # NTANOS_ERROR_CORRECTION_EFFICIENCY (CASCADE)
+  misalignment_error: 0.01      # project choice, tests/system/reference.py
+  key_basis_probability: 0.5    # symmetric BB84
+
+security:
+  correctness: 1.0e-10
+  secrecy: 1.0e-10
+  compose_daily: true           # the day's key is reported at n * eps (ADR 0011 §6)
+
+time:
+  epoch_utc: '2025-01-01T00:00:00Z'   # JD 2460676.5; must be timezone-aware UTC
+  duration_s: 86400.0                 # one UTC day
+  step_s: 1.0
+
+passes:
+  minimum_elevation_deg: 10.0   # REQUIRED, no default: interior optimum near 8 deg (ADR 0011 §5)
+  minimum_duration_s: 0.0
+
+monte_carlo: null
+multi_station: null
+relay: null

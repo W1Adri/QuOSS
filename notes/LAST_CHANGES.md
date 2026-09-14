@@ -4669,3 +4669,757 @@ fuera, en el docstring y en el [ADR 0011](../docs/adr/0011-the-block-is-the-pass
 `src/quoss/system/key_volume.py`, 227 sentencias, **100 % de cobertura de líneas y
 de ramas**; `tests/system/test_key_volume.py`, 80 tests. El ADR de la etapa es el
 [0011](../docs/adr/0011-the-block-is-the-pass.md), y cubre los dos módulos.
+
+---
+
+## 28. `system/correlated_fading.py` y `system/monte_carlo.py` — el desvanecimiento como proceso, y la clave de un pase como distribución
+
+### Qué hacen estos módulos, para quien llegue nuevo
+
+§27 dejó dicho que `pass_key_volume` devuelve la clave de un pase **típico**,
+sin P5/P95, y que todas sus cifras suponen que la estadística de desvanecimiento
+de un pase es la marginal. Estos dos módulos cierran las dos reservas, y al
+cerrarlas resulta que la cifra de §27 no es «típica» en el sentido que uno
+esperaría.
+
+Un **desvanecimiento** («fade») es un tramo de tiempo en el que el centelleo
+—el titilar de la irradiancia al cruzar el aire turbulento— o el jitter de
+apuntado —el terminal temblando alrededor del telescopio— han bajado la
+potencia recogida por debajo del diseño. `channel/link_budget.py` los trata
+como **marginales**: qué fracción del tiempo está el enlace peor que un nivel.
+Eso no dice **cuánto dura** un desvanecimiento, y para un bloque de cuentas la
+duración lo es todo: mil parpadeos de un microsegundo y un apagón de diez
+segundos tienen la misma marginal y consecuencias opuestas.
+
+`correlated_fading.py` convierte cada desvanecimiento en un **proceso en el
+tiempo**: un motor gaussiano de Ornstein-Uhlenbeck —el proceso estacionario con
+memoria más simple, correlación `exp(−|Δt|/τ)`— en la variable donde el
+desvanecimiento es gaussiano (la log-irradiancia para el centelleo; las dos
+componentes del jitter para el apuntado), pasado por las mismas leyes que
+`turbulence.py` y `pointing.py` ya usan. `monte_carlo.py` multiplica cada
+realización de ese factor en el enlace, pasa todas por el mismo modelo de
+cuentas y la misma cota finita de §25 y §27, y devuelve **dónde están el P5, el
+P50 y el P95** de la clave por pase y por día, y con qué frecuencia un pase no
+da nada.
+
+### Qué número reportaba el proyecto, y qué número era
+
+`pass_key_volume` alimenta la cota con `LossBudget.transmittance`, que **lleva
+dentro el margen de desvanecimiento** `fade_db`: la pérdida que apuntado y
+centelleo solo superan el 1 % del tiempo. Así que los 432 985 bits/día de §27
+son la clave de un pase en el que el enlace está en su cuantil del 1 %
+**durante todo el pase**. Ni la media sobre el desvanecimiento ni ningún
+cuantil de la distribución de claves: una cifra de diseño.
+
+Medido (`TestWhatTheDesignNumberUnderReports`): el mismo cálculo determinista a
+la transmitancia **media** —margen devuelto, apuntado en su media
+`γ²/(γ²+1)`— da **758 707 bits**, ×1.752. La cifra de diseño **infrarreporta el
+día típico un 43 %**. Y los pases 2 y 4 siguen muertos, así que el hallazgo del
+ADR 0011 no era un artefacto del margen — pero **el mecanismo cambia**: a la
+transmitancia de diseño mueren en el tope del error de fase (`φ` = 0.459 y
+0.5); a la media `φ` es 0.197 y 0.315 y los mata que la corrección de errores
+adelanta al término de un fotón por 2.2 y 8.7 veces. La mejor de mil
+realizaciones llega al 58 % y al 20 % de su propia fuga.
+
+### El conjunto de referencia
+
+Día de referencia de §26, `τ` = 2 ms (centelleo) y 20 ms (apuntado), 1 000
+realizaciones, cuentas sorteadas de Poisson, semilla 20260913
+(`test_the_headline_quantiles`):
+
+| | P5 | P50 | P95 |
+|---|---|---|---|
+| Pase 1 | 329 229 | 345 658 | 361 865 |
+| Pase 3 | 395 324 | 412 512 | 429 023 |
+| **Día** | **735 329** | **758 314** | **782 391** |
+
+Los pases 2 y 4 dan cero en las mil realizaciones. El P5 de la suma (735 329)
+está por encima de la suma de los P5 (724 553): los cuantiles del día son
+cuantiles de la suma por realización, no sumas de cuantiles. El `eps` del día es
+`4e-10`, como en §27.
+
+**Cuántas realizaciones**, por un criterio y no por gusto: el error estándar
+del P5 es `sqrt(p(1−p)/R)/f(q_p)`; a 1 000 realizaciones el *bootstrap* da el
+**0.22 % y el 0.16 %** de la mediana en los pases vivos, y la fórmula normal
+invertida (`realisations_for_quantile`) dice que 37 bastaban para un 1 %, de
+acuerdo con el bootstrap dentro del 25 %. Tiempo: **0.86 s** por día a mil
+realizaciones (`TestRuntime`).
+
+### El tiempo de correlación es un parámetro, y por qué
+
+Ninguna fuente abierta lo publica con precisión de modelo. La hipótesis de
+Taylor da un orden de magnitud —`τ = ℓ/v`—, y para un enlace descendente LEO la
+velocidad no es el viento sino el **barrido** de la línea de visión a través de
+la capa turbulenta. Medido en el pase 3 (`TestChoosingACorrelationTime`): a la
+altura de escala de la UIT, 7 700 m, la línea de visión barre a **62–85 m/s**
+contra 2.3 m/s de viento; con una anchura de Fresnel de 0.109 m, `τ` cae en
+**1.3–1.8 ms**; con el viento solo diría 47 ms. La anchura `ℓ` es un hueco
+declarado, así que `FadingParameters` toma los dos tiempos sin defecto y
+`taylor_correlation_time_s` / `slew_transverse_speed_m_s` /
+`line_of_sight_angular_rate_rad_s` dan la derivación.
+
+### La decisión técnica: promediar sobre la permanencia, muestreando la integral exacta
+
+Milisegundos de `τ` y una rejilla de 1 s son mil desvanecimientos por muestra.
+Los pulsos de la muestra ven el **promedio**, y el modelo de cuentas es lineal
+en la transmitancia hasta `ημ < 5e-4`. Un sorteo instantáneo por muestra
+sobreestimaría la fluctuación en `1/w`,
+`w(T/τ) = 2(τ/T)²(T/τ − 1 + e^{−T/τ})`: 500 en varianza para 1 s y 1 ms.
+Medido en el pase 1 (`TestWhatCorrelationChangesOnTheGrid`): el sorteo
+instantáneo sobreestima la desviación del recuento agrupado entre 10 y 22
+veces, y la fluctuación real del recuento es menor que el 0.2 %.
+
+No se sub-muestrea (7·10⁹ sorteos por día): `sample_fade_factors` muestrea la
+**integral** del motor sobre cada ventana exactamente, junto con su extremo (par
+gaussiano con covarianzas cerradas), evalúa la no linealidad sobre la media
+estandarizada y encoge hacia la media marginal por `sqrt(w)` —a `τ` para el
+centelleo y a `τ/2` para el apuntado, cuyo factor va con el cuadrado de sus
+motores—. Contra fuerza bruta en rejilla fina (`TestTheDwellAverage`, `T/τ` =
+0.1, 1, 10): varianza por ventana dentro del 1.5 %, varianza a nivel de pase
+del producto dentro del 1.5 %, y la covarianza entre ventanas del apuntado un
+5 % baja a `T = τ`, acotada y dicha.
+
+### El hallazgo, sin adorno
+
+Barrido de `τ` con las cuentas en su esperanza (`TestWhatCorrelationChanges`):
+
+| `τ` | Pase 1, P5–P95 (%) | Pase 3 (%) | Día (%) |
+|---|---|---|---|
+| 1 ms | 0.11 | 0.09 | 0.07 |
+| 10 ms | 0.33 | 0.27 | 0.22 |
+| 100 ms | 1.04 | 0.89 | 0.68 |
+| 1 s | 3.6 | 3.0 | 2.2 |
+| 10 s | 10.9 | 9.9 | 7.4 |
+| 100 s | 30.4 | 28.8 | 20.0 |
+
+Cada década ensancha `sqrt(10)`; la banda cruza el 1 % **entre 10 y 100 ms**,
+dos órdenes de magnitud por encima de la estimación física; la mediana no se
+mueve. **Y a la `τ` física no es el desvanecimiento lo que fija la dispersión:
+es contar.** Cuentas de Poisson sin desvanecimiento: **9.0 %** de banda en el
+pase 1; con el desvanecimiento encima, 9.4 %. Noventa veces más, y no de los
+millones de detecciones (0.03 % de dispersión) sino de las cuentas pequeñas de
+señuelo y vacío desde las que la cota infiere el rendimiento de un fotón.
+
+Lo que el desvanecimiento correlacionado **sí** cambia: los cuantiles bajos en
+cuanto `τ` se acerca a la permanencia, y la **duración de los
+desvanecimientos**. Para un proceso de Ornstein-Uhlenbeck la tasa de cruces en
+tiempo continuo (Rice) **diverge** —la trayectoria no es diferenciable—, así que
+`fade_duration_statistics` reporta cruces *por paso* con su paso, comprobados
+contra la binormal exacta de SciPy (`TestFadeDurations`). Medido con el
+apuntado bajo 0.85 y `τ_p` = 0.2 s: **47, 22 y 14 ms** de duración media a pasos
+de 20, 5 y 2 ms (2.3, 4.5 y 7.0 pasos) contra 1.04 pasos i.i.d. a cualquier
+paso; los desvanecimientos por segundo crecen como `Δt^{−1/2}` y la fracción
+de tiempo se queda en el 4.2 % marginal. Las dos cosas afirmadas en el test.
+
+### Reproducibilidad, cuentas y agrupamiento
+
+- Un hijo de `RandomSource` **por pase**; los sorteos van antes de la
+  evaluación por trozos, así que el tamaño del trozo no cambia un bit
+  (`test_the_chunk_size_does_not_change_a_bit`). El proceso se reinicia en cada
+  pase; a `τ` = 1000 s contra 5 363 s de separación el registro avisa
+  (`monte_carlo.passes-not-independent`).
+- Cuentas: Poisson sobre las detecciones agrupadas y binomial sobre los errores
+  —el adelgazamiento exacto—, con `1 − Q` (`Q < 1e-3`) como diferencia con la
+  verdad por puerta. Pulsos no sorteados.
+- Agrupamiento con la misma suma ordenada por índice que `key_volume.py`, y por
+  eso una realización pasada por `pass_key_volume` da **la misma clave bit a
+  bit** (`TestReproducesTheDeterministicVolume`).
+- Registro: `monte_carlo.ensemble-summary` (INFO, con diseño, media y mediana),
+  `monte_carlo.transmittance-clipped` (WARNING), `monte_carlo.passes-not-independent`
+  (WARNING), `monte_carlo.day-composes-blocks` (INFO),
+  `correlated_fading.samples-independent` (WARNING cuando se piden factores
+  instantáneos en una rejilla más gruesa que catorce `τ`).
+
+### Lo que queda fuera
+
+Espectro de centelleo medido (cola `−8/3`, dos parámetros, sin fuente),
+turbulencia no gaussiana, correlación entre pases, nubes, varias estaciones,
+relés. Todo declarado en los docstrings y en el
+[ADR 0012](../docs/adr/0012-correlated-fading-and-monte-carlo.md).
+
+### Estado
+
+`src/quoss/system/correlated_fading.py` (270 sentencias) y
+`src/quoss/system/monte_carlo.py` (356), **100 % de cobertura de líneas y de
+ramas** en los dos; `tests/system/test_correlated_fading.py` y
+`tests/system/test_monte_carlo.py`, 83 tests más 15 doctests, 24 s en total,
+ninguno por encima de 3 s. `tests/system/reference_fading.py` da los tres
+insumos de desvanecimiento en las muestras del enlace de referencia de
+`reference.py`. `ruff`, `ruff format` y `mypy` limpios. El ADR de la etapa es el
+[0012](../docs/adr/0012-correlated-fading-and-monte-carlo.md).
+
+---
+
+## 29. `system/pcflos.py`, `system/multi_ogs.py`, `system/relay.py` — las nubes deciden si el pase existe, un terminal decide a quién sirve, y el satélite guarda la clave hasta que hay con quién emparejarla
+
+### Qué hacen estos tres módulos, para quien llegue nuevo
+
+Hasta la §27 todo el paquete `system/` es la vista de **una** estación: unos
+ángulos de mira, una tabla de pases, un volumen de clave. Una misión tiene
+varias estaciones y un cielo que a veces está nublado, y esas dos cosas
+introducen tres preguntas nuevas que ningún módulo anterior podía contestar:
+
+1. **¿Cuál es la probabilidad de que el pase haya existido?** Una nube no es
+   una atenuación como la atmósfera de `channel/`: un cirro cuesta decenas de
+   decibelios y un cúmulo lo cuesta todo. El modelo honesto es binario —o la
+   línea de vista está libre y el pase existe, o no— y la cantidad que lo
+   describe es la **probabilidad de línea de vista libre de nubes**, pCFLOS.
+   Eso es `pcflos.py`.
+2. **¿Cuánta clave dan varias estaciones juntas?** Hay dos respuestas y son
+   sistemas distintos: si cada estación cosecha su propia clave con el satélite,
+   la del día es la **suma**; si el satélite tiene **un** terminal óptico y dos
+   estaciones lo quieren a la vez, solo un pase de los dos puede ocurrir y la
+   respuesta es la mejor selección de pases **que no se solapan**. Eso es
+   `multi_ogs.py`, y la segunda respuesta es un problema de planificación.
+3. **¿Cómo llega la clave de A a B si A y B nunca ven el mismo satélite a la
+   vez?** El satélite cosecha `K_A` sobre A, `K_B` sobre B, y anuncia por un
+   canal público `K_A ⊕ K_B`; A y B acaban compartiendo `min(|K_A|, |K_B|)`
+   bits. El satélite tiene las dos claves en claro, así que **hay que
+   confiar en él** —de ahí «nodo de confianza»— y la clave espera a bordo
+   hasta que hay con qué emparejarla. Eso es `relay.py`, y es una simulación
+   sobre el tiempo, no una fórmula.
+
+La regla que atraviesa los tres, heredada de la §27 y del ADR 0011: **la
+probabilidad de cielo despejado multiplica una esperanza, nunca una clave**.
+`bits × disponibilidad` es la clave *esperada* sobre el tiempo, un número de
+planificación para una temporada; la cota finita certifica los bits del pase la
+noche que el pase ocurre, y la nube solo decide si ocurre. `multi_ogs.py` lleva
+las dos columnas —certificada y esperada— una al lado de la otra y no sustituye
+una por la otra.
+
+### `pcflos.py`: lo exacto, el hueco, y las tres lecturas de una serie horaria
+
+**Lo exacto.** La entrada es una **fracción de cobertura** `f` —la fracción del
+cielo, vista desde arriba, que tapa la nube; es lo que da un archivo
+meteorológico (el `cloud_cover` de ERA5 vía Open-Meteo, en porcentaje, uno por
+hora) y lo que da una climatología mensual—. Para una línea de vista
+**vertical** la conversión no es un modelo sino una definición: la fracción de
+cobertura es la fracción del área que una vertical atraviesa con nube, así que
+`pCFLOS(cénit) = 1 − f`. `cloud_free_probability` devuelve eso y nada más, y
+rechaza con `DomainError` un 50 que nunca se dividió por 100.
+
+**El hueco, declarado y con la firma en vez de con un comentario.** Un satélite
+no está en el cénit: a 10° la línea recorre `1/sin(10°) = 5.8` veces la
+distancia vertical dentro de una capa de nubes, así que la probabilidad de
+colarse entre las celdas es menor. La medida clásica es la de Lund & Shanklin
+(*J. Appl. Meteorol.* 11:773, 1972, y 12:28, 1973), a partir de fotografías de
+todo el cielo. **Ninguno de los dos papers se pudo abrir** —la editorial
+devuelve 403 y Semantic Scholar 429— y por la política del ADR 0009 no se
+transcribe de memoria ningún número con un número de tabla al lado.
+Consecuencia estructural: **ninguna función del módulo acepta una elevación**,
+y `test_no_function_here_takes_an_elevation` lo aserta por ausencia, el mismo
+control negativo que tiene `channel/background.py` para la radiancia.
+`cloud_free_probability` registra un `WARNING`
+(`pcflos.no-elevation-dependence`) en cada llamada diciendo que devuelve el
+valor cenital y en qué sentido se equivoca: para una capa, una línea oblicua
+solo puede encontrar *más* nube, así que `1 − f` es **cota superior** a
+cualquier elevación y exacta solo en el cénit. Lo que un modelo geométrico
+necesitaría —altura de la base y tamaño de celda— no está en ningún archivo de
+cobertura, y un par adivinado produciría una curva plausible con un error que
+nadie podría acotar.
+
+**Las tres lecturas.** Un archivo es horario y un pase dura diez minutos.
+`pass_availability` interpola la serie **linealmente** sobre la rejilla del pase
+—elección de modelado, registrada en cada llamada como `INFO`
+(`pcflos.pass-availability-rule`) con el paso de la serie— y tiene que decir qué
+valor del interpolante «es» el pase. Hay tres candidatos, todos disponibles vía
+`AvailabilityRule`: la **media ponderada por permanencia** sobre la ventana
+(la fracción esperada de instantes despejados), el valor en la **culminación**,
+y el **mínimo** (lo que necesita un pase si un minuto tapado aborta el bloque).
+Ninguno es «la» disponibilidad: la de verdad —que *todo* el pase esté
+despejado— necesita la correlación espacio-temporal de la nube a diez minutos,
+que un archivo horario no tiene. Lo que sí garantiza la resolución horaria es
+que no pueden diferir mucho, y está **medido**
+(`TestTheThreeReadingsOfAnHourlySeries::test_the_spread_between_readings_is_small_at_hourly_resolution`):
+con un frente sintético que sube de 0.05 a 0.95 en tres horas y baja igual,
+puesto de modo que los pases de la mañana caen en la subida y los de la tarde en
+la bajada, la mayor diferencia entre dos lecturas cualesquiera sobre los cuatro
+pases del día de referencia es **0.023** en probabilidad; el techo *derivado*
+—0.3 por hora por los 562 s del pase más largo— es 0.047. La media y la
+culminación coinciden a 1e-4 (el interpolante es casi lineal a lo largo de un
+pase y la culminación está cerca de su centro); el mínimo queda por debajo la
+pendiente por media ventana. La media es el defecto porque es la única de las
+tres que es una esperanza de algo, y las otras dos viajan en el registro para
+que quien quisiera el mínimo vea lo que le cuesta la elección. La cuadratura es
+la del punto medio de `PassTable.samples()`, que para una función lineal es
+**exacta** en toda celda que no contenga un nudo horario; la media vectorizada
+se comprueba contra un bucle por pase (V3) y el mínimo contra un muestreo denso
+a 0.1 s y contra un nudo colocado a propósito dentro de un pase, invisible desde
+los extremos y la culminación.
+
+**Lo que se niega a hacer:** extrapolar. Una serie que no cubre la ventana de
+un pase es `DomainError`, porque `np.interp` extendería el valor del extremo sin
+decir nada y eso es inventar tiempo. Las dos rejillas —la de la serie y la de
+los pases— pueden tener épocas distintas y se reconcilian por fecha juliana;
+hay un test que desplaza la serie seis horas y obtiene el mismo resultado.
+
+**Diversidad de emplazamiento, con lo que se sabe y lo que no.** Dos estaciones
+suficientemente separadas ven nubes distintas. Si fueran **independientes**,
+`P = 1 − Π(1 − p_i)`, que es **cota superior** (la correlación solo hace más
+probable «las dos tapadas»); con **correlación perfecta**, `max_i p_i`, **cota
+inferior** para cualquier correlación no negativa (la unión contiene a cada
+evento). Entre las dos, la parametrización habitual es `ρ_ij = exp(−d_ij/L)`.
+Para **dos** estaciones eso basta: dos Bernoulli con marginales y correlación
+dados tienen una sola ley conjunta, `P(ambas nubladas) = q₁q₂ + ρ√(p₁q₁p₂q₂)`,
+y `joint_cloud_free_probability` devuelve uno menos eso, exacto — dos
+estaciones con `p = 0.6` a 500 km con `L = 500 km` dan **0.7517**, entre el 0.60
+correlado y el 0.84 independiente (doctest, y
+`TestSiteDiversity::test_the_two_station_law_by_hand` con la fórmula transcrita
+aparte). No toda `ρ` es compatible con todo par de marginales: la cota de
+Fréchet es `√(min(p₁q₂, p₂q₁)/max(p₁q₂, p₂q₁))`, que vale 1 con marginales
+iguales y **0.2182** con 0.9 y 0.3; por encima se lanza `DomainError`, no se
+recorta, porque una correlación recortada es un modelo sustituido sin registro
+(`test_the_feasibility_bound_is_the_frechet_one` comprueba que justo debajo
+pasa y justo encima no). Para **tres o más** estaciones las correlaciones por
+pares **no** determinan la ley conjunta (`2^N − 1` probabilidades libres frente
+a `N(N−1)/2` correlaciones), así que se devuelven las dos cotas, `exact` es
+`None` y hay un `WARNING` (`pcflos.joint-law-not-unique`); una cópula gaussiana
+la rellenaría con una elección concreta y no se hace porque nada verificado
+dice que sea la correcta. `L` **no tiene defecto**: es todo el contenido del
+modelo de correlación y ninguna fuente verificada publica un valor.
+
+**Distancia entre estaciones.** `station_separation_km` es la cuerda entre los
+dos emplazamientos a través de `geodetic_to_itrf` —el mismo elipsoide donde
+viven las estaciones del proyecto— convertida a arco sobre la esfera de radio
+medio WGS-84 `(2a+b)/3 = 6371.0088 km`, derivado de las constantes y no
+tecleado. Contra la haversine como cálculo independiente (V3): un grado sobre
+el ecuador difiere en `f/3` (la cuerda usa `a`, la esfera `R`), y la cota
+general **no es `f` sino `1 − a(1−e²)/R = 0.558 %`** —el radio de curvatura
+meridiano en el ecuador es el más apretado del elipsoide—, alcanzada por un arco
+meridiano infinitesimal y aproximada desde abajo por todo arco finito (0.5582 %
+a 1°, 0.5538 % en el peor de 200 000 pares aleatorios entre 50 y 15 000 km).
+Castelldefels–Calar Alto son **596.0 km** y Castelldefels–OGS de Tenerife
+**2213.8 km**.
+
+### `multi_ogs.py`: dos políticas, un planificador exacto, y lo que compró la diversidad
+
+**Dos políticas, porque son dos sistemas.** `AggregationPolicy.SUM` suma
+estaciones: vale cuando el satélite es un nodo de confianza que guarda cada
+clave y las empareja después (es lo que consume `relay.py`). `BEST_AVAILABLE`
+modela **un** terminal óptico a bordo: los pases cuyas ventanas se solapan
+entran en conflicto, y se queda con el subconjunto sin solapes de mayor clave
+esperada. Un módulo que ofreciera una sola habría tenido que elegir, y ninguna
+es «la» respuesta.
+
+**El planificador es exacto y no cuesta nada.** Elegir intervalos disjuntos de
+peso total máximo es *weighted interval scheduling*, con solución exacta en
+`O(n log n)`: ordenar por fin, buscar por bisección el último compatible de cada
+uno, `M_j = max(M_{j−1}, w_j + M_{p(j)})`, y retroceder. Es el único bucle de
+Python sobre pases de todo `system/`, y está bien que lo sea: son cientos de
+pasos una vez, no el eje temporal. El **greedy por clave** —quedarse con el
+pase más rico, descartar lo que lo solape, repetir— no es exacto: un pase rico
+entre dos algo más pobres que no se solapan entre sí lo vence (4 + 4 = 8 contra
+6, `test_the_instance_where_greedy_loses`). Los dos se comparan con nombre,
+`schedule_passes` y `greedy_schedule_passes`, y el exacto se comprueba contra
+una **fuerza bruta sobre todos los subconjuntos** de instancias aleatorias de
+hasta nueve intervalos con Hypothesis, con y sin hueco de reorientación
+(`TestTheSchedulerIsExact`, 300 ejemplos), además de la propiedad de
+**maximalidad**: tras un paso de compleción, un intervalo no seleccionado lo es
+**si y solo si** choca con uno seleccionado, que es lo que un recuento de
+«pases descartados por conflicto» necesita significar (un pase muerto que no
+choca con nada no se reporta como descartado).
+
+**El hueco de reorientación.** `minimum_gap_s` es el tiempo de giro y
+asentamiento entre dos pases consecutivos del mismo terminal, con defecto
+`0.0`: es una propiedad del terminal para la que el proyecto no tiene fuente, y
+cero es el único valor que no es una invención. Un hueco positivo solo puede
+quitar pases (medido en `TestTheSlewGap`: 65 → 50 bits en un caso sintético
+con dos pases a 100 s uno del otro y un hueco de 120 s).
+
+**Lo que no modela, y lo rechaza en vez de planificar mal:** el conflicto del
+terminal de **tierra** —dos satélites sobre una estación a la vez—, porque el
+alcance del proyecto es un satélite (decisión de 2026-09-10). Esa entrada es
+`DomainError` con la decisión en el mensaje; los pases de satélites distintos
+se planifican por separado.
+
+**Medido en el día de referencia** (`TestOnTheReferenceDay`): tres estaciones
+con el receptor de referencia —Castelldefels; Calar Alto (37.2236 N, 2.5461 W,
+2168 m; coordenadas del infobox de Wikipedia, altitud confirmada por caha.es,
+que no imprime coordenadas); y la OGS de ESA en Tenerife (28.298 N, 16.5118 W,
+2400 m; de la página institucional del IAC)—, máscara de 10°, rejilla de 1 s:
+
+| Estación | Pases | Bits por pase (cota finita) |
+|---|---|---|
+| Castelldefels | 4 | 190 581, 0, 242 404, 0 |
+| Calar Alto | 4 | 47 108, 0, 9 817, 0 |
+| OGS Tenerife | 2 | 228 851, 333 846 |
+
+Calar Alto está a 596 km y la misma órbita cruza las dos, así que **cada pase
+suyo se solapa con uno de Castelldefels**; Tenerife solo se solapa con los dos
+pases muertos de las otras dos. Resultado:
+
+| Política | Bits | Pases conservados |
+|---|---|---|
+| SUM | **1 052 607** | 10 de 10 |
+| BEST_AVAILABLE | **995 682** | 4 de 10 |
+
+Con un terminal, la diversidad compró **2.30 veces** los 432 985 bits de
+Castelldefels sola; los seis pases descartados —cuatro de ellos muertos, que
+chocaban con uno vivo— valían **56 925 bits, el 5.4 %** de la suma. En este día
+el greedy coincide con el exacto (los conflictos son por pares y el más rico
+gana cada uno), y eso está **medido**, no supuesto
+(`test_greedy_happens_to_agree_on_this_day`); la instancia donde difieren es la
+de arriba. Y la planificación pesa **bits esperados**: con Castelldefels a
+`0.1` de disponibilidad en su primer pase (19 058 esperados contra los 47 108 de
+un Calar Alto despejado), el pase va a Calar Alto y la columna certificada dice
+lo que ese pase certifica cuando ocurre
+(`test_the_schedule_weighs_expected_bits_not_certified_ones`).
+
+### `relay.py`: una identidad que hay que saber antes de leer cualquier número
+
+`trusted_node_relay` recorre los pases de las dos estaciones en orden
+cronológico de **fin** —la clave de un pase existe cuando el pase termina,
+porque el bloque es el pase y no está completo antes de su última muestra—,
+guarda cada clave viva en el almacén de su lado y, cuando el almacén contrario
+no está vacío, empareja **primero-entra-primero-sale** y cada emparejamiento es
+un evento de entrega.
+
+**La identidad.** Con almacén ilimitado los dos saldos nunca son positivos a la
+vez —cuando lo serían, hay emparejamiento—, así que al cerrar la ventana uno de
+los dos es cero, y entonces **el total entregado es exactamente
+`min(ΣK_A, ΣK_B)`, sea cual sea el orden de los pases**. El orden no cambia
+*cuánto*; cambia **cuándo** (la latencia y en qué día UTC caen los bits) y
+**cuánto queda varado** a bordo al cerrar la ventana. `TestTheStoreIdentity` lo
+aserta con Hypothesis sobre 150 secuencias aleatorias, para que nadie lea el
+total como si el orden se lo hubiera ganado. Entradas idénticas devuelven el
+total con latencia cero.
+
+**Latencia, definida.** Dos números por entrega, ambos desde el fin del pase
+cuya clave se consume hasta el fin del que entrega: `latency_s` es la edad del
+bit **más antiguo** entregado (una entrega puede consumir la cola de un pase
+almacenado y la cabeza del siguiente; esta es la edad de la cola), y
+`mean_latency_s` la media ponderada por bits. Un segundo almacén escrito en
+Python plano sin arrays reproduce las tres columnas sobre secuencias aleatorias
+(V3, `TestAgainstAHandSimulatedStore`).
+
+**Composición de seguridad: una suma, y por qué una suma.** La clave extremo a
+extremo es función de dos claves y falla si cualquiera de las dos no era lo
+que su prueba prometía; la probabilidad de «cualquiera» está acotada por la
+suma, la **cota de la unión** —el mismo argumento de `composed_security` para
+concatenar los bloques de un día—. Se compone sobre los bloques **consumidos**
+de cada lado: el día de referencia relevado consigo mismo consume cuatro y es
+`4e-10`-seguro; relevado contra su propio primer pase consume uno de cada lado
+y es `2·eps` (`test_only_consumed_blocks_count`). Si la suma llega a uno se
+rechaza, y hay un test que separa el rechazo propio del relé (dos lados a 0.6,
+que por separado son probabilidades y juntos 1.2) del de `composed_security`
+sobre un solo lado.
+
+**Medido en el día de referencia** (`TestOnTheReferenceDay`), Castelldefels →
+OGS de Tenerife, mismo satélite:
+
+| Evento | Entregado | Consume de | Latencia | Residuo |
+|---|---|---|---|---|
+| 1 | 190 581 | A pase 1 | 6 114 s | B: 38 270 |
+| 2 | 38 270 | B pase 1 | 33 780 s | A: 204 134 |
+| 3 | 204 134 | A pase 3 | 5 703 s | B: 129 712 |
+
+Total **432 985 = min(432 985, 562 697)**. Quedan **129 712 bits** del último
+pase de Tenerife varados a bordo a medianoche (`WARNING`
+`relay.key-stranded-on-board`), y la latencia va de 1.6 a **9.4 horas** —el
+segundo evento esperó el hueco diurno en que ninguna estación ve el satélite—.
+Contra Calar Alto, cuyos pases terminan a menos de un minuto de los de
+Castelldefels, el mismo relé entrega 56 925 bits y la definición de latencia
+enseña los dientes: los primeros 47 108 llegan a **59 s**, pero los 9 817
+restantes esperan **39 822 s**, porque el segundo pase vivo de Calar Alto
+termina **72 s antes** que el segundo de Castelldefels y el almacén FIFO lo
+empareja con lo que quedaba del *primero*, once horas viejo. La estación cercana
+es rápida y pobre; la lejana, lenta y rica.
+
+**Lo que queda fuera, sin stub:** los enlaces entre satélites. Un segundo
+satélite en cualquiera de los dos volúmenes es `DomainError` nombrando la
+decisión de 2026-09-10; no hay bandera ni marcador de posición, y hay un test
+que aserta que la palabra «ISL» no aparece en ninguna firma ni en `__all__`.
+Tampoco se acota el almacén de a bordo —los residuos dicen cuánto tendría que
+guardar una memoria— ni se modela el canal clásico del anuncio.
+
+### Lo que esto deja declarado como hueco
+
+1. **La dependencia de pCFLOS con la elevación** (Lund & Shanklin 1972, 1973,
+   no abiertos). Sin término angular; cota superior en cada llamada, con aviso.
+2. **La ley conjunta de N > 2 estaciones** a partir de correlaciones por pares.
+   Cotas, no valor.
+3. **La longitud de decorrelación `L`**: sin fuente, sin defecto.
+4. **El hueco de reorientación del terminal**: sin fuente, defecto cero.
+5. **El conflicto del terminal de tierra** (dos satélites sobre una estación):
+   fuera de alcance, rechazado.
+
+### Estado
+
+`src/quoss/system/pcflos.py` (177 sentencias, 56 ramas),
+`src/quoss/system/multi_ogs.py` (284, 112) y `src/quoss/system/relay.py`
+(196, 76): **100 % de cobertura de líneas y de ramas** en los tres.
+`tests/system/test_pcflos.py` (53 tests), `test_multi_ogs.py` (55) y
+`test_relay.py` (39), más 10 doctests; `tests/system/reference_stations.py`
+es el ayudante que ve el satélite de referencia desde las tres estaciones,
+propagando una vez y reutilizando `reference.conditions_at` para que el
+receptor sea el mismo de la §27. El ADR de la etapa es el
+[0013](../docs/adr/0013-cloud-availability-and-station-aggregation.md).
+
+---
+
+## 30. `scenario/` — el escenario como dato: el contrato que todo lo demás lee
+
+### Qué hace este paquete, para quien llegue nuevo
+
+Todo lo que hay por debajo responde a una pregunta sobre física dado un número en
+radianes o en metros. Nadie escribe así un experimento: se escribe «41.275 grados
+norte, 1550 nm, 0.75 µrad de jitter, puerta de 1 ns, máscara de 10°». Un
+**escenario** es esa descripción completa —satélite, estaciones, óptica,
+detector, protocolo, día y paso— en un fichero YAML o JSON, y `scenario/` es lo
+que lo convierte **una sola vez** en lo que la física acepta, lo identifica con
+un hash, y define la forma del resultado que vuelve. `notes/ROADMAP.md` lo llama
+el archivo más importante del proyecto porque decide qué puede decir un usuario;
+la [ADR 0014](../docs/adr/0014-scenario-contract-and-provenance.md) recoge las
+decisiones.
+
+Es un **dato y no una petición**. SimulCTTC montaba las entradas al vuelo en un
+handler HTTP y una época sin fijar «caía silenciosamente al reloj de pared»
+(`notes/ROADMAP.md`). Aquí un escenario es un valor congelado, completo y
+hasheable: dos personas con el mismo fichero y la misma semilla obtienen los
+mismos números, y un resultado lleva dentro el hash de lo que lo produjo.
+
+### Los seis módulos
+
+- **`models.py`** — el esquema, Pydantic v2 con `extra="forbid"`, `frozen=True` y
+  `allow_inf_nan=False`. Cada campo lleva la unidad del usuario en el nombre
+  (`latitude_deg`, `wavelength_nm`, `pointing_jitter_urad`, `gate_ns`,
+  `timing_jitter_fwhm_ps`) y cada modelo ofrece la conversión bajo el nombre de la
+  física (`latitude_rad`, `wavelength_m`, `gate_s`, `chain_efficiency`,
+  `to_elements()`, `to_protocol()`, `to_security()`, `grid()`, `to_satrec()`).
+  Propiedades y no `computed_field`, porque un `computed_field` entra en
+  `model_dump` y el fichero volcado no se podría volver a leer bajo `forbid`.
+  Cada cota del esquema es el espejo de la del contenedor de física al que
+  alimenta (holgura `1e-9` de `TimeGrid.uniform` y de `Bb84DecoyProtocol`,
+  `(0, 1)` de `SecurityParameters`, puerta ≤ periodo de `LinkConditions`,
+  checksum de `parse_tle`), así que **lo que valida, convierte**: medido con
+  Hypothesis, 60 rejillas y 40 órbitas heliosíncronas construidas sin excepción.
+- **`defaults.py`** — `reference_castelldefels()`, igual campo a campo al enlace
+  de `tests/system/reference.py`, y `ntanos_2021(aperture_m)` para las tres
+  estaciones griegas. Los literales van en unidad de usuario (`dead_time_ns=30.0`
+  y no `30e-9 * 1e9 = 29.999999999999996`) y un test los ata a las constantes SI.
+- **`io.py`** — `load/loads/dump/dumps_scenario`, solo `yaml.safe_load`/`safe_dump`;
+  todo fallo es un `ScenarioError` que lista **cada** campo malo con su ruta con
+  puntos (`stations.0.latitude_deg`).
+- **`hash.py`** — `canonical_json` (claves ordenadas, sin espacios, flotantes por
+  `repr`, enums por valor, época con `Z`, sin `name` ni `description`) y
+  `scenario_hash` = SHA-256.
+- **`result.py`** — `SimulationResult` y sus contenedores como dataclasses
+  congelados sobre arrays de solo lectura, con dos serializaciones que van y
+  vuelven: `to_dict` (listas, NaN como `null`, JSON estricto) y
+  `to_manifest_and_arrays` (manifiesto JSON + `{"clave.con.puntos": ndarray}`
+  para el `.npz` de la caché). `Provenance.collect` rellena hash, versión,
+  commit de git (o `None` sin excepción), versiones de Python/NumPy/SciPy, semilla
+  y hora.
+- **`scenarios/*.yaml`** — cinco ficheros comentados línea a línea con la fuente
+  de cada valor: el de referencia, los tres de Ntanos, y uno con TLE real de la
+  ISS (CelesTrak, 2026-09-13, época 2026-09-13T04:12:47.9Z, pasa el checksum) con
+  las tres etapas opcionales activadas para que el esquema completo tenga un
+  ejemplo.
+
+### Las decisiones con su número
+
+**Dos campos sin defecto, y un test que lo mantiene.** `channel.zenith_transmittance`
+(ADR 0009 hueco 14: la ley de escala está publicada y el número no) y
+`passes.minimum_elevation_deg` (ADR 0011 §5: óptimo interior cerca de 8°, el 6.0 %
+del día en juego entre 2° y 8°). `TestTheTwoFieldsWithoutADefault` aserta
+`is_required()` de los dos y que su descripción cita el ADR.
+
+**Una época ingenua se rechaza con el nombre del defecto.** `time.epoch_utc` tiene
+que ser consciente de zona y UTC; una `datetime` sin `tzinfo` es «la época cayó al
+reloj de pared» con otro traje, y el mensaje lo dice.
+
+**El hash excluye las etiquetas y clava un valor.** Mismo dato con otro nombre,
+mismo hash: renombrar un fichero no repite un día de Monte Carlo. `0.1 + 0.2` y
+`0.3` son dobles distintos y hashean distinto (redondear erraría hacia el lado
+peligroso); `1` y `1.0` en YAML hashean igual porque el esquema convierte antes de
+volcar. El digest de referencia está clavado
+(`feafee61257b303a9fdb838e66a981ea4c58c8fad94ec5dfeba7841d53a84227`) como guardia
+V4 sobre el **contrato de serialización**, no sobre física: si cambia, toda la
+caché queda inalcanzable, y el fallo del test es la instrucción de subir
+`SCHEMA_VERSION`.
+
+**La estación lleva el viento r.m.s., no el de superficie — una desviación del
+brief, medida.** Bufton (ITU-R P.1621-2 Ec. (5)) convierte 2.3 m/s en **21.018**
+m/s, no en los 21.0 del HV 5/7 que la física usa por defecto y el enlace de
+referencia usa. El 0.085 % movió el presupuesto de pérdidas de referencia
+**6.8e-5 relativo, 0.0028 dB a 10° y 2000 km**
+(`TestUnitsConvertOnceAtTheBoundary::test_the_wind_default_is_the_hv57_value_not_the_bufton_conversion`),
+suficiente para que el escenario de referencia no reprodujera el enlace de
+referencia. `rms_wind_speed_m_s = 21.0`, atado por test a la firma de
+`log_irradiance_variance`.
+
+**El presupuesto evaluado desde el escenario y desde las constantes es el mismo a
+`1e-12` relativo**, pérdidas y ruido, con cuatro elevaciones
+(`TestReferenceCastelldefels::test_the_budgets_evaluate_identically_from_either_source`);
+la tolerancia se deriva de que las entradas coinciden a `2^-50` y el presupuesto
+tiene números de condición de orden diez.
+
+**Ntanos et al. 2021, releído del PDF.** Del paper: 600 km e inclinación **97.4°**
+tal como está impresa (§4.3) —la condición heliosíncrona a 600 km da 97.79°,
+medido, 0.39° de diferencia, y se usa la impresa porque es el parámetro del paper—,
+coordenadas y alturas de las estaciones (§2), receptor, transmisor, protocolo y
+20° (§4.1). Elección de QuOSS, y dicha: RAAN, anomalía, forma circular, época,
+ventana. Y el §2 imprime las coordenadas con las etiquetas de latitud y longitud
+**intercambiadas** (Skinakas «longitude: 35.2118°» está en Creta, a 35.2 N); se
+usan los números bajo las etiquetas corregidas y un test aserta que cada
+«longitud» impresa cae en la banda de latitudes de Grecia.
+
+**Un mensaje de error por escenario, no por campo.** Dos errores (un `"e91"` y
+una transmitancia de 2.0) salen como `scenario has 2 invalid fields:` seguido de
+`protocol.name: …` y `channel.zenith_transmittance: …`; un error de modelo se
+reporta en el modelo que lo posee (`orbit.kepler: give exactly one of …`) y uno
+de raíz como `<root>`.
+
+**El resultado conserva dtypes al volver, incluso vacío.** Una tabla de pases sin
+pases vuelve con `int64` y `bool` donde `np.asarray([])` daría `float64`; el
+`.npz` real pasa por `np.savez`/`np.load`. NaN fuera de pase se escribe `null` y
+`json.dumps(..., allow_nan=False)` pasa.
+
+### Lo que queda fuera, dicho
+
+- El motor calcula el desplazamiento entre la época de un TLE y la ventana;
+  `TleOrbit.epoch_jd` lo da, y `propagate_tle` no acepta otra época por diseño.
+- Los contenedores `MonteCarloResults`, `MultiStationResults` y `RelayResults` son
+  arrays con las formas del contrato; `system/monte_carlo.py`, `multi_ogs.py` y
+  `relay.py` se escriben en paralelo y no se importan.
+- Un límite de ida y vuelta, declarado como test: YAML 1.1 trata U+0085 como
+  salto de línea y PyYAML lo pliega a un espacio en una **etiqueta**. Fuera del
+  hash; ningún campo de física lleva texto.
+
+### Verificación
+
+`tests/scenario/`, **202 tests**, **100 % de cobertura de líneas y de ramas** de
+los seis módulos (`models.py` 349 sentencias, `result.py` 372, `io.py` 69,
+`defaults.py` 46, `hash.py` 12, `__init__.py` 2). `ruff check`, `ruff format` y
+`mypy` (estricto, con el plugin de Pydantic) limpios sobre `src/quoss/scenario` y
+`tests/scenario`. Dos propiedades con Hypothesis (rejillas y órbitas; ida y vuelta
+YAML/JSON de 40 escenarios). Ficheros: `src/quoss/scenario/{__init__,models,defaults,io,hash,result}.py`,
+`scenarios/{reference_castelldefels,ntanos2021_075m,ntanos2021_130m,ntanos2021_230m,tle_example}.yaml`,
+`tests/scenario/test_{models,defaults,io,hash,result,scenario_files}.py`,
+`docs/adr/0014-scenario-contract-and-provenance.md`.
+
+---
+
+## 31. `io/` — el mundo exterior entra por inyección, y lo que entró se puede reproducir sin red
+
+### Qué hace este paquete, para quien llegue nuevo
+
+Todo lo que hay debajo de `io/` calcula con lo que tiene en memoria. Dos
+entradas de un escenario, sin embargo, viven en el servidor de otro: el **TLE**
+de un satélite (las dos líneas de 69 caracteres con las que se publican las
+órbitas reales, ver §11 y el ADR 0007) y la **cobertura de nubes** sobre una
+estación (la fracción del cielo tapada, 0 despejado y 1 cubierto, que
+`system/pcflos.py` convierte en probabilidad de que un pase sea utilizable).
+Este paquete es el único sitio del proyecto que puede abrir un socket, y está
+construido para que nadie más lo necesite:
+
+- `cache.py` — una caché HTTP en disco. Cada URL se guarda en
+  `<sha256(url)>.bin` + `.json` (URL, hora de descarga, hash del cuerpo).
+  «Content-addressed» quiere decir que el nombre del fichero sale de la URL, así
+  que no hay registro que mantener. Tiene un **TTL** (tiempo de vida: una
+  entrada más vieja se vuelve a bajar) obligatorio y sin defecto, porque un TLE
+  caduca en un día y una serie ERA5 de 2025 no cambia en un año.
+- `celestrak.py` — un TLE del API GP de CelesTrak, pasado por
+  `orbits.tle.parse_tle` (longitud, prefijo, checksum, error de SGP4) antes de
+  devolver nada.
+- `openmeteo.py` — cobertura horaria de nubes del archivo histórico de
+  Open-Meteo, que sirve el reanálisis **ERA5** de ECMWF: no una observación en
+  la estación, sino un modelo meteorológico re-ejecutado sobre el pasado y
+  ajustado a todas las observaciones, en una rejilla de ~25 km.
+- `snapshots.py` — copias offline versionadas de lo anterior, con manifiesto y
+  hash, para que la demo no dependa del wifi (§5 de la guía).
+- `export.py` — un `SimulationResult` escrito a un directorio con
+  `manifest.json`, CSV por pase/día/estación, `arrays.npz` y, opcionalmente,
+  Parquet.
+- `stations.py` + `data/ogs.yaml` — el catálogo de estaciones ópticas, cada
+  una con la fuente de sus coordenadas.
+
+### La decisión que organiza todo: ningún test abre un socket, y uno lo demuestra rompiéndolo
+
+Toda función que podría hacer una petición recibe un `fetch` inyectado; la
+real (`urllib_fetch`, sobre `urllib.request`, sin dependencia nueva) es solo el
+defecto. `tests/io/test_cache.py::TestTheSuiteIsOffline` sustituye
+`socket.socket` por una función que lanza `OSError`, ve que `urllib_fetch`
+contra CelesTrak falla con `DataError`, y después ejecuta con `fetch` falsos
+**todos** los caminos del paquete —`fetch_tle`, `fetch_cloud_cover`, los dos
+adaptadores de snapshot, el catálogo y un export completo—. Si alguien mete
+una petición real en cualquiera de ellos, ese test falla en CI el mismo día.
+
+### Lo que se decidió, con su número
+
+1. **El TTL se prueba moviendo el reloj, no durmiendo.** `HttpCache` recibe
+   `now()`; medido en `TestTtl` con `ttl_s=3600`: a 3599 s es acierto (INFO
+   `io.cache-hit`, `fetch` llamado una vez), a 3600 s es fallo (dos veces).
+2. **Una entrada caducada no se sirve sin pedirlo.** Si `fetch` falla, el
+   defecto es `DataError` con URL y estado HTTP. Solo con `allow_stale=True`
+   se usa la copia, y queda un `WARNING` `io.cache-stale-fallback` con su edad.
+   Es la comodidad estándar de toda caché, y es la que produce figuras sobre
+   un TLE de hace tres semanas sin que nadie lo vea.
+3. **La versión de un TLE es su época.** `TleRecord.data_version` es
+   `"25544@2461296.67555434"`: ni «el TLE de la ISS» (se reajusta varias veces
+   al día) ni la hora de descarga identifican un conjunto de elementos; la
+   época, en las columnas 19-32 de la línea 1 con resolución de `1e-8` día, sí.
+4. **Un `null` en la serie de nubes es `DataError`, no interpolación.** La
+   serie de referencia va 0 → 39 → 82 → 14 % en tres horas consecutivas: no
+   hay cota para una interpolación, y sin cota no hay `DEGRADED` posible.
+5. **La celda no es el telescopio, y se registra.** Para Castelldefels
+   (41.2750 N, 1.9875 E) Open-Meteo sirvió la celda de 41.3005 N, 2.0660 E, a
+   **7.2 km** (INFO `io.openmeteo-grid-offset`, medido en
+   `tests/io/test_openmeteo.py::TestGridOffset`). Qué hacer con esa distancia
+   es de `pcflos.py`; aquí solo se deja escrito.
+6. **El API no dice qué reanálisis sirvió la celda**, así que
+   `CloudCoverSeries.model` lleva `open-meteo-archive:best_match` y la versión
+   de datos es `open-meteo-archive:<inicio>:<fin>:fetched=<fecha>`. No se
+   escribe «ERA5» donde el código no puede comprobarlo.
+7. **Un snapshot con hash que se comprueba al cargar.** `sha256` del JSON
+   canónico del payload; `load_snapshot` lo recalcula y lanza `DataError` si
+   no coincide. Lo que cierra es la edición a mano de un número «para que la
+   demo salga». Y un payload no descargado tiene que llamarse `synthetic_*` y
+   decirlo en la nota: `save_snapshot` rechaza las dos combinaciones cruzadas.
+8. **Los dos snapshots entregados son descargas reales**, con `curl` el
+   2026-09-13 a las 16:16:24 UTC, HTTP 200: `tle/iss_zarya` (ISS, época
+   2026-09-13 04:12:48 UTC, cuerpo verbatim con CRLF) y
+   `cloud_cover/castelldefels_2025-01-01_02` (48 horas, sin huecos, de 0 a
+   100 %). Ninguno es sintético. Usar uno deja INFO `io.snapshot-used`.
+9. **El export escribe un directorio que se describe a sí mismo.**
+   `manifest.json` lista cada fichero con su SHA-256; `manifest.json` +
+   `arrays.npz` es exactamente lo que `SimulationResult.from_manifest_and_arrays`
+   recibe, y el test lo reconstruye y compara `to_dict()` entero. Los
+   flotantes van a CSV por `repr` (ida y vuelta exacta; medido sobre 50 tablas
+   generadas por `hypothesis`), NaN como celda vacía. Sin `pyarrow`,
+   `"parquet"` es `ConfigurationError("install quoss[export]")`, no un formato
+   que se salta.
+10. **Una apertura que no está en la fuente es `null`.** `data/ogs.yaml` lleva
+    Castelldefels (de `tests/system/reference.py`), la OGS de ESA en Tenerife
+    (página del IAC: 28.298 N, 16.5118 W, 2400 m, 1.0 m), Matera y Graz
+    (páginas del ILRS, que dan coordenadas pero no la apertura). Para estas dos
+    `to_station_spec_kwargs()` lanza `DataError` hasta que el escenario pase la
+    suya. Las páginas de ESA para la OGS devolvieron 404; la del IAC no.
+
+### Lo que queda fuera
+
+- `DEFAULT_SNAPSHOT_ROOT` y `DEFAULT_CATALOGUE_PATH` se resuelven a
+  `<repo>/data/...` relativo al fichero fuente: vale en un checkout, **no** en
+  un wheel instalado. Todo acepta `root`/`path` explícitos; mover `data/` dentro
+  del paquete es decisión de empaquetado pendiente.
+- Que `null` sea una hora ausente en Open-Meteo es la convención general del
+  API; la documentación no lo escribe. Se rechaza en cualquier caso.
+- Space-Track, CDS directo, NetCDF: fuera, ver ADR 0015.
+
+### Verificación
+
+`tests/io/`: 197 elementos recogidos (186 tests con parametrizaciones + 11
+doctests), **100 % de líneas y ramas** en los siete módulos
+(`--cov=quoss.io --cov-branch`). `ruff check`, `ruff format --check` y `mypy`
+limpios sobre `src/quoss/io` y `tests/io`. Property-based en la clave de caché
+y en las idas y vueltas CSV/npz. El export se prueba contra el
+`SimulationResult` real de `scenario/result.py` (dos pases, un día, una
+estación, con y sin Monte Carlo), en los cuatro formatos, leyendo cada fichero.
+
+### Ficheros
+
+`src/quoss/io/{__init__,cache,celestrak,openmeteo,snapshots,export,stations}.py`,
+`data/ogs.yaml`, `data/snapshots/tle/iss_zarya.json`,
+`data/snapshots/cloud_cover/castelldefels_2025-01-01_02.json`,
+`tests/io/test_{cache,celestrak,openmeteo,snapshots,export,stations}.py`,
+`docs/adr/0015-external-data-isolation-and-snapshots.md`.

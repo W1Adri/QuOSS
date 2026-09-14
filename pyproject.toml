@@ -30,12 +30,24 @@ dependencies = [
     "scipy>=1.11",
     "pydantic>=2.7",
     "sgp4>=2.23",
+    # The scenario is a datum, not a request (README, principle 1), and the datum
+    # is a YAML file: scenario/io.py reads and writes it. Stage 4.
+    "pyyaml>=6.0",
 ]
+
+# `quoss run scenario.yaml` and friends. Stage 7; argparse, no CLI framework.
+[project.scripts]
+quoss = "quoss.cli.main:main"
 
 [project.optional-dependencies]
 # Publication figures (matplotlib style sheet lives in quoss.viz).
 viz = [
     "matplotlib>=3.8",
+]
+# Columnar export of results (io/export.py). CSV and the JSON manifest need
+# nothing; Parquet needs pyarrow, which is 40 MB and not a physics dependency.
+export = [
+    "pyarrow>=15",
 ]
 # Optional numeric kernels. Only pulled in when the profiler asks for them.
 accel = [
@@ -61,6 +73,7 @@ dev = [
     "hypothesis>=6.100",
     "ruff>=0.6",
     "mypy>=1.11",
+    "types-PyYAML>=6.0",
 ]
 # Independent oracles for generating the frozen reference data in
 # tests/golden/data/. NOT a default group: CI never installs it and never needs
@@ -124,6 +137,14 @@ ignore = [
     "D213",   # incompatible with D212
 ]
 
+# RUF001-003 flag characters that look like ASCII but are not, because they hide
+# typos. These four are not typos: they are how the sources this project quotes
+# print their own tables, and quoting a published value is the one place where
+# the typography is part of the citation (ADR 0009). "5 x 10-7" and "5 × 10−7"
+# are the same number, but only the second is what SatQuMA's Table I says, and a
+# reader checking the citation against the PDF should find the same string.
+allowed-confusables = ["−", "×", "≤", "≥"]
+
 [tool.ruff.lint.per-file-ignores]
 # Test names are the documentation. A docstring is welcome where the "why" is
 # non-obvious, but requiring one on every `test_speed_of_light` is noise.
@@ -166,6 +187,8 @@ module = [
     "quoss.qkd.*",
     "quoss.system.*",
     "quoss.scenario.*",
+    "quoss.engine.*",
+    "quoss.validation.*",
     "quoss.kernels.*",
 ]
 disallow_untyped_defs = true
@@ -182,7 +205,7 @@ extra_checks = true
 [[tool.mypy.overrides]]
 # astropy and erfa appear only in tests/golden/generators/, which are not
 # installed in the default environment, so mypy cannot see them.
-module = ["scipy.*", "numba.*", "matplotlib.*", "sgp4.*", "astropy.*", "erfa.*"]
+module = ["scipy.*", "numba.*", "matplotlib.*", "sgp4.*", "astropy.*", "erfa.*", "pyarrow.*"]
 ignore_missing_imports = true
 
 # --------------------------------------------------------------------------- #

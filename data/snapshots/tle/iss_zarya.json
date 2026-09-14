@@ -1,0 +1,12 @@
+{
+  "manifest": {
+    "kind": "tle",
+    "name": "iss_zarya",
+    "source_url": "https://celestrak.org/NORAD/elements/gp.php?CATNR=25544&FORMAT=TLE",
+    "fetched_utc": "2026-09-13T16:16:24+00:00",
+    "sha256": "e8159eea69502635579aa984df7e4a4855cf902c3b8f9af5bb08f9ec7da0449d",
+    "data_version": "25544@2461296.67555434",
+    "note": "Real fetch with curl from CelesTrak on 2026-09-13T16:16:24Z (HTTP 200); the payload is the response body verbatim, CRLF line endings and the 24-character padded name line included, so its hash is the hash of what the server sent (raw body sha256 71575ad8397600ed1586c1364dc14bb816445ec1f3261c1ceb892b4573ec78c6). ISS (ZARYA), NORAD 25544, TLE epoch 2026-09-13 04:12:48 UTC. Offline stand-in for fetch_tle(catalog_number=25544); a run using it must report data_versions['tle'] = '25544@2461296.67555434', not 'today's ISS'."
+  },
+  "payload": "ISS (ZARYA)             \r\n1 25544U 98067A   26256.17555434  .00004898  00000+0  96695-4 0  9992\r\n2 25544  51.6307 224.6171 0004917 134.6730 225.4659 15.49096932585393\r\n"
+}

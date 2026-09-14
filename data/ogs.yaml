@@ -1,0 +1,92 @@
+# Optical ground station catalogue.
+#
+# Every entry states where its coordinates come from and how precise they are,
+# because a station a few hundred metres off changes nothing in a link budget
+# but a station on the wrong side of a mountain changes the horizon mask, and
+# an aperture is the single most important number in the geometric loss.
+#
+# Rules (enforced by src/quoss/io/stations.py):
+#   - `name` is unique, lowercase, and stable: scenarios refer to it.
+#   - `latitude_deg` north positive, `longitude_deg` east positive, `altitude_m`
+#     above mean sea level, `receive_aperture_m` the receive telescope's primary
+#     diameter or `null` when the cited source does not state it — a null aperture
+#     must be supplied by the scenario, it is never guessed.
+#   - `source` is something a reader can open. If the source could not be opened
+#     the entry does not exist (docs/adr/0009-citation-policy.md).
+#   - `coordinates_precision` says how many digits the source printed and what
+#     that is worth on the ground, so nobody reads 41.2750 as a survey.
+#
+# Only stations with a source that was actually opened are listed. Candidates
+# checked on 2026-09-13 and NOT added: none of the ESA pages for the Tenerife OGS
+# resolved (404); the IAC page did, and is the source used.
+
+schema_version: 1
+
+stations:
+  - name: castelldefels_cttc
+    latitude_deg: 41.2750
+    longitude_deg: 1.9875
+    altitude_m: 30.0
+    receive_aperture_m: 0.75
+    source: >-
+      This repository, tests/system/reference.py (STATION_LATITUDE_RAD,
+      STATION_LONGITUDE_RAD, STATION_ALTITUDE_KM, RECEIVE_APERTURE_M): the
+      reference link every number in the project is measured against. The 0.75 m
+      aperture is the smallest of the three Greek stations of Ntanos et al. 2021
+      §4.1, adopted as the reference receiver; it is not a measurement of any
+      telescope installed at CTTC.
+    coordinates_precision: >-
+      Four decimals of a degree (about 10 m) as declared in the reference module;
+      the site is CTTC's campus at Castelldefels, not a surveyed telescope pier.
+    note: Reference station of this project.
+
+  - name: esa_ogs_tenerife
+    latitude_deg: 28.298
+    longitude_deg: -16.5118
+    altitude_m: 2400.0
+    receive_aperture_m: 1.0
+    source: >-
+      Instituto de Astrofísica de Canarias, "Optical Ground Station" telescope
+      page, https://www.iac.es/en/observatorios-de-canarias/telescopes-and-experiments/optical-ground-station
+      (opened 2026-09-13): coordinates 28.298, -16.511833 from the page's map
+      link; "installed in the Teide observatory 2400 above the sea level";
+      primary mirror "Ø 100.00 cm".
+    coordinates_precision: >-
+      Three decimals of latitude (about 100 m) as given by the page's map link;
+      altitude rounded to the hundred metres by the source ("2400").
+    note: ESA's Optical Ground Station at the Teide Observatory, Izaña, Tenerife.
+
+  - name: matera_mlro
+    latitude_deg: 40.6486
+    longitude_deg: 16.7046
+    altitude_m: 536.9
+    receive_aperture_m: null
+    source: >-
+      ILRS (International Laser Ranging Service) station page for Matera,
+      https://ilrs.gsfc.nasa.gov/network/stations/active/MATM_general.html
+      (opened 2026-09-13): "Latitude 40.6486 N, Longitude 16.7046 E, Height 536.9 m".
+      The page does not state the telescope aperture, so none is claimed here.
+    coordinates_precision: >-
+      Four decimals of a degree (about 10 m) and 0.1 m of height as printed on
+      the ILRS page; these are the laser-ranging telescope's coordinates.
+    note: >-
+      Matera Laser Ranging Observatory (MLRO), ASI Space Geodesy Centre. Aperture
+      not sourced: a scenario using this station must pass receive_aperture_m.
+
+  - name: graz_lustbuehel
+    latitude_deg: 47.0671
+    longitude_deg: 15.4933
+    altitude_m: 539.4
+    receive_aperture_m: null
+    source: >-
+      ILRS station page for Graz,
+      https://ilrs.gsfc.nasa.gov/network/stations/active/GRZL_general.html
+      (opened 2026-09-13): "Latitude [deg] 47.0671 N, Longitude [deg] 15.4933 E,
+      Elevation [m] 539.4". The page does not state the telescope aperture, so
+      none is claimed here.
+    coordinates_precision: >-
+      Four decimals of a degree (about 10 m) and 0.1 m of height as printed on
+      the ILRS page; these are the laser-ranging telescope's coordinates.
+    note: >-
+      Graz Lustbühel SLR station (Austrian Academy of Sciences). Aperture not
+      sourced: a scenario using this station must pass receive_aperture_m.

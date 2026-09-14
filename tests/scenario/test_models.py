@@ -1,0 +1,663 @@
+"""Tests for `quoss.scenario.models`.
+
+Organised by the claim each block defends.
+
+- ``TestTheTwoFieldsWithoutADefault`` — the two decisions the schema inherits
+  from ADR 0009 (gap 14) and ADR 0011 (§5): ``zenith_transmittance`` and
+  ``minimum_elevation_deg`` are required, and a test is what keeps them so.
+- ``TestUnitsConvertOnceAtTheBoundary`` — every user-unit field has a physics
+  unit twin, and the twin is what ``core.units`` says it is.
+- ``TestAValidScenarioAlwaysConverts`` — **V1 by property**: the schema's rules
+  mirror the physics containers' rules, so what validates here builds a
+  ``TimeGrid``, a ``ClassicalElements``, a protocol and a security object
+  without ever raising downstream.
+- ``TestKeplerOrbit`` / ``TestTleOrbit`` / ``TestOrbitSpec`` — exclusivity,
+  feasibility and the SGP4 checksum.
+- ``TestBackgroundSpec`` — value or table, and that resolving a table column
+  logs the interpolation the physics logs.
+- ``TestProtocolSpec`` — the registry decides the name; ``"e91"`` is refused
+  with the list of what exists.
+- ``TestTimeSpec`` — naive datetimes are the wall-clock defect and are refused;
+  the whole-multiple rule mirrors ``TimeGrid.uniform``.
+- ``TestScenario`` — the cross-model rules, ``extra="forbid"``, frozen, NaN.
+- ``TestTheModuleSurface`` — layering (no ``system``/``engine`` import) and
+  that every numeric field carries a bound.
+"""
+
+from __future__ import annotations
+
+import ast
+import datetime as dt
+import inspect
+from pathlib import Path
+from types import NoneType, UnionType
+from typing import Any, get_args
+
+import numpy as np
+import pytest
+from annotated_types import Ge, Gt, Le, Lt
+from hypothesis import given, settings
+from hypothesis import strategies as st
+from pydantic import ValidationError
+
+import quoss.scenario.models as models_module
+from quoss.channel.atmosphere import bufton_rms_wind_speed_m_s
+from quoss.channel.background import SkyCondition
+from quoss.channel.detector import receiver_efficiency
+from quoss.channel.link_budget import FadeCombination, downlink_loss_budget
+from quoss.channel.turbulence import log_irradiance_variance
+from quoss.core.errors import DegradationLog, Severity
+from quoss.core.types import TimeGrid
+from quoss.core.units import deg_to_rad
+from quoss.orbits.constellations import sun_synchronous_inclination_rad
+from quoss.orbits.frames import calendar_to_jd
+from quoss.orbits.kepler import ClassicalElements
+from quoss.orbits.propagator import PropagationMethod
+from quoss.qkd.bb84 import Bb84DecoyProtocol
+from quoss.qkd.finite_key import SecurityParameters
+from quoss.scenario.defaults import reference_castelldefels
+from quoss.scenario.models import (
+    HV57_RMS_WIND_SPEED_M_S,
+    SCHEMA_VERSION,
+    AggregationPolicyName,
+    BackgroundSpec,
+    ChannelSpec,
+    KeplerOrbit,
+    MonteCarloSpec,
+    MultiStationSpec,
+    OrbitSpec,
+    PassSpec,
+    ProtocolSpec,
+    ReceiverSpec,
+    RelaySpec,
+    Scenario,
+    SecuritySpec,
+    SpecModel,
+    StationSpec,
+    TimeSpec,
+    TleOrbit,
+    TransmitterSpec,
+)
+
+ISS_LINE1 = "1 25544U 98067A   20029.91700964  .00001177  00000-0  29466-4 0  9996"
+ISS_LINE2 = "2 25544  51.6446  29.6162 0004826 145.9021 214.2494 15.49332174212781"
+"""The TLE of ``quoss.orbits.tle.parse_tle``'s own doctest."""
+
+UTC = dt.UTC
+
+
+def reference_dict() -> dict[str, Any]:
+    """Return the reference scenario as the plain dict a file would give."""
+    return reference_castelldefels().model_dump(mode="json")
+
+
+def with_override(data: dict[str, Any], path: str, value: Any) -> dict[str, Any]:
+    """Return a deep-ish copy of ``data`` with the dotted ``path`` set to ``value``."""
+    out = dict(data)
+    node: Any = out
+    parts = path.split(".")
+    for part in parts[:-1]:
+        key: int | str = int(part) if part.isdigit() else part
+        child = node[key]
+        copied: Any = list(child) if isinstance(child, list) else dict(child)
+        node[key] = copied
+        node = copied
+    last: int | str = int(parts[-1]) if parts[-1].isdigit() else parts[-1]
+    node[last] = value
+    return out
+
+
+# --------------------------------------------------------------------------- #
+class TestTheTwoFieldsWithoutADefault:
+    """Adding a default to either is a decision, and this is where it shows up."""
+
+    def test_zenith_transmittance_is_required(self) -> None:
+        """ADR 0009 gap 14: no openable source publishes the value, so none is invented."""
+        assert ChannelSpec.model_fields["zenith_transmittance"].is_required()
+        with pytest.raises(ValidationError, match="zenith_transmittance"):
+            ChannelSpec()  # type: ignore[call-arg]
+
+    def test_minimum_elevation_is_required(self) -> None:
+        """ADR 0011 §5: interior optimum near 8 deg, so the mask is a design variable."""
+        assert PassSpec.model_fields["minimum_elevation_deg"].is_required()
+        with pytest.raises(ValidationError, match="minimum_elevation_deg"):
+            PassSpec()  # type: ignore[call-arg]
+
+    def test_the_descriptions_say_why(self) -> None:
+        """A reader of the schema, not only of the tests, must see the reason."""
+        assert "ADR 0009" in str(ChannelSpec.model_fields["zenith_transmittance"].description)
+        assert "ADR 0011" in str(PassSpec.model_fields["minimum_elevation_deg"].description)
+
+
+# --------------------------------------------------------------------------- #
+class TestUnitsConvertOnceAtTheBoundary:
+    """The physics-unit twin of every user-unit field."""
+
+    def test_station(self) -> None:
+        station = StationSpec(
+            name="s",
+            latitude_deg=41.275,
+            longitude_deg=1.9875,
+            altitude_m=30.0,
+            receive_aperture_m=0.75,
+        )
+        assert station.latitude_rad == deg_to_rad(41.275)
+        assert station.longitude_rad == deg_to_rad(1.9875)
+        assert station.altitude_km == 0.03
+        assert station.station_height_m == 30.0
+        assert station.rms_wind_speed_m_s == 21.0
+
+    def test_the_wind_default_is_the_hv57_value_not_the_bufton_conversion(self) -> None:
+        """Bufton(2.3 m/s) is 21.018 m/s; HV 5/7 and the physics defaults use 21.0.
+
+        Measured here: the two differ by 0.085 %, which moved the reference
+        loss budget by 6.8e-5 relative (0.0028 dB at 10 deg) when the field was
+        a ground wind. The schema carries the r.m.s. wind the physics takes.
+        """
+        assert bufton_rms_wind_speed_m_s(2.3) == pytest.approx(21.018, abs=5e-4)
+        assert abs(bufton_rms_wind_speed_m_s(2.3) - 21.0) / 21.0 > 8e-4
+        # The literal in the schema is the physics default, checked against the signature.
+        default = (
+            inspect.signature(log_irradiance_variance).parameters["rms_wind_speed_m_s"].default
+        )
+        assert HV57_RMS_WIND_SPEED_M_S == default == 21.0
+        # What the 0.085 % would have cost: the reference loss budget at 10 deg and
+        # 2000 km, once with each wind. Pinned to two significant digits as a
+        # measurement, not a tolerance on physics.
+        s = reference_castelldefels()
+        budgets = [
+            downlink_loss_budget(
+                np.array([float(deg_to_rad(10.0))]),
+                range_km=np.array([2000.0]),
+                wavelength_m=s.transmitter.wavelength_m,
+                transmit_aperture_m=s.transmitter.aperture_m,
+                receive_aperture_m=s.stations[0].receive_aperture_m,
+                zenith_transmittance=1.0,
+                pointing_jitter_rad=s.transmitter.pointing_jitter_rad,
+                receiver_efficiency=s.receiver.chain_efficiency,
+                station_height_m=s.stations[0].station_height_m,
+                rms_wind_speed_m_s=wind,
+                degradations=DegradationLog(),
+            ).total_db[0]
+            for wind in (21.0, bufton_rms_wind_speed_m_s(2.3))
+        ]
+        difference_db = budgets[1] - budgets[0]
+        assert difference_db == pytest.approx(0.0028, abs=0.0002)
+        assert difference_db / budgets[0] == pytest.approx(6.8e-5, abs=0.2e-5)
+
+    def test_transmitter(self) -> None:
+        tx = TransmitterSpec(
+            wavelength_nm=1550.0, aperture_m=0.15, pointing_jitter_urad=0.75, pulse_rate_hz=100e6
+        )
+        # One multiplication by a power of ten: at most one rounding, 2^-53 relative.
+        assert tx.wavelength_m == pytest.approx(1.55e-6, rel=2**-52)
+        assert tx.pointing_jitter_rad == pytest.approx(0.75e-6, rel=2**-52)
+        assert tx.pulse_period_s == 1e-8
+
+    def test_receiver(self) -> None:
+        rx = ReceiverSpec(
+            detector_efficiency=0.85,
+            optical_loss_db=5.65,
+            dark_count_rate_cps=300.0,
+            dead_time_ns=30.0,
+            gate_ns=1.0,
+            timing_jitter_fwhm_ps=50.0,
+            field_of_view_urad=100.0,
+            filter_bandwidth_nm=0.2,
+        )
+        assert rx.gate_s == pytest.approx(1e-9, rel=2**-52)
+        assert rx.dead_time_s == pytest.approx(30e-9, rel=2**-52)
+        assert rx.timing_jitter_fwhm_s == pytest.approx(50e-12, rel=2**-52)
+        assert rx.field_of_view_rad == pytest.approx(100e-6, rel=2**-52)
+        assert rx.filter_bandwidth_m == pytest.approx(0.2e-9, rel=2**-52)
+        assert rx.chain_efficiency == receiver_efficiency(0.85, optical_loss_db=5.65)
+
+    def test_pass_and_security(self) -> None:
+        assert PassSpec(minimum_elevation_deg=10.0).minimum_elevation_rad == deg_to_rad(10.0)
+        assert SecuritySpec(correctness=1e-9, secrecy=2e-9).to_security() == SecurityParameters(
+            correctness=1e-9, secrecy=2e-9
+        )
+
+    def test_time(self) -> None:
+        time = TimeSpec(
+            epoch_utc=dt.datetime(2025, 1, 1, 12, 30, 15, 500_000, tzinfo=UTC),
+            duration_s=600.0,
+            step_s=1.0,
+        )
+        assert time.epoch_jd == calendar_to_jd(2025, 1, 1, 12, 30, 15.5)
+        grid = time.grid()
+        expected = TimeGrid.uniform(epoch_jd=time.epoch_jd, duration_s=600.0, step_s=1.0)
+        assert grid.epoch_jd == expected.epoch_jd
+        assert np.array_equal(grid.t_s, expected.t_s)
+        assert time.n_samples == grid.n == 601
+
+    def test_kepler_elements_are_the_reference_elements(self) -> None:
+        """Same construction as ``tests/system/reference.py``, angle by angle."""
+        orbit = KeplerOrbit(
+            altitude_km=700.0, eccentricity=0.001, sun_synchronous=True, raan_deg=30.0
+        )
+        a = 6378.137 + 700.0
+        inclination = float(
+            np.ravel(sun_synchronous_inclination_rad(semi_major_axis_km=a, eccentricity=0.001))[0]
+        )
+        expected = ClassicalElements.from_semi_major_axis(
+            semi_major_axis_km=a,
+            eccentricity=0.001,
+            inclination_rad=inclination,
+            raan_rad=float(deg_to_rad(30.0)),
+            argp_rad=0.0,
+            true_anomaly_rad=0.0,
+        )
+        got = orbit.to_elements()
+        for attr in (
+            "semi_latus_rectum_km",
+            "eccentricity",
+            "inclination_rad",
+            "raan_rad",
+            "argp_rad",
+            "true_anomaly_rad",
+        ):
+            assert np.array_equal(
+                np.asarray(getattr(got, attr)), np.asarray(getattr(expected, attr))
+            ), attr
+
+    def test_explicit_inclination_is_used_as_given(self) -> None:
+        orbit = KeplerOrbit(altitude_km=600.0, inclination_deg=97.4, raan_deg=0.0)
+        assert orbit.inclination_rad == deg_to_rad(97.4)
+        assert orbit.argp_rad == 0.0
+        assert orbit.true_anomaly_rad == 0.0
+
+
+# --------------------------------------------------------------------------- #
+class TestAValidScenarioAlwaysConverts:
+    """The schema's rules mirror the containers', so nothing raises downstream."""
+
+    @given(
+        step_s=st.sampled_from([0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0]),
+        steps=st.integers(min_value=1, max_value=20_000),
+        second=st.integers(min_value=0, max_value=59),
+    )
+    @settings(max_examples=60, deadline=None)
+    def test_whole_multiples_build_a_grid_of_the_promised_length(
+        self, step_s: float, steps: int, second: int
+    ) -> None:
+        """``duration = k * step`` validates and yields ``k + 1`` samples, for any k."""
+        time = TimeSpec(
+            epoch_utc=dt.datetime(2025, 6, 1, 0, 0, second, tzinfo=UTC),
+            duration_s=steps * step_s,
+            step_s=step_s,
+        )
+        assert time.grid().n == steps + 1 == time.n_samples
+
+    @given(
+        altitude_km=st.floats(min_value=300.0, max_value=2000.0),
+        eccentricity=st.floats(min_value=0.0, max_value=0.02),
+    )
+    @settings(max_examples=40, deadline=None)
+    def test_sun_synchronous_leo_orbits_convert(
+        self, altitude_km: float, eccentricity: float
+    ) -> None:
+        """Every LEO sun-synchronous orbit the validator accepts has elements."""
+        orbit = KeplerOrbit(
+            altitude_km=altitude_km, eccentricity=eccentricity, sun_synchronous=True, raan_deg=0.0
+        )
+        elements = orbit.to_elements()
+        assert 0.0 < float(np.ravel(elements.inclination_rad)[0]) < np.pi
+
+    def test_protocol_and_security_convert_to_the_physics_objects(self) -> None:
+        scenario = reference_castelldefels()
+        assert scenario.protocol.to_protocol() == Bb84DecoyProtocol.ntanos_2021()
+        assert scenario.security.to_security() == SecurityParameters(
+            correctness=1e-10, secrecy=1e-10
+        )
+
+
+# --------------------------------------------------------------------------- #
+class TestKeplerOrbit:
+    def test_neither_inclination_nor_sun_synchronous_is_refused(self) -> None:
+        with pytest.raises(
+            ValidationError, match="exactly one of inclination_deg or sun_synchronous"
+        ):
+            KeplerOrbit(altitude_km=700.0, raan_deg=0.0)
+
+    def test_both_is_refused(self) -> None:
+        with pytest.raises(ValidationError, match="exactly one of"):
+            KeplerOrbit(altitude_km=700.0, inclination_deg=98.0, sun_synchronous=True, raan_deg=0.0)
+
+    def test_periapsis_below_ground_is_refused(self) -> None:
+        """700 km up, e >= 700 / 7078 = 0.0989 dips below the equatorial radius."""
+        limit = 700.0 / (6378.137 + 700.0)
+        with pytest.raises(ValidationError, match="periapsis below the Earth"):
+            KeplerOrbit(altitude_km=700.0, eccentricity=limit, inclination_deg=98.0, raan_deg=0.0)
+        KeplerOrbit(
+            altitude_km=700.0, eccentricity=limit * 0.99, inclination_deg=98.0, raan_deg=0.0
+        )
+
+    def test_an_impossible_sun_synchronous_orbit_is_refused_at_validation(self) -> None:
+        """At 20 000 km J2 cannot drive the node fast enough; the physics says so, so does the schema."""
+        with pytest.raises(
+            ValidationError, match="No inclination makes this orbit sun-synchronous"
+        ):
+            KeplerOrbit(altitude_km=20_000.0, sun_synchronous=True, raan_deg=0.0)
+
+    def test_method_maps_to_the_propagator_enum(self) -> None:
+        assert (
+            KeplerOrbit(altitude_km=700.0, inclination_deg=98.0, raan_deg=0.0).propagation_method
+            is PropagationMethod.TWO_BODY
+        )
+        assert (
+            KeplerOrbit(
+                altitude_km=700.0, inclination_deg=98.0, raan_deg=0.0, method="zonal_numeric"
+            ).propagation_method
+            is PropagationMethod.ZONAL_NUMERIC
+        )
+
+    def test_sgp4_is_not_a_kepler_method(self) -> None:
+        """SGP4 takes mean elements a Kepler orbit does not have; only a TLE reaches it."""
+        with pytest.raises(ValidationError, match="method"):
+            KeplerOrbit.model_validate(
+                {"altitude_km": 700.0, "inclination_deg": 98.0, "raan_deg": 0.0, "method": "sgp4"}
+            )
+
+    @pytest.mark.parametrize("field", ["raan_deg", "argp_deg", "true_anomaly_deg"])
+    def test_angles_are_half_open_on_a_turn(self, field: str) -> None:
+        with pytest.raises(ValidationError, match=field):
+            KeplerOrbit(
+                **{"altitude_km": 700.0, "inclination_deg": 98.0, "raan_deg": 0.0, field: 360.0}
+            )
+
+
+class TestTleOrbit:
+    def test_a_valid_tle_parses_and_carries_its_epoch(self) -> None:
+        orbit = TleOrbit(line1=ISS_LINE1, line2=ISS_LINE2, name="ISS (ZARYA)")
+        assert orbit.to_satrec().satnum == 25544
+        assert orbit.epoch_jd == pytest.approx(2458878.41700964, abs=1e-8)
+
+    def test_a_corrupted_checksum_is_refused_at_validation(self) -> None:
+        """The failure ``parse_tle`` finds and ``sgp4`` would not."""
+        with pytest.raises(ValidationError, match="checksum"):
+            TleOrbit(line1=ISS_LINE1[:-1] + "0", line2=ISS_LINE2)
+
+
+class TestOrbitSpec:
+    def test_neither_is_refused(self) -> None:
+        with pytest.raises(ValidationError, match="exactly one of kepler or tle"):
+            OrbitSpec()
+
+    def test_both_is_refused(self) -> None:
+        with pytest.raises(ValidationError, match="exactly one of kepler or tle"):
+            OrbitSpec(
+                kepler=KeplerOrbit(altitude_km=700.0, inclination_deg=98.0, raan_deg=0.0),
+                tle=TleOrbit(line1=ISS_LINE1, line2=ISS_LINE2),
+            )
+
+    def test_is_tle(self) -> None:
+        assert OrbitSpec(tle=TleOrbit(line1=ISS_LINE1, line2=ISS_LINE2)).is_tle
+        assert not OrbitSpec(
+            kepler=KeplerOrbit(altitude_km=700.0, inclination_deg=98.0, raan_deg=0.0)
+        ).is_tle
+
+
+# --------------------------------------------------------------------------- #
+class TestBackgroundSpec:
+    def test_exactly_one_source(self) -> None:
+        with pytest.raises(ValidationError, match="exactly one of sky_radiance"):
+            BackgroundSpec()
+        with pytest.raises(ValidationError, match="exactly one of sky_radiance"):
+            BackgroundSpec(sky_radiance_w_m2_um_sr=1e-5, condition="overcast")
+
+    def test_a_value_resolves_to_itself_without_a_log_entry(
+        self, degradations: DegradationLog
+    ) -> None:
+        spec = BackgroundSpec(sky_radiance_w_m2_um_sr=1.5e-4)
+        assert not spec.is_tabulated
+        assert spec.radiance_w_m2_um_sr(1.55e-6, degradations=degradations) == 1.5e-4
+        assert len(degradations) == 0
+
+    def test_a_table_column_at_a_grid_point_does_not_degrade(
+        self, degradations: DegradationLog
+    ) -> None:
+        spec = BackgroundSpec(condition="overcast")
+        assert spec.condition is SkyCondition.OVERCAST
+        assert spec.radiance_w_m2_um_sr(1.5e-6, degradations=degradations) == 4.44
+        assert len(degradations) == 0
+
+    def test_a_table_column_between_grid_points_records_the_interpolation(
+        self, degradations: DegradationLog
+    ) -> None:
+        """ADR 0009 gap 4: interpolating the ITU table is a substitution and is logged as one."""
+        spec = BackgroundSpec(condition=SkyCondition.NORMAL_SUNSHINE)
+        value = spec.radiance_w_m2_um_sr(1.0e-6, degradations=degradations)
+        assert value > 0.0
+        assert degradations.has_degraded
+        assert degradations.entries[0].severity is Severity.DEGRADED
+
+
+# --------------------------------------------------------------------------- #
+class TestProtocolSpec:
+    def base(self, **overrides: Any) -> dict[str, Any]:
+        data: dict[str, Any] = {
+            "name": "bb84-decoy",
+            "signal_intensity": 0.56,
+            "decoy_intensity": 0.11,
+            "signal_probability": 16 / 21,
+            "decoy_probability": 1 / 21,
+            "vacuum_probability": 4 / 21,
+            "error_correction_efficiency": 1.22,
+            "misalignment_error": 0.01,
+        }
+        data.update(overrides)
+        return data
+
+    def test_an_unregistered_protocol_is_refused_naming_the_registered_ones(self) -> None:
+        """The negative control: E91 is not implemented and must not silently run as BB84."""
+        with pytest.raises(
+            ValidationError, match=r"no QKD protocol is registered as 'e91'.*bb84-decoy"
+        ):
+            ProtocolSpec(**self.base(name="e91"))
+
+    def test_decoy_must_be_weaker_than_signal(self) -> None:
+        with pytest.raises(ValidationError, match="must be below"):
+            ProtocolSpec(**self.base(decoy_intensity=0.56))
+
+    def test_probabilities_must_sum_to_one(self) -> None:
+        with pytest.raises(ValidationError, match="must equal 1"):
+            ProtocolSpec(**self.base(vacuum_probability=0.2))
+
+    def test_the_float_slack_on_the_sum_is_the_protocols_own(self) -> None:
+        """16/21 + 1/21 + 4/21 is not 1.0 in binary and must still be accepted."""
+        spec = ProtocolSpec(**self.base())
+        assert spec.to_protocol() == Bb84DecoyProtocol.ntanos_2021()
+        assert models_module._PROBABILITY_SUM_SLACK == 1e-9
+
+    def test_misalignment_is_a_probability_below_one_half(self) -> None:
+        with pytest.raises(ValidationError, match="misalignment_error"):
+            ProtocolSpec(**self.base(misalignment_error=0.6))
+
+
+# --------------------------------------------------------------------------- #
+class TestTimeSpec:
+    def test_a_naive_datetime_is_the_wall_clock_defect_and_is_refused(self) -> None:
+        with pytest.raises(ValidationError, match="wall clock"):
+            TimeSpec(epoch_utc=dt.datetime(2025, 1, 1), duration_s=60.0, step_s=1.0)
+
+    def test_a_non_utc_offset_is_refused(self) -> None:
+        cest = dt.timezone(dt.timedelta(hours=2))
+        with pytest.raises(ValidationError, match="must be in UTC"):
+            TimeSpec(epoch_utc=dt.datetime(2025, 7, 1, tzinfo=cest), duration_s=60.0, step_s=1.0)
+
+    def test_a_year_outside_the_julian_date_helpers_range_is_refused(self) -> None:
+        """``calendar_to_jd`` refuses years outside [1900, 2100]; so must the schema."""
+        with pytest.raises(ValidationError, match="year"):
+            TimeSpec(epoch_utc=dt.datetime(1850, 1, 1, tzinfo=UTC), duration_s=60.0, step_s=1.0)
+
+    def test_a_fractional_step_count_is_refused(self) -> None:
+        with pytest.raises(ValidationError, match="not a whole multiple"):
+            TimeSpec(epoch_utc=dt.datetime(2025, 1, 1, tzinfo=UTC), duration_s=10.0, step_s=3.0)
+
+    def test_the_slack_is_the_grids_slack(self) -> None:
+        """0.3 / 0.1 is 2.9999999999999996; ``TimeGrid.uniform`` accepts it, so does the schema."""
+        time = TimeSpec(epoch_utc=dt.datetime(2025, 1, 1, tzinfo=UTC), duration_s=0.3, step_s=0.1)
+        assert time.grid().n == 4
+        assert models_module._GRID_STEP_SLACK == 1e-9
+
+    def test_an_iso_string_with_z_parses_to_utc(self) -> None:
+        time = TimeSpec.model_validate(
+            {"epoch_utc": "2025-01-01T00:00:00Z", "duration_s": 60.0, "step_s": 1.0}
+        )
+        assert time.epoch_utc.tzinfo is not None
+        assert time.epoch_jd == 2460676.5
+
+
+# --------------------------------------------------------------------------- #
+class TestOptionSpecs:
+    def test_monte_carlo_quantiles_must_be_probabilities_in_increasing_order(self) -> None:
+        base = {
+            "realisations": 10,
+            "scintillation_correlation_time_s": 0.01,
+            "pointing_correlation_time_s": 0.1,
+        }
+        with pytest.raises(ValidationError, match=r"quantiles must lie in \(0, 1\)"):
+            MonteCarloSpec(**base, quantiles=(0.0, 0.5))
+        with pytest.raises(ValidationError, match="strictly increasing"):
+            MonteCarloSpec(**base, quantiles=(0.5, 0.5))
+        with pytest.raises(ValidationError, match="strictly increasing"):
+            MonteCarloSpec(**base, quantiles=(0.9, 0.1))
+        assert MonteCarloSpec(**base).quantiles == (0.05, 0.5, 0.95)
+
+    def test_monte_carlo_seed_bounds_are_the_random_sources(self) -> None:
+        base = {
+            "realisations": 10,
+            "scintillation_correlation_time_s": 0.01,
+            "pointing_correlation_time_s": 0.1,
+        }
+        with pytest.raises(ValidationError, match="seed"):
+            MonteCarloSpec(**base, seed=-1)
+        with pytest.raises(ValidationError, match="seed"):
+            MonteCarloSpec(**base, seed=2**64)
+        assert MonteCarloSpec(**base, seed=None).seed is None
+
+    def test_multi_station_policy_default(self) -> None:
+        assert MultiStationSpec().policy is AggregationPolicyName.BEST_AVAILABLE
+        assert MultiStationSpec(policy="sum").policy is AggregationPolicyName.SUM
+
+    def test_relay_pairs(self) -> None:
+        with pytest.raises(ValidationError, match="two different stations"):
+            RelaySpec(pairs=[("a", "a")])
+        with pytest.raises(ValidationError, match="pairs"):
+            RelaySpec(pairs=[])
+        assert RelaySpec.model_validate({"pairs": [["a", "b"]]}).pairs == [("a", "b")]
+
+
+# --------------------------------------------------------------------------- #
+class TestScenario:
+    def test_a_misspelled_key_is_refused_not_ignored(self) -> None:
+        data = with_override(
+            reference_dict(),
+            "transmitter",
+            {**reference_dict()["transmitter"], "wavelenght_nm": 1.0},
+        )
+        with pytest.raises(ValidationError, match="wavelenght_nm"):
+            Scenario.model_validate(data)
+
+    def test_frozen(self) -> None:
+        scenario = reference_castelldefels()
+        with pytest.raises(ValidationError, match="frozen"):
+            scenario.name = "other"  # type: ignore[misc]
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf")])
+    def test_non_finite_values_are_refused(self, bad: float) -> None:
+        with pytest.raises(ValidationError, match="altitude_km"):
+            Scenario.model_validate(
+                with_override(reference_dict(), "orbit.kepler.altitude_km", bad)
+            )
+
+    def test_duplicate_station_names(self) -> None:
+        data = reference_dict()
+        data["stations"] = [data["stations"][0], data["stations"][0]]
+        with pytest.raises(ValidationError, match="station names must be unique"):
+            Scenario.model_validate(data)
+
+    def test_relay_pairs_must_name_stations(self) -> None:
+        data = with_override(reference_dict(), "relay", {"pairs": [["castelldefels", "nowhere"]]})
+        with pytest.raises(ValidationError, match=r"do not exist: \['nowhere'\]"):
+            Scenario.model_validate(data)
+
+    def test_gate_wider_than_the_pulse_period_is_refused(self) -> None:
+        """The rule ``LinkConditions`` enforces, caught before any physics runs."""
+        data = with_override(
+            reference_dict(), "receiver.gate_ns", 11.0
+        )  # period is 10 ns at 100 MHz
+        with pytest.raises(ValidationError, match="exceeds the pulse period"):
+            Scenario.model_validate(data)
+
+    def test_a_tabulated_background_outside_the_itu_table_is_refused(self) -> None:
+        """1550 nm is outside 530-1500 nm; the physics would raise, so the schema refuses first."""
+        data = with_override(reference_dict(), "background", {"condition": "overcast"})
+        with pytest.raises(ValidationError, match="tabulated only for wavelengths 530-1500 nm"):
+            Scenario.model_validate(data)
+
+    def test_a_tabulated_background_inside_the_table_is_accepted(self) -> None:
+        data = with_override(reference_dict(), "background", {"condition": "overcast"})
+        data = with_override(data, "transmitter.wavelength_nm", 850.0)
+        assert Scenario.model_validate(data).background.condition is SkyCondition.OVERCAST
+
+    def test_another_schema_version_is_refused(self) -> None:
+        with pytest.raises(ValidationError, match=f"this code reads version {SCHEMA_VERSION}"):
+            Scenario.model_validate(with_override(reference_dict(), "schema_version", 2))
+
+    def test_station_lookup(self) -> None:
+        scenario = reference_castelldefels()
+        assert scenario.station_names == ("castelldefels",)
+        assert scenario.station("castelldefels") is scenario.stations[0]
+        with pytest.raises(KeyError, match="no station named 'x'"):
+            scenario.station("x")
+
+    def test_physics_dict_drops_the_labels(self) -> None:
+        payload = reference_castelldefels().physics_dict()
+        assert "name" not in payload and "description" not in payload
+        assert payload["channel"]["fade_combination"] == "exact"
+        assert payload["time"]["epoch_utc"] == "2025-01-01T00:00:00Z"
+
+    def test_enums_accept_members_and_values(self) -> None:
+        assert (
+            ChannelSpec(zenith_transmittance=1.0, fade_combination="additive").fade_combination
+            is FadeCombination.ADDITIVE
+        )
+
+
+# --------------------------------------------------------------------------- #
+class TestTheModuleSurface:
+    def test_it_imports_nothing_from_system_or_engine(self) -> None:
+        """Layering, checked on the AST: ``scenario`` sits above the physics and below the engine."""
+        source = Path(str(models_module.__file__)).read_text(encoding="utf-8")
+        imported: set[str] = set()
+        for node in ast.walk(ast.parse(source)):
+            if isinstance(node, ast.ImportFrom) and node.module:
+                imported.add(node.module)
+            elif isinstance(node, ast.Import):
+                imported.update(alias.name for alias in node.names)
+        forbidden = {name for name in imported if name.startswith(("quoss.system", "quoss.engine"))}
+        assert forbidden == set()
+
+    def test_every_numeric_field_carries_a_bound(self) -> None:
+        """An unbounded float is a plausible wrong number the schema would wave through.
+
+        ``schema_version`` is the one exception: it is not a quantity but a
+        label checked for equality by its own validator.
+        """
+        unbounded: list[str] = []
+        for model in SpecModel.__subclasses__():
+            for name, info in model.model_fields.items():
+                annotation = info.annotation
+                members = (
+                    set(get_args(annotation)) if isinstance(annotation, UnionType) else {annotation}
+                )
+                members.discard(NoneType)
+                if not members or not members <= {float, int}:
+                    continue
+                if (model, name) == (Scenario, "schema_version"):
+                    continue
+                if not any(isinstance(m, Gt | Ge | Lt | Le) for m in info.metadata):
+                    unbounded.append(f"{model.__name__}.{name}")
+        assert unbounded == []

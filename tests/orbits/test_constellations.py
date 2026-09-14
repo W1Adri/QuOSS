@@ -39,6 +39,8 @@ Organised by verification level, per `tests/golden/README.md`:
   *not* claimed as validation.
 """
 
+from collections.abc import Callable
+
 import numpy as np
 import pytest
 from hypothesis import given, settings
@@ -51,6 +53,7 @@ from quoss.core.constants import (
     EGM96_RADIUS_EQUATORIAL_KM,
 )
 from quoss.core.errors import ConvergenceError, DomainError
+from quoss.orbits import constellations
 from quoss.orbits.constellations import (
     SUN_SYNCHRONOUS_RAAN_RATE_RAD_S,
     repeat_ground_track_semi_major_axis_km,
@@ -500,6 +503,58 @@ class TestRepeatGroundTrackConvergenceError:
     def test_raises_convergence_error_with_no_sign_change(self) -> None:
         with pytest.raises(ConvergenceError, match="sign change"):
             repeat_ground_track_semi_major_axis_km(16, 1, np.deg2rad(63.4), 0.9)
+
+
+class TestTheBracketEndThatIsAlreadyTheRoot:
+    """What happens when the residual is *exactly* zero at an end of the bracket.
+
+    ``brentq`` locates a root strictly inside a bracket whose ends have opposite
+    signs. An exact zero at an end has neither: ``(f_lo > 0) == (f_hi > 0)``
+    would be true for ``f_lo = 0`` and any positive ``f_hi``, so without these
+    two guards the solver would raise "no sign change" while standing on the
+    answer. It is a guard against a boundary, not against a physical case — the
+    residual is a difference of two irrational-looking rates and will not be
+    bit-exactly zero on any real orbit — so the residual is stubbed rather than
+    a semi-major axis hunted for.
+
+    The two ends are separate tests because they are separate branches, and a
+    guard that only worked at one end would pass a test that checked one.
+    """
+
+    @staticmethod
+    def zero_at(target_km: float) -> Callable[..., float]:
+        """Return a residual that vanishes exactly at ``target_km`` and is positive elsewhere."""
+
+        def residual(a_km: float, *args: object, **kwargs: object) -> float:
+            del args, kwargs
+            return 0.0 if a_km == target_km else 1.0
+
+        return residual
+
+    def brackets(self) -> tuple[float, float]:
+        """Return the two bracket ends the solver builds for the Landsat cycle."""
+        period_s = 2.0 * np.pi / (233.0 / 16.0 * EARTH_ROTATION_RAD_S)
+        axis_km = float(semi_major_axis_from_period_km(np.array([period_s]))[0])
+        return (
+            axis_km * (1.0 - constellations._BRACKET_RELATIVE_HALF_WIDTH),
+            axis_km * (1.0 + constellations._BRACKET_RELATIVE_HALF_WIDTH),
+        )
+
+    def test_a_root_at_the_low_end_is_returned_and_not_refused(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        lo_km, _ = self.brackets()
+        monkeypatch.setattr(constellations, "_resonance_residual_rad_s", self.zero_at(lo_km))
+        solved = repeat_ground_track_semi_major_axis_km(233, 16, np.deg2rad(98.2), 0.0)
+        assert float(solved[0]) == lo_km
+
+    def test_a_root_at_the_high_end_is_returned_and_not_refused(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _, hi_km = self.brackets()
+        monkeypatch.setattr(constellations, "_resonance_residual_rad_s", self.zero_at(hi_km))
+        solved = repeat_ground_track_semi_major_axis_km(233, 16, np.deg2rad(98.2), 0.0)
+        assert float(solved[0]) == hi_km
 
 
 class TestRepeatGroundTrackAgainstLandsat8:

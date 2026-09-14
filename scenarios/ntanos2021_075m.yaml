@@ -1,0 +1,103 @@
+# Ntanos et al. 2021, Photonics 8(12):544 — the Cholomondas (0.75 m) downlink.
+# Must equal `quoss.scenario.defaults.ntanos_2021(0.75)` (tests/scenario/test_scenario_files.py).
+#
+# What is the paper's and what is QuOSS's choice:
+#   paper   — altitude 600 km and inclination 97.4 deg (§4.3); station coordinates and
+#             height (§2); transmitter, receiver, protocol and 20 deg floor (§4.1);
+#             study-night radiance (§4.2.2).
+#   choice  — RAAN, argument of periapsis, true anomaly, circular shape, epoch and the
+#             one-day window. The paper propagates ten satellites with STK and prints
+#             no elements.
+#   caveat  — the paper prints "longitude: 40.3419, latitude: 23.5060" for Cholomondas;
+#             the labels are swapped (Cholomondas is in northern Greece, 40 N 23.5 E),
+#             so the values are used as printed under the corrected labels.
+#   caveat  — 97.4 deg is the printed inclination; the sun-synchronous condition at
+#             600 km gives 97.79 deg. The printed value is used because it is the
+#             paper's parameter (see quoss/scenario/defaults.py).
+
+name: ntanos2021_cholomondas
+description: 'Ntanos et al. 2021 (Photonics 8(12):544) downlink to Cholomondas (0.75
+  m): 600 km orbit at the printed 97.4 deg inclination, §4.1 transmitter, receiver
+  and protocol, study-night radiance, 20 deg floor. RAAN, anomaly, epoch and circular
+  shape are QuOSS choices; the paper does not state them.'
+schema_version: 1
+
+orbit:
+  kepler:
+    altitude_km: 600.0          # NTANOS_ORBIT_HEIGHT_KM (§4.2.1, §4.3)
+    eccentricity: 0.0           # choice: circular
+    inclination_deg: 97.4       # §4.3 as printed (see caveat above)
+    sun_synchronous: false
+    raan_deg: 0.0               # choice
+    argp_deg: 0.0               # choice
+    true_anomaly_deg: 0.0       # choice
+    method: two_body
+  tle: null
+
+stations:
+  - name: cholomondas
+    latitude_deg: 40.3419       # §2, labels corrected
+    longitude_deg: 23.506
+    altitude_m: 850.0           # §2
+    receive_aperture_m: 0.75    # §4.1, NTANOS_OGS_APERTURES_M[0]
+    ground_cn2_m23: 1.7e-14     # ITU-R P.1621-2 reference site (the paper uses HV 5/7 too)
+    rms_wind_speed_m_s: 21.0
+    cloud_fraction: null
+
+transmitter:
+  wavelength_nm: 1550.0
+  aperture_m: 0.15              # NTANOS_TRANSMIT_APERTURE_M
+  truncation_ratio: 1.0
+  pointing_jitter_urad: 0.75    # NTANOS_POINTING_JITTER_RAD
+  pulse_rate_hz: 100000000.0    # NTANOS_SOURCE_PULSE_RATE_HZ
+
+channel:
+  zenith_transmittance: 1.0     # the paper declares no extinction (ADR 0009 gap 14)
+  static_loss_db: 0.0
+  outage_probability: 0.01      # NTANOS_OUTAGE_PROBABILITY
+  fade_combination: exact
+
+receiver:
+  detector_efficiency: 0.85     # NTANOS_SNSPD_EFFICIENCY
+  optical_loss_db: 5.65         # 3.0 dB filter + 2.65 dB receiver
+  dark_count_rate_cps: 300.0    # NTANOS_SNSPD_DARK_COUNT_RATE_CPS
+  detector_count: 2
+  afterpulse_probability: 0.0
+  dead_time_ns: 30.0            # NTANOS_SNSPD_DEAD_TIME_S
+  gate_ns: 1.0                  # NTANOS_SNSPD_GATE_DURATION_S
+  timing_jitter_fwhm_ps: 50.0   # NTANOS_SNSPD_TIMING_JITTER_FWHM_S
+  field_of_view_urad: 100.0     # NTANOS_RECEIVER_FIELD_OF_VIEW_RAD
+  filter_bandwidth_nm: 0.2      # NTANOS_FILTER_BANDWIDTH_M
+
+background:
+  sky_radiance_w_m2_um_sr: 0.00015  # NTANOS_STUDY_NIGHT_RADIANCE_W_M2_UM_SR
+  condition: null
+
+protocol:
+  name: bb84-decoy
+  signal_intensity: 0.56        # NTANOS_SIGNAL_INTENSITY
+  decoy_intensity: 0.11         # NTANOS_DECOY_INTENSITY
+  signal_probability: 0.7619047619047619    # 16/21, NTANOS_STATE_COUNTS
+  decoy_probability: 0.047619047619047616   #  1/21
+  vacuum_probability: 0.19047619047619047   #  4/21
+  error_correction_efficiency: 1.22         # NTANOS_ERROR_CORRECTION_EFFICIENCY
+  misalignment_error: 0.01      # QuOSS choice (the paper's visibility 0.98 implies 0.01)
+  key_basis_probability: 0.5
+
+security:
+  correctness: 1.0e-10
+  secrecy: 1.0e-10
+  compose_daily: true
+
+time:
+  epoch_utc: '2025-01-01T00:00:00Z'   # choice
+  duration_s: 86400.0
+  step_s: 1.0
+
+passes:
+  minimum_elevation_deg: 20.0   # NTANOS_MINIMUM_ELEVATION_RAD (§4.1, §4.3)
+  minimum_duration_s: 0.0
+
+monte_carlo: null
+multi_station: null
+relay: null
