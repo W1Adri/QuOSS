@@ -5423,3 +5423,93 @@ estación, con y sin Monte Carlo), en los cuatro formatos, leyendo cada fichero.
 `data/snapshots/cloud_cover/castelldefels_2025-01-01_02.json`,
 `tests/io/test_{cache,celestrak,openmeteo,snapshots,export,stations}.py`,
 `docs/adr/0015-external-data-isolation-and-snapshots.md`.
+
+---
+
+## 32. Dos tests que informaban de su entorno en vez de del código
+
+> **Nota de orden:** esta entrada y la de `tests/e2e/` llevan las dos el número 32
+> porque salen de dos ramas hermanas de la misma auditoría. Al integrar, la que
+> entre segunda pasa a 33.
+
+Dos arreglos pequeños y de la misma familia: un test falla —o no falla— por algo
+que no es el código que prueba. Ninguno de los dos toca física.
+
+### El primero: una figura asertada por las etiquetas que eligió matplotlib
+
+`tests/viz/test_plots.py::TestSkyTrack::test_one_track_per_pass_at_the_zenith_angle`
+comprobaba la escala radial del gráfico de traza celeste así:
+
+```python
+assert [(tick.get_loc(), tick.label1.get_text()) for tick in ax.yaxis.get_major_ticks()] == [
+    (30.0, "60°"), (60.0, "30°"), (90.0, "0°"),
+]
+```
+
+**Qué hace ese gráfico, para quien llegue nuevo.** Es un gráfico polar del cielo
+visto desde la estación: el ángulo es el acimut (por dónde) y el **radio es el
+ángulo cenital** (cuánto le falta al satélite para estar justo encima). Las
+etiquetas de los anillos, en cambio, son la **elevación** — lo habitual en
+astronomía—, así que radio y etiqueta corren al revés: un anillo a `r = 30°` del
+centro está a `60°` sobre el horizonte. La relación es `etiqueta = 90 − r`.
+
+**Por qué esa asserción estaba mal escrita.** El gráfico pide **cuatro** anillos
+(0, 30, 60, 90); cuántos se dibujan lo decide matplotlib, no el código: su
+`RadialLocator` polar descarta el tick que cae exactamente en el origen —aquí
+`r = 0`, el cenit— y **si lo hace ha cambiado entre versiones**. Una lista fija
+de etiquetas convierte una actualización de matplotlib en un fallo rojo con la
+figura perfectamente correcta: el test informa de su dependencia y no del código.
+
+**Lo que aserta ahora** es la propiedad que tiene que valer en cualquier versión
+porque sin ella la figura se lee mal: cada anillo dibujado está en un radio del
+conjunto pedido y lleva la etiqueta `90 − r`, y hay **al menos dos** anillos
+(con uno solo no hay escala contra la que interpolar). Comprobado por mutación:
+invertir la lista de etiquetas en `plots.py` —el error real que esto protege,
+porque nadie lo ve a ojo en un polar— hace fallar el test.
+
+El comentario de `plots.py` también afirmaba como hecho que el anillo `r = 0`
+«nunca se dibuja». Es el comportamiento de **una** versión, no una propiedad, y
+ahora lo dice así.
+
+### El segundo: un `importorskip` colocado donde no se ejecuta
+
+`quoss` instala sin `quoss[export]` a propósito: Parquet necesita `pyarrow`, que
+son 40 MB y no es una dependencia de física. Sin ese extra,
+`tests/io/test_export.py` daba **7 errores** — no saltados, errores.
+
+`test_parquet_reads_back` **ya tenía** su `pytest.importorskip("pyarrow.parquet")`.
+No servía de nada: el *fixture* de la clase ya había llamado a `export_result` con
+`"parquet"` entre los formatos, que sin `pyarrow` levanta `ConfigurationError`, y
+un fixture que falla es un **error** de todos los tests de la clase — incluidos
+los seis que solo leen CSV, npz y JSON y no tienen nada que ver con Parquet.
+
+**La lección, que generaliza:** una guarda de dependencia tiene que estar **aguas
+arriba** de lo que la necesita, no al lado. Aquí eso significa partir el fixture:
+`exported` exporta `CORE_FORMATS = ("json", "csv", "npz")`, cuyos escritores no
+necesitan más que numpy y la biblioteca estándar; `exported_with_parquet` añade
+Parquet y hace `importorskip` antes de exportar nada.
+
+Medido: sin `pyarrow`, de **32 pasan y 7 errores** a **38 pasan y 2 saltados**.
+Con `pyarrow`, `src/quoss/io/export.py` sigue al **100 %** de líneas y ramas —los
+caminos de Parquet los cubren los dos tests que ahora dependen del fixture nuevo—
+y hay un test más que antes, porque la lista de ficheros y sus SHA-256 se
+comprueban dos veces: la de los formatos del núcleo y la de los ocho ficheros.
+
+### Lo que esto **no** era
+
+El diagnóstico de partida decía que `TestSkyTrack` **fallaba** en el árbol. En
+`matplotlib 3.11.1` no falla: pasa. Lo que estaba mal no era el resultado sino la
+forma de la asserción, y por eso se arregla igual — un test que hoy pasa por la
+versión que hay instalada es el mismo defecto un día antes de manifestarse.
+
+### Verificación
+
+Suite completa: **3 230 tests** (uno más que los 3 229 de la línea base de esta
+rama). `ruff check`, `ruff format --check` y `mypy` limpios. Cobertura con ramas:
+`io/export.py` y los cuatro módulos de `viz/` al **100 %**. Sin `pyarrow` en el
+entorno, `tests/io/test_export.py` da 38 pasan y 2 saltados y ningún error.
+
+### Ficheros
+
+`tests/viz/test_plots.py`, `tests/io/test_export.py`, `src/quoss/viz/plots.py`
+(solo un comentario).
