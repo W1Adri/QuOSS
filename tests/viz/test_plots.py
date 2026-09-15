@@ -455,16 +455,25 @@ class TestSkyTrack:
         }
         # The radius is the zenith angle and the label is the elevation, so they run
         # the opposite way: r = 30 deg from the centre is 60 deg above the horizon.
-        # Only three of the four requested rings are drawn — matplotlib's polar
-        # RadialLocator drops the tick that sits exactly on the origin, which here is
-        # r = 0, the zenith — and the labels stay paired with the rings that remain.
-        assert [
-            (tick.get_loc(), tick.label1.get_text()) for tick in ax.yaxis.get_major_ticks()
-        ] == [
-            (30.0, "60°"),
-            (60.0, "30°"),
-            (90.0, "0°"),
-        ]
+        #
+        # Asserted as that *relation* and not as a list of labels, and the difference
+        # is which party the test is about. Four rings are requested; how many come
+        # back is matplotlib's choice, not the plot's — its polar RadialLocator drops
+        # a tick sitting exactly on the origin, which here is r = 0, the zenith, and
+        # whether it does has moved between versions. A test pinned to the surviving
+        # list therefore fails on a matplotlib upgrade while the figure is still
+        # correct, which is a test reporting on its dependency instead of on the code.
+        #
+        # What must hold in every version, because the figure is unreadable otherwise,
+        # is that a ring at radius r carries the label `90 - r`: radial labels that
+        # drift out of step with their rings would be misread by everyone, silently.
+        rings = [(tick.get_loc(), tick.label1.get_text()) for tick in ax.yaxis.get_major_ticks()]
+        assert {loc for loc, _ in rings} <= {0.0, 30.0, 60.0, 90.0}
+        for loc, label in rings:
+            assert label == f"{90.0 - loc:g}°", f"ring at r={loc} is labelled {label!r}"
+        # Two rings is the floor for a radial scale to be readable at all: one ring
+        # gives a reader no spacing to interpolate against.
+        assert len(rings) >= 2
 
     def test_a_pass_between_grid_samples_is_skipped(self) -> None:
         result = make_result()

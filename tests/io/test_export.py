@@ -35,6 +35,15 @@ EPOCH_JD = 2_460_676.5
 DAY_NUMBER = 2_460_677
 """JDN of 2025-01-01 (tests/system/reference.py::REFERENCE_DAY_NUMBER)."""
 
+CORE_FORMATS = ("json", "csv", "npz")
+"""The formats whose writers need nothing beyond numpy and the standard library.
+
+:data:`~quoss.io.export.FORMATS` is these plus ``"parquet"``, which needs
+``pyarrow`` — the ``quoss[export]`` extra, absent from a default install. Tests
+that do not care about Parquet export these, so that missing an optional extra
+skips one test instead of erroring seven.
+"""
+
 FINITE_BITS = (190_581.0, 0.0)
 ASYMPTOTIC_BITS = (1_548_341.0, 319_898.0)
 """Passes 1 and 2 of the reference day (docs/adr/0011, decision 2 table)."""
@@ -173,12 +182,40 @@ class TestFormats:
 
 
 class TestRealResultAllFormats:
-    """Export the real result in every format and read each file back."""
+    """Export the real result and read each file back.
+
+    Split over two fixtures by what the environment has. ``exported`` uses
+    :data:`CORE_FORMATS`, whose writers need nothing but numpy and the standard
+    library, so every test over CSV, npz and JSON runs in any environment.
+    ``exported_with_parquet`` adds Parquet and skips when ``pyarrow`` is absent.
+
+    **Why the split and not one ``importorskip``.** There was one, inside
+    ``test_parquet_reads_back``, and it never ran: the fixture had already
+    called ``export_result`` with ``"parquet"`` in the formats, which raises
+    ``ConfigurationError`` without ``pyarrow``, so the whole class errored — six
+    tests that have nothing to do with Parquet included. A skip guard has to sit
+    upstream of the thing that needs the dependency, not next to it. ``quoss``
+    installs without ``quoss[export]`` on purpose (pyarrow is 40 MB and not a
+    physics dependency), so a suite that errors without it is telling the truth
+    about the extra and a lie about the core.
+    """
 
     @pytest.fixture
     def exported(
         self, tmp_path: Path, degradations: DegradationLog
     ) -> tuple[Path, Any, SimulationResult]:
+        result = build_result()
+        out = export_result(
+            result, tmp_path / "run", formats=CORE_FORMATS, degradations=degradations
+        )
+        assert len(degradations) == 0
+        return tmp_path / "run", out, result
+
+    @pytest.fixture
+    def exported_with_parquet(
+        self, tmp_path: Path, degradations: DegradationLog
+    ) -> tuple[Path, Any, SimulationResult]:
+        pytest.importorskip("pyarrow", reason="Parquet export is the quoss[export] extra")
         result = build_result()
         out = export_result(result, tmp_path / "run", formats=FORMATS, degradations=degradations)
         assert len(degradations) == 0
@@ -191,9 +228,6 @@ class TestRealResultAllFormats:
             "daily.csv",
             "series_castelldefels.csv",
             "arrays.npz",
-            "passes.parquet",
-            "daily.parquet",
-            "series_castelldefels.parquet",
             "result.json",
         ]
         for f in out.files:
@@ -201,7 +235,7 @@ class TestRealResultAllFormats:
             assert f == ExportedFile(f.name, hashlib.sha256(data).hexdigest(), len(data))
         manifest = json.loads(out.manifest_path.read_text())
         assert manifest["files"] == [f.to_dict() for f in out.files]
-        assert manifest["export"]["formats"] == list(FORMATS)
+        assert manifest["export"]["formats"] == list(CORE_FORMATS)
         assert manifest["export"]["quoss_version"] == quoss.__version__
         assert manifest["export"]["created_utc"] == out.created_utc
         assert manifest["result"] == result.to_manifest_and_arrays()[0]
@@ -314,9 +348,32 @@ class TestRealResultAllFormats:
         assert rebuilt.passes.finite_bits.tolist() == list(FINITE_BITS)
         assert rebuilt.to_dict() == result.to_dict()
 
-    def test_parquet_reads_back(self, exported: tuple[Path, Any, SimulationResult]) -> None:
+    def test_the_parquet_files_join_the_list_and_the_manifest(
+        self, exported_with_parquet: tuple[Path, Any, SimulationResult]
+    ) -> None:
+        directory, out, _ = exported_with_parquet
+        assert [f.name for f in out.files] == [
+            "passes.csv",
+            "daily.csv",
+            "series_castelldefels.csv",
+            "arrays.npz",
+            "passes.parquet",
+            "daily.parquet",
+            "series_castelldefels.parquet",
+            "result.json",
+        ]
+        for f in out.files:
+            data = (directory / f.name).read_bytes()
+            assert f == ExportedFile(f.name, hashlib.sha256(data).hexdigest(), len(data))
+        manifest = json.loads(out.manifest_path.read_text())
+        assert manifest["files"] == [f.to_dict() for f in out.files]
+        assert manifest["export"]["formats"] == list(FORMATS)
+
+    def test_parquet_reads_back(
+        self, exported_with_parquet: tuple[Path, Any, SimulationResult]
+    ) -> None:
         pq = pytest.importorskip("pyarrow.parquet")
-        directory, _, _ = exported
+        directory, _, _ = exported_with_parquet
         passes = pq.read_table(directory / "passes.parquet").to_pydict()
         assert passes["station"] == ["castelldefels", "castelldefels"]
         assert passes["finite_bits"] == list(FINITE_BITS) and passes["has_key"] == [True, False]

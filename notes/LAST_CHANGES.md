@@ -5458,192 +5458,90 @@ estación, con y sin Monte Carlo), en los cuatro formatos, leyendo cada fichero.
 
 ---
 
-## 32. `tests/e2e/test_reference_scenarios.py` — el puente que el motor decía tener, y los 457 bits que tapaba
+## 32. Dos tests que informaban de su entorno en vez de del código
 
-### Qué es esto, para quien llegue nuevo
+> **Nota de orden:** esta entrada y la de `tests/e2e/` llevan las dos el número 32
+> porque salen de dos ramas hermanas de la misma auditoría. Al integrar, la que
+> entre segunda pasa a 33.
 
-`quoss.engine.pipeline.run` toma un **escenario** —la descripción completa y
-validada de una ejecución, normalmente un YAML— y devuelve un **resultado**. Por
-el camino llama, en orden, a las funciones de física de `orbits/`, `channel/`,
-`qkd/` y `system/`, y mete lo que devuelven en contenedores.
+Dos arreglos pequeños y de la misma familia: un test falla —o no falla— por algo
+que no es el código que prueba. Ninguno de los dos toca física.
 
-Su afirmación no es sobre la física, es sobre la fontanería, y es **negativa**:
-*el motor no calcula nada que no calcularía una persona llamando a esas funciones
-a mano*. `src/quoss/engine/__init__.py` decía, desde su primera línea, que
-`tests/e2e/test_reference_scenarios.py` lo probaba **bit a bit**.
+### El primero: una figura asertada por las etiquetas que eligió matplotlib
 
-**Ese fichero no existía.** `tests/e2e/` tenía `__init__.py` y `oracle.py` —la
-cadena cableada a mano, escrita, completa y sin usar por nadie—. La afirmación
-más fuerte del paquete era la única sin comprobar.
+`tests/viz/test_plots.py::TestSkyTrack::test_one_track_per_pass_at_the_zenith_angle`
+comprobaba la escala radial del gráfico de traza celeste así:
 
-### Por qué esa afirmación necesita un test y no basta el docstring
+```python
+assert [(tick.get_loc(), tick.label1.get_text()) for tick in ax.yaxis.get_major_ticks()] == [
+    (30.0, "60°"), (60.0, "30°"), (90.0, "0°"),
+]
+```
 
-Porque un orquestador es justo el sitio donde un número cambia sin que nada
-parezca mal. Un `keyword` olvidado, un defecto distinto del que el llamante
-habría elegido, una magnitud recalculada en vez de reutilizada: los tres dan un
-resultado **del tamaño correcto**, sin excepción, sin `NaN` y sin aviso. Es la
-forma de «degradar en silencio» que le toca a `engine/`.
+**Qué hace ese gráfico, para quien llegue nuevo.** Es un gráfico polar del cielo
+visto desde la estación: el ángulo es el acimut (por dónde) y el **radio es el
+ángulo cenital** (cuánto le falta al satélite para estar justo encima). Las
+etiquetas de los anillos, en cambio, son la **elevación** — lo habitual en
+astronomía—, así que radio y etiqueta corren al revés: un anillo a `r = 30°` del
+centro está a `60°` sobre el horizonte. La relación es `etiqueta = 90 − r`.
 
-Y había un síntoma: el día de referencia tenía **dos** cifras de clave finita en
-el árbol a la vez, **432 985 bits** (la que citan el README, el ADR 0011, los
-docstrings de `system/` y este fichero) y **433 442 bits** (la que devuelve
-`run(reference_castelldefels())`). 457 bits, el **0.106 %** — del tamaño exacto
-que no llama la atención.
+**Por qué esa asserción estaba mal escrita.** El gráfico pide **cuatro** anillos
+(0, 30, 60, 90); cuántos se dibujan lo decide matplotlib, no el código: su
+`RadialLocator` polar descarta el tick que cae exactamente en el origen —aquí
+`r = 0`, el cenit— y **si lo hace ha cambiado entre versiones**. Una lista fija
+de etiquetas convierte una actualización de matplotlib en un fallo rojo con la
+figura perfectamente correcta: el test informa de su dependencia y no del código.
 
-### El diagnóstico: son dos enlaces, no dos aritméticas
+**Lo que aserta ahora** es la propiedad que tiene que valer en cualquier versión
+porque sin ella la figura se lee mal: cada anillo dibujado está en un radio del
+conjunto pedido y lleva la etiqueta `90 − r`, y hay **al menos dos** anillos
+(con uno solo no hay escala contra la que interpolar). Comprobado por mutación:
+invertir la lista de etiquetas en `plots.py` —el error real que esto protege,
+porque nadie lo ve a ojo en un polar— hace fallar el test.
 
-`oracle.py` tiene un parámetro que los constructores de `tests/system/` no
-tienen: `station_height_m`. Con él se reproducen, **a la última cifra**, las dos
-columnas:
+El comentario de `plots.py` también afirmaba como hecho que el anillo `r = 0`
+«nunca se dibuja». Es el comportamiento de **una** versión, no una propiedad, y
+ahora lo dice así.
 
-| `station_height_m` | Por pase | Día finito | Día asintótico |
-|---|---|---|---|
-| 0 m | 190 581, 0, 242 404, 0 | **432 985** | 3 776 680.752646787 |
-| 30 m | 190 807, 0, 242 635, 0 | **433 442** | 3 779 461.558061474 |
+### El segundo: un `importorskip` colocado donde no se ejecuta
 
-y la segunda fila es, campo por campo, lo que devuelve el motor.
+`quoss` instala sin `quoss[export]` a propósito: Parquet necesita `pyarrow`, que
+son 40 MB y no es una dependencia de física. Sin ese extra,
+`tests/io/test_export.py` daba **7 errores** — no saltados, errores.
 
-`StationSpec.altitude_m` es **dos cosas a la vez**, y el esquema lo dice en la
-descripción del propio campo: dónde está la estación (entra en `look_angles`) y
-dónde **empieza el perfil de turbulencia** (`station_height_m` de todas las
-funciones de `channel/`). El *fixture* de la etapa 3 pasa los 30 m de
-Castelldefels a la geometría y deja la turbulencia en su defecto de 0 m. El motor
-cablea el campo.
+`test_parquet_reads_back` **ya tenía** su `pytest.importorskip("pyarrow.parquet")`.
+No servía de nada: el *fixture* de la clase ya había llamado a `export_result` con
+`"parquet"` entre los formatos, que sin `pyarrow` levanta `ConfigurationError`, y
+un fixture que falla es un **error** de todos los tests de la clase — incluidos
+los seis que solo leen CSV, npz y JSON y no tienen nada que ver con Parquet.
 
-Como las dos filas salen de **la misma cadena con un solo argumento distinto**, la
-diferencia queda atribuida a ese término y a ningún otro — y el test lo cierra por
-los dos lados: los dos enlaces ven **los mismos pases** (misma tabla, mismos
-ángulos; la posición de la estación es otro argumento y vale 30 m en los dos
-casos), y de los nueve términos del presupuesto de pérdidas solo se mueve el de
-**centelleo**, como mucho **0.0185 dB**.
+**La lección, que generaliza:** una guarda de dependencia tiene que estar **aguas
+arriba** de lo que la necesita, no al lado. Aquí eso significa partir el fixture:
+`exported` exporta `CORE_FORMATS = ("json", "csv", "npz")`, cuyos escritores no
+necesitan más que numpy y la biblioteca estándar; `exported_with_parquet` añade
+Parquet y hace `importorskip` antes de exportar nada.
 
-**Cuál va al paper: la del motor, 433 442.** En un escenario `altitude_m` es un
-campo y no puede significar dos cosas; ignorarlo para cuadrar con la cifra
-anterior sería degradar en silencio una entrada del usuario.
+Medido: sin `pyarrow`, de **32 pasan y 7 errores** a **38 pasan y 2 saltados**.
+Con `pyarrow`, `src/quoss/io/export.py` sigue al **100 %** de líneas y ramas —los
+caminos de Parquet los cubren los dos tests que ahora dependen del fixture nuevo—
+y hay un test más que antes, porque la lista de ficheros y sus SHA-256 se
+comprueban dos veces: la de los formatos del núcleo y la de los ocho ficheros.
 
-### La cifra que hace que el término no sea un redondeo
+### Lo que esto **no** era
 
-A 30 m sobre el mar es el 0.1 %. No lo es donde se pone un telescopio de verdad.
-Mismo satélite, mismo día, mismo receptor, misma máscara; solo cambia la estación:
-
-| Estación | Altitud | Turbulencia desde 0 m | Desde su altitud | Cambio | Razón de `C_n²` integrado |
-|---|---|---|---|---|---|
-| Castelldefels | 30 m | 432 985 bits | 433 442 bits | **+0.106 %** | 1.26 |
-| Calar Alto | 2 168 m | 56 925 bits | 77 244 bits | **+35.7 %** | 9.82 |
-| OGS del Teide | 2 400 m | 562 697 bits | 587 863 bits | **+4.5 %** | 10.46 |
-
-Y en el segundo pase vivo de Calar Alto, **9 817 contra 19 724 bits**: el término
-lo **duplica**. El mecanismo es la forma de la atmósfera: el término de superficie
-de la Ec. (6) de la P.1621-2 tiene una altura de escala de 100 m, así que casi
-toda la turbulencia está en el primer kilómetro y un telescopio a 2 168 m tiene un
-orden de magnitud menos encima. Es por lo que los observatorios están en montañas,
-dicho como número — y las estaciones del enlace que viene son el Montsec y el
-Teide, no una estación a nivel del mar.
-
-### La ambigüedad que había debajo, resuelta abriendo el documento
-
-Todo lo anterior solo vale si `station_height_m` es **la altitud del sitio sobre
-el nivel del mar** y no la altura del telescopio sobre el suelo que pisa. Bajo la
-segunda lectura, una estación en una montaña está a unos metros sobre *su* suelo
-y se le aplica la capa límite entera: el 35.7 % de Calar Alto, al revés.
-
-El proyecto tenía **las dos lecturas escritas a la vez**: `channel/atmosphere.py`
-documentaba el parámetro como «height above ground level» en dieciséis sitios,
-mientras `scenario/models.py` le metía la altura sobre el elipsoide.
-
-La recomendación usa los dos nombres para el mismo símbolo y es ella la que
-desempata. Define `h0` como «height of the earth station above ground-level (m)»
-(§5.1.2, junto a las Ecs. (8b) y (9)) y, tres párrafos después, en la frase que
-sigue a la Ec. (13) (§5.1.2, p. 11), escribe que la aproximación «has been derived
-as an approximation for an **earth station altitude between 0 km and 5 km above
-sea level**». Un rango de 0 a 5 km es un rango de **sitios**, no de mástiles:
-ningún telescopio está a 5 km sobre su propio suelo. Así que «ground-level» ahí es
-«el suelo, o sea el datum de nivel del mar», y `h0` es la altitud del
-emplazamiento — la lectura que el motor ya aplicaba. Verificado abriendo el PDF
-(`R-REC-P.1621-2-201507-I!!PDF-E.pdf`) el 2026-09-14, como exige el ADR 0009.
-**No es un hueco nuevo:** es una ambigüedad de la fuente que la fuente cierra, y
-lo que queda registrado es dónde. Los quince parámetros que la repetían dicen
-ahora «above mean sea level», y el módulo lleva la cita.
-
-### Las decisiones, con su número
-
-1. **Igualdad exacta, no `approx`, y es otra clase de test.** Un test de física
-   compara dos *cálculos* de la misma magnitud y necesita una tolerancia derivada
-   del tamaño del efecto. Este compara **el mismo cálculo por dos rutas**: la
-   misma función, los mismos argumentos, el mismo orden, los mismos `double` de
-   IEEE-754. Si difieren en una unidad del último lugar, no son el mismo cálculo,
-   y una tolerancia escondería justo eso. Es un **puente V4**: dice que la
-   orquestación es fiel y **nada** sobre si la física es correcta.
-2. **La única cosa que no es una copia es una forma.** `_channel` le pasa a
-   `downlink_noise_budget` un `signal_counts_per_gate` que la cadena a mano omite.
-   Con `afterpulse_probability = 0` («no after-pulsing effect», Ntanos et al.
-   §4.1) el término es **exactamente cero** por los dos caminos; en lo que no
-   coinciden es en que el cero del motor es un array de **1 800** y el de la mano
-   un escalar, y la diferencia desaparece en `LinkConditions`, que los difunde
-   contra la transmitancia. Se **aserta** en vez de suavizarse: la identidad se
-   cumple **porque** el término es cero, no porque las dos llamadas sean la misma.
-3. **Las cifras de la etapa 3 no se re-miden.** Rehacerlas movería unas cincuenta
-   citas por un 0.1 % sin cambiar ninguna conclusión cualitativa (el óptimo
-   interior de la máscara cerca de 8°, el 11.5 %, los dos pases en cero). Lo que
-   sí se hace es que **ningún sitio afirme ser el otro**: se corrigen la cabecera
-   de `scenarios/reference_castelldefels.yaml` («convierte en exactamente las
-   entradas de `tests/system/reference.py`») y el docstring de
-   `reference_castelldefels()` («aserta que reproduce **todas** las entradas de
-   física»), y `tests/system/reference.py` lo dice en `STATION_ALTITUDE_KM`.
-4. **Qué policía qué, comprobado por mutación y no supuesto.** Poner
-   `station_height_m = 0.0` en `_channel` hace fallar **12 de los 30** tests — y
-   **no** el del conjunto Monte Carlo. No es un agujero: el Monte Carlo **quita**
-   la reserva de desvanecimiento determinista y la vuelve a sortear, así que
-   `fade_db` se cancela allí y lo que queda es la **varianza**. El test del
-   conjunto vigila el cableado de la varianza; el del presupuesto, el del
-   desvanecimiento. Mutar la varianza sí lo rompe.
-5. **Las tres etapas opcionales entran en el puente.** El conjunto Monte Carlo, la
-   agregación multi-estación y el relé de nodo confiable son donde un orquestador
-   tiene más sitio para equivocarse: las tres toman *varias* entradas y devuelven
-   una respuesta, así que un orden mal puesto seguiría dando un número del tamaño
-   correcto. Comprobados contra `aggregate_stations` y `trusted_node_relay`
-   llamados a mano: `[433 442, 0, 587 863]` por estación, y el par
-   Castelldefels↔Teide entrega **433 442** bits con **154 421** varados, que es la
-   identidad `min(433 442, 587 863)` que documenta `relay.py`.
-6. **Numeración de ADRs, reconciliada porque bloqueaba.** `viz/plots.py` citaba el
-   ADR 0017 y `validation/__init__.py` el 0018; ninguno existía y `docs/adr/`
-   llegaba al 0015. El **0016 no lo citaba nadie**, así que lo ocupa la decisión de
-   la etapa 5 (la que faltaba), y el 0017 y el 0018 quedan reservados a sus etapas
-   en `notes/ROADMAP.md`. Las dos citas colgantes dicen ahora, en el código, que
-   el fichero está pendiente.
-
-### Lo que queda fuera
-
-- **La Ec. (11) de Ntanos et al.** —el perfil HV modificado con la altitud de la
-  estación— sigue sin implementarse: lo que hay es la Ec. (6) de la ITU-R con el
-  integral truncado por abajo. Son dos modelos del mismo efecto y solo uno está
-  escrito. El roadmap la listaba como fuente de la etapa 2.2; queda anotado aquí
-  porque es donde se vio.
-- **El puente no valida física.** Que el motor y la mano coincidan no dice que
-  433 442 sea el número correcto de bits; dice que el motor no lo estropea.
-- **Los escenarios de Ntanos et al.** (`scenarios/ntanos2021_*.yaml`) no entran en
-  el puente: `oracle.py` cablea la apertura de 0.75 m, así que las estaciones de
-  1.3 m y 2.3 m necesitarían un segundo parámetro en el oráculo. Cargan y corren
-  (`tests/scenario/test_scenario_files.py`); lo que no hay es la comparación bit a
-  bit para ellos.
+El diagnóstico de partida decía que `TestSkyTrack` **fallaba** en el árbol. En
+`matplotlib 3.11.1` no falla: pasa. Lo que estaba mal no era el resultado sino la
+forma de la asserción, y por eso se arregla igual — un test que hoy pasa por la
+versión que hay instalada es el mismo defecto un día antes de manifestarse.
 
 ### Verificación
 
-`tests/e2e/test_reference_scenarios.py`: **30 tests, 1.5 s**, ninguno `slow`.
-Suite completa **3 259 tests** (eran 3 229). `ruff check`, `ruff format --check`
-y `mypy` limpios. Cobertura con ramas de todo lo tocado en `src/`:
-`channel/atmosphere.py`, `channel/turbulence.py`, `channel/beam.py`,
-`channel/link_budget.py`, `scenario/defaults.py`, `viz/plots.py`,
-`validation/__init__.py` y los cinco módulos de `engine/` al **100 %** — los
-cambios de esta entrada en `src/` son **solo de docstring y comentario** y no
-mueven ninguna línea ejecutable.
+Suite completa: **3 230 tests** (uno más que los 3 229 de la línea base de esta
+rama). `ruff check`, `ruff format --check` y `mypy` limpios. Cobertura con ramas:
+`io/export.py` y los cuatro módulos de `viz/` al **100 %**. Sin `pyarrow` en el
+entorno, `tests/io/test_export.py` da 38 pasan y 2 saltados y ningún error.
 
 ### Ficheros
 
-`tests/e2e/test_reference_scenarios.py` (nuevo),
-`docs/adr/0016-the-engine-adds-nothing-and-one-altitude.md` (nuevo),
-`src/quoss/channel/{atmosphere,turbulence,beam,link_budget}.py`,
-`src/quoss/scenario/defaults.py`, `src/quoss/viz/plots.py`,
-`src/quoss/validation/__init__.py`, `scenarios/reference_castelldefels.yaml`,
-`tests/system/reference.py`, `tests/scenario/test_defaults.py`,
-`notes/ROADMAP.md`, `notes/INCONSISTENCIAS.md`.
+`tests/viz/test_plots.py`, `tests/io/test_export.py`, `src/quoss/viz/plots.py`
+(solo un comentario).
