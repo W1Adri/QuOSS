@@ -5985,3 +5985,248 @@ BB84 decoy asintótico a la transmitancia del 1 % de outage:
 
 Onda gaussiana; retrorreflector de doble paso; *beam wander* horizontal;
 emuladores no Kolmogorov; escala interna y externa.
+
+---
+
+## 37. Etapa 1.2 — régimen moderado-a-fuerte, y tres números del ADR 0021 que estaban mal citados
+
+**Fecha:** 2026-09-15. **ADR nuevo:** [0022](../docs/adr/0022-the-strong-regime.md).
+**ADRs tocados:** 0009 (una fuente nueva, dos huecos nuevos, el 19 investigado),
+0021 (la tabla de ejemplo, los límites de operación, dos consecuencias).
+
+### T4 — El job de macOS pasó
+
+El `portability` de la ronda anterior no se pudo verificar sin empujar la rama.
+Está en `main` desde el merge de la PR #12: run **34988518923**, job
+`pytest (macOS arm64, py3.13)`, **3 478 passed en 82 s**, verde. Los seis jobs
+del run pasaron. Los dos literales que fallaban en otra máquina no volvieron a
+fallar.
+
+### T1 — El titular del camino horizontal cruzaba su propio hueco, y no por donde parecía
+
+La pregunta era si `_warn_if_the_wave_contradicts_the_beam` se había disparado en
+el caso de 10 cm. **Sí se disparó**, y en las dos filas de la tabla, no en una.
+
+Lo que la pregunta suponía —que la lente de 10 cm era el transmisor, y que las
+dos filas estaban en regímenes distintos (3.16 `z_R` contra 0.20)— no es lo que
+`ge1_key` calcula: el **transmisor** está fijo en 2.5 cm en las dos filas y lo que
+varía es la **lente receptora**. El rango de Rayleigh solo depende del
+transmisor, `z_R = 316.7 m`, así que **`L/z_R = 3.158` en las dos**.
+
+Lo cual hace el problema peor, no mejor: las dos filas se calcularon con
+`PathWave.PLANE` a 3.16 rangos de Rayleigh, que es el lado equivocado, y el
+módulo lo dijo —`horizontal.plane-wave-beyond-the-rayleigh-range`, con el 3.158 en
+los detalles— en un log que nadie leyó. Las dos filas esféricas salen limpias.
+
+**La tabla honesta, con el régimen visible:**
+
+| Lente | `L/z_R` | Clave plana | Clave esférica |
+|---|---|---|---|
+| 2.5 cm | 3.158 | 56.8 kbit/s | **70.2 kbit/s** |
+| 10 cm | 3.158 | 636.2 kbit/s | **589.9 kbit/s** |
+| factor | — | 11.20 | **8.41** |
+
+A 3.16 `z_R` el haz se ha ensanchado 3.3 veces: **la esférica es la citable**.
+Lo que se puede afirmar es un intervalo: la lente vale **entre 8.4 y 11.2**, y el
+enlace de 10 cm da **entre 590 y 636 kbit/s**.
+
+**Y el intervalo no está ordenado como uno esperaría.** Una onda esférica
+escintila 2.46 veces menos en un punto, pero se promedia peor con una lente
+ancha (0.214 contra 1.07): a 2.5 cm la plana es el borde pesimista y a 10 cm es
+el optimista. Por eso el intervalo hay que calcularlo y no razonarlo desde el
+2.46. Está en `TestTheHeadlineLensComparisonIsABracket`.
+
+### T2 — GE-1 con retrorreflector: no es modelable, y ahora se sabe por qué
+
+Se buscó fuente **antes** de intentar implementarlo, que era lo pedido.
+
+**El signo del efecto está decidido y es el malo.** En geometría monoestática
+—emisor y receptor juntos, que es lo que es un retrorreflector— la escintilación
+de vuelta está **realzada**, no reducida: la ida y la vuelta cruzan aire
+correlacionado y los dos desvanecimientos se suman en fase. Mahon, Moore,
+Ferraro, Rabinovich y Suite (*Appl. Opt.* 51(25):6147, 2012) midieron un enlace
+retrorreflectado **horizontal de 1.1 km** —la escala exacta de GE-1— durante
+cuatro días: «substantially **enhanced** due to the correlations», con varianzas
+de flujo saturando en **~10** durante el día.
+
+**Y la teoría es Andrews otra vez.** Andrews, Phillips y Miller, *Appl. Opt.*
+36(3):698 (1997). Es decir: el hueco 19 no es «nadie lo ha estudiado», es «lo ha
+estudiado la misma fuente que el hueco 1 dice que no se puede abrir», y de los
+dos artículos solo se leyó el **resumen**, que es lo que permite afirmar el signo
+y no la magnitud.
+
+**El dimensionado de un solo sentido, con dos terminales**, que sí es modelable
+hoy (2.5 cm de transmisor, 10 cm de lente, `C_n^2 = 1e-14`, y las dos ondas como
+intervalo):
+
+| `L` | `L/z_R` | `σ_R²` | Clave plana | Clave esférica |
+|---|---|---|---|---|
+| 200 m | 0.63 | 0.010 | 896 kbit/s | 888 kbit/s |
+| 500 m | 1.58 | 0.056 | 825 | 798 |
+| 1 km | 3.16 | 0.199 | 636 | 590 |
+| 2 km | 6.32 | 0.709 | 208 | 183 |
+| 2.41 km | 7.62 | 1.000 | 122 | 107 |
+| 5 km | 15.79 | 3.802 | 4.0 | 4.4 |
+
+Nótese que a 200 y 500 m el enlace está **dentro o cerca** del rango de Rayleigh,
+donde ninguna de las dos ondas es la correcta: el intervalo se estrecha (1 %)
+pero por la razón equivocada. El caso limpio es 1–2 km.
+
+**La recomendación:** dos terminales, un solo sentido, 1 km. Es la única de las
+dos arquitecturas que este proyecto puede dimensionar con fuentes, y esa sola
+diferencia es más grande que cualquier ventaja de coste del retrorreflector.
+
+### T3 — Los límites de operación son ahora funciones con test
+
+- **`weak_theory_path_limit_m(cn2_m23=, wavelength_m=)`** — la longitud a la que
+  `σ_R² = 1`. Para `1e-14` a 1550 nm, **2 413 m**. Un test comprueba que coincide
+  con la longitud a la que el presupuesto empieza a avisar, por los dos lados:
+  un límite que no coincidiera con el aviso del propio código sería una segunda
+  opinión, que es peor que ninguna.
+- **`equivalent_bench_cn2_m23(...)`** — **8.87e-10** para que 2 m igualen 1 km
+  moderado, y un test que comprueba que las dos varianzas de Rytov coinciden a
+  precisión de máquina, en vez de fiarse del exponente.
+
+**Sobre si un SLM llega a 8.9e-10, que era la pregunta.** La respuesta corta es
+que **la pregunta está mal planteada, y esa es la respuesta útil**. Un emulador
+no produce un `C_n^2` sobre una longitud: produce una **pantalla de fase** con
+un `r_0` dado. La escintilación es distorsión de fase convertida en amplitud
+**por la propagación**, así que una pantalla necesita distancia detrás: una
+pantalla al principio de un banco de 2 m tiene 2 m para desarrollar lo que un
+kilómetro de aire distribuido desarrolla continuamente. Por eso la práctica de
+laboratorio es igualar los **números adimensionales** —`D/r_0` y el número de
+Rytov— con varias pantallas y óptica de relé entre ellas, y no igualar un
+`C_n^2`; el trabajo que se cita para turbulencia profunda en banco usa **cinco**
+SLM con trombones ópticos entre ellos precisamente para poder fijar `r_0`, el
+ángulo isoplanático y la varianza de Rytov de forma independiente.
+
+Así que `equivalent_bench_cn2_m23` da una condición **necesaria y no
+suficiente**, y eso queda escrito en su docstring y como **hueco 20**. Lo que
+GE-0b tiene que preguntarle a un fabricante no es «¿llegas a 8.9e-10?» sino
+«¿qué `D/r_0` y qué número de Rytov alcanzas, y con cuántas pantallas?».
+
+### 1.2 — El régimen fuerte, y la fuente estaba citada desde hace meses
+
+**Lo que resultó ser la mejor fuente ya estaba en la tabla del ADR 0009 sin
+código detrás.** La fila «Rytov en camino inclinado; escintilación en régimen
+fuerte | Ntanos et al. 2021 | (12), (13)» apuntaba a la **Ec. (12)** del paper de
+referencia de punta a punta de este proyecto, que es exactamente el modelo de
+Andrews-Phillips de escala grande y escala pequeña. Abierta, numerada, y del
+mismo paper del que salen el receptor, el ruido y el escenario.
+
+```
+σ²_lnI = 0.49 s / (1 + c s^(6/5))^(7/6) + 0.51 s / (1 + 0.69 s^(6/5))^(5/6)
+```
+
+Tres fuentes abiertas la imprimen: Ntanos et al. (12), Gruneisen et al. (A8) y
+(A9) —que añade la onda esférica que el camino horizontal necesita y el máximo
+publicado de 1.24— y Kaushal & Kaddoum (17). Las tres citan a Andrews & Phillips,
+que es el hueco 1. Así que es **V2 contra fuente secundaria**, y decirlo importa.
+
+**Y una de las tres la imprime mal.** Kaushal & Kaddoum (17) lleva `7/6` en el
+segundo denominador donde las otras dos llevan `5/6`. Dos contra uno no es una
+razón, así que lo decide el límite: con el `7/6`, el índice «saturado» **decae a
+0.031** con `σ_R² = 10 000`, donde el canal está en su momento más violento. Un
+modelo de parpadeo que devuelve menos parpadeo cuanto más turbulento el aire.
+
+**Dos de cinco números estaban mal en el primer borrador, y el anclaje los
+cazó.** Gruneisen et al. imprimen «the maximum theoretical value ... is
+approximately 1.24». El módulo da **1.2432**, en `σ_R² = 10.31`. Ese máximo está
+donde el término de gran escala ya murió y el de pequeña escala aún no se asentó,
+así que reproducirlo ejercita los dos cortes, los dos exponentes y la potencia de
+la varianza a la vez:
+
+- `σ_R^(12/5)` es potencia de la **desviación típica**; en términos de la varianza
+  es `s^(6/5)`. Escribirlo como `s^(12/5)` deja todo finito y positivo y da un
+  máximo de **0.71**.
+- El `7/6` de Kaushal & Kaddoum da **0.60** y decae.
+
+Los dos fallos están asertados como tests, para que volver a cometerlos sea rojo.
+
+### El predeterminado sigue siendo el débil, y está medido por qué
+
+`ScintillationRegime.WEAK` es el predeterminado aunque el saturado nunca sea
+peor, porque **en el punto que fija la Tabla 2 de la P.1622** —75°, régimen
+plenamente débil— el heurístico lee un **3.4 % por debajo** de la recomendación.
+Poner el heurístico de predeterminado movería todos los anclajes V2 del canal un
+3.4 % por una corrección que solo importa por debajo de ~20°. La elección está en
+la firma, medida, y el aviso nombra la otra opción.
+
+### El resultado: el óptimo de la máscara se mueve de 8° a 4.5°
+
+| Máscara | `WEAK` | saturado | cambio |
+|---|---|---|---|
+| 2° | 408 946 | 458 862 | +12.2 % |
+| **4.5°** | 424 448 | **462 945** | +9.1 % |
+| 8° | **434 938** | 457 663 | +5.2 % |
+| 20° | 360 978 | 364 740 | +1.0 % |
+
+Sigue siendo **interior**, baja tres grados y medio, y el día gana **6.4 %**. La
+ganancia es **monótona en lo baja que esté la máscara**, que es la firma de que
+todo el efecto viene de las muestras bajas.
+
+### Y separado en canal y cota, que no coinciden
+
+Con `x = mean(ln T)`, `y = ln(bits)`, `E = dy/dx`, la maquinaria que
+`TestWhyTheHigherStationGainsLess` escribió literalmente para este momento:
+
+| Estación | culmina | `dx` (canal) | `E` (cota) | `dy` (clave) |
+|---|---|---|---|---|
+| Castelldefels | 26° | **+7.90 %** | 0.473 | +3.66 % |
+| Calar Alto | 21–37° | +3.05 % | **2.91** | **+9.12 %** |
+| Teide OGS | 57–72° | +1.78 % | 0.673 | +1.20 % |
+
+**Los dos órdenes son opuestos.** El canal de Castelldefels gana dos veces y
+media más, porque sus pasos son los más bajos; la clave de Calar Alto gana dos
+veces y media más, porque está en el acantilado de certificación. En las otras
+dos estaciones `E < 1`: más luz compra **menos que proporcionalmente** más clave,
+porque la corrección de errores se cobra sobre todas las detecciones nuevas y la
+amplificación de privacidad solo certifica la parte de un fotón.
+
+El número más grande de toda la etapa es el segundo paso de Calar Alto,
+**+17.7 %**, y es casi todo cota: su canal solo mejora un **2.50 %**, con
+`E = 6.60`. Citarlo sin `E` al lado sería reportar la demostración de seguridad
+como si fuera la atmósfera.
+
+### Lo que 1.2 le hizo a dos cifras del ADR 0021
+
+- **La elección de onda a 5 km valía cuatro veces menos de lo que se citaba.**
+  21.73 contra 15.06 dB pasa a **8.41 contra 9.94**, y **el signo se invierte**.
+  La mayor parte de esos 6.67 dB era el modelo débil evaluado cuatro veces más
+  allá de su propio límite. El hueco de la onda gaussiana no desaparece —1.53 dB
+  siguen siendo 1.53 dB— pero se estaba citando a cuatro veces su tamaño.
+- **Las dos celdas que la P.1814 no debería haber impreso**, ahora con número:
+  **12.25 dB impresos contra 7.19 saturados**, y **16.00 contra 7.57**.
+
+### Lo que no cierra (huecos 20 y 21, nuevos)
+
+- **Hueco 21 — el promediado de apertura en régimen saturado.** La Ec. (8) de la
+  P.1622 multiplica la **log-varianza** por `A`; la Ec. (14) de Ntanos et al.
+  define `A` como cociente de **índices**. En régimen débil es lo mismo; aquí no.
+  Medido a 10° con el telescopio de 0.75 m: **2.29 contra 2.68 dB**, **0.39 dB**.
+  Se mantiene el convenio de la P.1622 porque la `A` que se usa es la Ec. (7) de
+  la P.1622, definida como cociente de log-varianzas.
+- **Hueco 20 — los emuladores.** Arriba.
+- **La distribución sigue siendo log-normal.** Se corrige la varianza, no la
+  forma. En régimen fuerte la irradiancia es gamma-gamma y las colas —que es lo
+  que lee un outage al 1 %— no son las mismas.
+
+### Verificación
+
+`uv run pytest`: **3 541 passed**, 0 fallos. `ruff check`, `ruff format --check`
+y `mypy` limpios sobre 141 ficheros.
+
+### Ficheros
+
+| Fichero | Qué |
+|---|---|
+| `src/quoss/channel/turbulence.py` | `PathWave` (mudado), `ScintillationRegime`, `saturated_log_irradiance_variance`, los cinco coeficientes, `regime` en tres funciones |
+| `src/quoss/channel/horizontal.py` | `weak_theory_path_limit_m`, `equivalent_bench_cn2_m23`, `_saturated_and_logged`, `regime` en tres funciones, `PathWave` reexportado |
+| `src/quoss/channel/link_budget.py` | `regime` en `downlink_loss_budget`; corregida la promesa de `_assembled_loss_budget` |
+| `tests/channel/test_turbulence.py` | V2 contra el máximo de 1.24, V1 del límite débil y la asíntota, los dos fallos cazados, el régimen elegido y dicho |
+| `tests/channel/test_horizontal.py` | el intervalo del titular, los dos límites de operación, el régimen saturado en horizontal |
+| `tests/system/test_key_volume.py` | el desplazamiento del óptimo de la máscara |
+| `tests/e2e/test_reference_scenarios.py` | la descomposición canal/cota |
+| `tests/system/reference.py`, `tests/e2e/oracle.py` | `regime` a través de las dos cadenas de referencia |
+| `docs/adr/0022-the-strong-regime.md` | nuevo |
+| `docs/adr/0009`, `0021`, `tests/golden/README.md`, `README.md` | huecos, tabla corregida, límites |

@@ -17,6 +17,14 @@ Organised by verification level, per ``tests/golden/README.md``:
   than by value.
 - ``TestTheWeakFluctuationWarning`` — that the model says when it is out of
   range, from both sides.
+- ``TestTheSaturatedRegimeAgainstItsSource`` — **V2** for stage 1.2: the
+  published maximum scintillation index of 1.24, the two Rytov coefficients
+  against the recommendation and against the horizontal module, and the one
+  exponent on which the two open sources for this model disagree.
+- ``TestTheSaturatedRegimeInvariants`` — **V1** for the same: weak-limit
+  agreement to a derived bound, the derived asymptote, and vectorisation.
+- ``TestTheRegimeIsChosenAndSaid`` — which model the default is, what the
+  other one costs, and that the log says which ran.
 - ``TestRejectsBadInput`` / ``TestModuleSurface``.
 
 No V3: no independent implementation of these recommendations was located. The
@@ -25,18 +33,28 @@ gap is declared in ``tests/golden/README.md``.
 
 from __future__ import annotations
 
+import inspect
+
 import numpy as np
 import pytest
 
 from quoss.channel.turbulence import (
     NEPER_SQ_TO_DB_SQ,
+    SATURATED_LOG_VARIANCE_ASYMPTOTE_NP2,
+    SCINTILLATION_LARGE_SCALE_COEFFICIENT,
+    SCINTILLATION_LARGE_SCALE_CUTOFF,
+    SCINTILLATION_SMALL_SCALE_COEFFICIENT,
+    SCINTILLATION_SMALL_SCALE_CUTOFF,
     WEAK_FLUCTUATION_VARIANCE_LIMIT,
+    PathWave,
+    ScintillationRegime,
     aperture_averaging_factor,
     cn2_path_moment,
     downlink_log_irradiance_variance,
     fried_parameter_m,
     isoplanatic_angle_rad,
     log_irradiance_variance,
+    saturated_log_irradiance_variance,
     turbulence_scale_height_m,
     uplink_log_irradiance_variance,
 )
@@ -422,6 +440,365 @@ class TestTheWeakFluctuationWarning:
 
 
 # --------------------------------------------------------------------------- #
+# Stage 1.2: the moderate-to-strong regime
+# --------------------------------------------------------------------------- #
+
+GRUNEISEN_PUBLISHED_MAXIMUM_SCINTILLATION_INDEX = 1.24
+"""Gruneisen et al.: "The maximum theoretical value for ``sigma_I^2 slant-path`` is approximately 1.24"."""
+
+PUBLISHED_SLANT_RYTOV_COEFFICIENT = 2.25
+"""Coefficient of Ntanos et al. equation (13) and Gruneisen et al. (A4), printed identically."""
+
+ITU_P1622_SLANT_RYTOV_COEFFICIENT = 2.253
+"""Coefficient of ITU-R P.1622 equation (4a), the same quantity. Four figures against three."""
+
+
+def _scintillation_index(rytov: float, wave: PathWave) -> float:
+    """``sigma_I^2`` from the log-variance the module returns, for comparison with the paper."""
+    return float(np.expm1(saturated_log_irradiance_variance(rytov, wave=wave)))
+
+
+@pytest.mark.reference
+class TestTheSaturatedRegimeAgainstItsSource:
+    """**V2** against Gruneisen et al., Phys. Rev. Applied 16, 014067 (2021), appendix A.
+
+    Why this paper and not Ntanos et al., which is the project's own end-to-end
+    reference and prints the plane-wave form as its equation (12): because
+    Ntanos et al. print the formula and no *value* of it. Gruneisen et al. print
+    "the maximum theoretical value for ``sigma_I^2 slant-path`` is approximately
+    1.24", which is a number a test can fail against, and they also print the
+    spherical form (A9) that the horizontal path needs and Ntanos et al. have no
+    use for. Both are open access (arXiv:2006.07745 and *Photonics* 8(12):544),
+    both cite Andrews & Phillips, which ADR 0009 gap 1 records as unopenable —
+    so this is V2 against a secondary source, and saying so is the point.
+    """
+
+    def test_the_plane_wave_index_peaks_at_the_published_maximum(self) -> None:
+        """1.2432 against the paper's "approximately 1.24", at ``sigma_R^2 = 10.3``.
+
+        This is the whole V2 anchor of stage 1.2, and it is worth more than it
+        looks. The maximum is not a coefficient anyone typed: it is where the
+        large-scale term has died away and the small-scale one has not yet
+        settled, so reproducing it to three figures exercises both cutoffs,
+        both exponents and the power of the variance in both denominators at
+        once. Two of those five were wrong in the first draft of this module and
+        this assertion is what said so.
+        """
+        rytov = np.logspace(-3.0, 4.0, 200_001)
+        index = np.expm1(saturated_log_irradiance_variance(rytov, wave=PathWave.PLANE))
+        peak = float(np.max(index))
+        assert peak == pytest.approx(GRUNEISEN_PUBLISHED_MAXIMUM_SCINTILLATION_INDEX, abs=0.005)
+        assert peak == pytest.approx(1.2432, abs=1e-4)
+        assert float(rytov[int(np.argmax(index))]) == pytest.approx(10.31, rel=1e-3)
+
+    def test_the_coefficients_are_what_the_project_reference_paper_prints(self) -> None:
+        """Transcription guard against Ntanos et al. equation (12), read from the rendered page.
+
+        Five numbers and two exponents, none of them derived from anything: if
+        one digit is mistyped the model still returns finite variances for every
+        input. The equation was read as an image (`pdftoppm`) and not from the
+        text layer, because the text layer of that PDF renders both denominator
+        exponents on the same line and loses which is which — the exact
+        confusion that made Kaushal & Kaddoum's misprint plausible in the first
+        place.
+        """
+        assert SCINTILLATION_LARGE_SCALE_COEFFICIENT == 0.49
+        assert SCINTILLATION_SMALL_SCALE_COEFFICIENT == 0.51
+        assert SCINTILLATION_LARGE_SCALE_CUTOFF[PathWave.PLANE] == 1.11
+        assert SCINTILLATION_LARGE_SCALE_CUTOFF[PathWave.SPHERICAL] == 0.56
+        assert SCINTILLATION_SMALL_SCALE_CUTOFF == 0.69
+        assert SCINTILLATION_LARGE_SCALE_COEFFICIENT + SCINTILLATION_SMALL_SCALE_COEFFICIENT == 1.0
+
+    def test_the_slant_rytov_coefficient_agrees_with_the_recommendation(self) -> None:
+        """Equation (A4)'s 2.25 against ITU-R P.1622 equation (4a)'s 2.253: 1.3e-3 apart.
+
+        Between sources, and the reason the two equations can be composed at
+        all: the saturation model takes a Rytov variance, and the Rytov variance
+        this project computes comes from P.1622, not from the paper. If the two
+        meant different quantities the composition would be nonsense, and three
+        figures against four is as close as the paper's own precision allows.
+        """
+        relative = abs(PUBLISHED_SLANT_RYTOV_COEFFICIENT - ITU_P1622_SLANT_RYTOV_COEFFICIENT)
+        relative /= ITU_P1622_SLANT_RYTOV_COEFFICIENT
+        bound = 0.005 / PUBLISHED_SLANT_RYTOV_COEFFICIENT
+        assert relative < bound
+        assert relative == pytest.approx(1.33e-3, rel=0.01)
+
+    def test_the_spherical_rytov_coefficient_is_the_one_the_horizontal_module_already_had(
+        self,
+    ) -> None:
+        """Equation (A5)'s 0.5 is Kaushal & Kaddoum equation (9)'s 0.5, exactly.
+
+        Two independent open sources printing the same coefficient for the
+        spherical-wave Rytov variance, which is what lets equation (A9) be fed
+        by the value :mod:`quoss.channel.horizontal` already computes.
+        """
+        from quoss.channel.horizontal import KAUSHAL_SPHERICAL_WAVE_COEFFICIENT
+
+        assert KAUSHAL_SPHERICAL_WAVE_COEFFICIENT == 0.5
+
+    def test_the_third_open_source_prints_the_same_equation_with_one_exponent_wrong(
+        self,
+    ) -> None:
+        """Kaushal & Kaddoum equation (17) is the same formula with ``5/6`` misprinted as ``7/6``.
+
+        Three open sources print this model — Ntanos et al. (12), Gruneisen et
+        al. (A8), Kaushal & Kaddoum (17) — all three citing Andrews & Phillips,
+        which nobody here can open. Two carry ``5/6`` in the second denominator
+        and one carries ``7/6``. Two against one already settles it, but a vote
+        is not a reason, so this test settles it by what each does in the limit
+        the equation exists for.
+
+        With the ``5/6`` of equation (A8), the small-scale term tends to
+        ``0.51 / 0.69^(5/6) = 0.6948`` and the scintillation index saturates at
+        1.003 — the fully developed speckle every strong-turbulence treatment
+        describes. With the ``7/6`` as Kaushal & Kaddoum print it, the same term
+        falls as ``sigma_R^(-4/5)`` and the "saturated" index **decays to zero**:
+        0.031 at a Rytov variance of 10 000, where the real channel is at its
+        most violent. A scintillation model that returns less flicker the more
+        turbulent the air is not a rounding difference, and this is why the
+        module follows (A8).
+        """
+        rytov = 1e4
+        printed_by_kaushal = float(
+            np.expm1(
+                SCINTILLATION_LARGE_SCALE_COEFFICIENT
+                * rytov
+                / (1.0 + SCINTILLATION_LARGE_SCALE_CUTOFF[PathWave.PLANE] * rytov**1.2)
+                ** (7.0 / 6.0)
+                + SCINTILLATION_SMALL_SCALE_COEFFICIENT
+                * rytov
+                / (1.0 + SCINTILLATION_SMALL_SCALE_CUTOFF * rytov**1.2) ** (7.0 / 6.0)
+            )
+        )
+        assert printed_by_kaushal == pytest.approx(0.0311, abs=1e-4)
+        assert _scintillation_index(rytov, PathWave.PLANE) == pytest.approx(1.0252, abs=1e-4)
+        assert printed_by_kaushal < 0.05 < 1.0 < _scintillation_index(rytov, PathWave.PLANE)
+
+    def test_writing_the_exponent_on_the_variance_instead_of_the_deviation_fails_the_anchor(
+        self,
+    ) -> None:
+        """``sigma_R^(12/5)`` is ``(sigma_R^2)^(6/5)``, and the other reading breaks the same way.
+
+        The published exponent is on the *standard deviation*. Reading it as an
+        exponent on the *variance* — ``s^(12/5)`` where ``s^(6/5)`` belongs — is
+        a slip that leaves every input finite and every output positive, and it
+        was made in this module first. It shows up as a maximum scintillation
+        index of 0.71 instead of 1.24, and as the same decay to zero as the
+        Kaushal & Kaddoum misprint, because it damages the small-scale term in
+        exactly the same way.
+        """
+        rytov = np.logspace(-3.0, 4.0, 20_001)
+        wrong = np.expm1(
+            SCINTILLATION_LARGE_SCALE_COEFFICIENT
+            * rytov
+            / (1.0 + SCINTILLATION_LARGE_SCALE_CUTOFF[PathWave.PLANE] * rytov**2.4) ** (7.0 / 6.0)
+            + SCINTILLATION_SMALL_SCALE_COEFFICIENT
+            * rytov
+            / (1.0 + SCINTILLATION_SMALL_SCALE_CUTOFF * rytov**2.4) ** (5.0 / 6.0)
+        )
+        assert float(np.max(wrong)) == pytest.approx(0.708, abs=0.002)
+        assert float(np.max(wrong)) < GRUNEISEN_PUBLISHED_MAXIMUM_SCINTILLATION_INDEX - 0.5
+        assert float(wrong[-1]) < 1e-4
+
+
+@pytest.mark.physics
+class TestTheSaturatedRegimeInvariants:
+    """**V1**: what the model must do regardless of any published figure."""
+
+    @pytest.mark.parametrize("wave", list(PathWave))
+    def test_it_is_the_rytov_variance_in_weak_turbulence(self, wave: PathWave) -> None:
+        """Below 0.01 Np^2 the two agree to 0.4 %, and the bound is derived, not fitted.
+
+        Both cutoff denominators are ``1 + c s^(6/5)``, so each term is reduced
+        by at most ``(7/6) c s^(6/5)`` and the sum by at most
+        ``(7/6) max(c) s^(6/5)`` — with ``max(c) = 1.11`` and ``s = 0.01`` that
+        is 0.5 %. Nothing here is a tolerance chosen to pass: it is the
+        first-order expansion of the formula itself, which is also the reason
+        0.49 and 0.51 have to add to 1.
+        """
+        rytov = np.logspace(-6.0, -2.0, 101)
+        saturated = saturated_log_irradiance_variance(rytov, wave=wave)
+        bound = (7.0 / 6.0) * max(SCINTILLATION_LARGE_SCALE_CUTOFF.values()) * rytov ** (6.0 / 5.0)
+        assert np.all(saturated <= rytov)
+        assert np.all(rytov - saturated <= bound * rytov)
+        expected = {PathWave.PLANE: 0.00368, PathWave.SPHERICAL: 0.00244}[wave]
+        assert float(1.0 - saturated[-1] / rytov[-1]) == pytest.approx(expected, abs=5e-5)
+
+    @pytest.mark.parametrize("wave", list(PathWave))
+    def test_it_never_exceeds_the_rytov_variance_it_was_given(self, wave: PathWave) -> None:
+        """Saturation can only remove flicker, over seven decades of turbulence."""
+        rytov = np.logspace(-6.0, 6.0, 5001)
+        assert np.all(saturated_log_irradiance_variance(rytov, wave=wave) <= rytov)
+
+    @pytest.mark.parametrize("wave", list(PathWave))
+    def test_it_tends_to_the_derived_asymptote(self, wave: PathWave) -> None:
+        """Both waves end at 0.6948 Np^2, because they share the small-scale term.
+
+        The large-scale term is the only thing that distinguishes plane from
+        spherical, and it is the one that dies. So two paths that scintillate
+        2.46 times differently in weak turbulence end up indistinguishable in
+        strong turbulence, which is a statement about the physics and not about
+        the fit.
+        """
+        far = saturated_log_irradiance_variance(1e18, wave=wave)
+        assert float(far) == pytest.approx(SATURATED_LOG_VARIANCE_ASYMPTOTE_NP2, rel=1e-6)
+        assert SATURATED_LOG_VARIANCE_ASYMPTOTE_NP2 == pytest.approx(0.6948, abs=1e-4)
+        assert float(np.expm1(far)) == pytest.approx(1.0033, abs=1e-4)
+
+    def test_zero_turbulence_is_exactly_zero(self) -> None:
+        assert float(saturated_log_irradiance_variance(0.0, wave=PathWave.PLANE)) == 0.0
+
+    def test_it_is_vectorised_and_shape_preserving(self) -> None:
+        rytov = np.linspace(0.0, 4.0, 12).reshape(3, 4)
+        out = saturated_log_irradiance_variance(rytov, wave=PathWave.SPHERICAL)
+        assert out.shape == (3, 4)
+        for index in np.ndindex(out.shape):
+            one = saturated_log_irradiance_variance(float(rytov[index]), wave=PathWave.SPHERICAL)
+            assert float(out[index]) == pytest.approx(float(one), rel=1e-15)
+
+    def test_the_spherical_wave_saturates_sooner_in_its_own_variance(self) -> None:
+        """At the same ``sigma_R^2`` the spherical form is the larger of the two.
+
+        Not a contradiction of "a spherical wave scintillates 2.46 times less":
+        that factor is in the *input*, the Rytov variance of the wave in
+        question. Fed the same input, equation (A9)'s smaller cutoff (0.56
+        against 1.11) keeps the large-scale term alive longer. The physical
+        comparison — same path, same air — is
+        ``tests/channel/test_horizontal.py``, where the input carries the 2.46.
+        """
+        rytov = np.logspace(-1.0, 2.0, 61)
+        plane = saturated_log_irradiance_variance(rytov, wave=PathWave.PLANE)
+        spherical = saturated_log_irradiance_variance(rytov, wave=PathWave.SPHERICAL)
+        assert np.all(spherical >= plane)
+
+
+@pytest.mark.physics
+class TestTheRegimeIsChosenAndSaid:
+    """That flipping the regime is visible in the value and in the log, both ways."""
+
+    def test_the_default_is_the_recommendation_and_not_the_heuristic(self) -> None:
+        """``WEAK`` by default, so an ITU number stays an ITU number.
+
+        Measured cost of the choice at the one point P.1622 Table 2 pins: the
+        saturated model reads 3.4 % low there, at 0.0659 Np^2 — well inside the
+        weak regime, where it is the heuristic and not the recommendation that
+        is being approximate. Defaulting the other way would have moved every V2
+        anchor in this file by that much for a correction that matters only
+        below about 20 degrees.
+        """
+        assert (
+            inspect.signature(log_irradiance_variance).parameters["regime"].default
+            is ScintillationRegime.WEAK
+        )
+
+        def at(regime: ScintillationRegime) -> float:
+            return float(
+                log_irradiance_variance(
+                    deg_to_rad(75.0),
+                    wavelength_m=1.55e-6,
+                    station_height_m=5.5,
+                    degradations=DegradationLog(),
+                    regime=regime,
+                )
+            )
+
+        weak = at(ScintillationRegime.WEAK)
+        strong = at(ScintillationRegime.MODERATE_TO_STRONG)
+        assert weak == pytest.approx(0.0659, abs=5e-4)
+        assert strong / weak - 1.0 == pytest.approx(-0.0341, abs=1e-3)
+
+    def test_the_saturated_branch_returns_the_saturated_value_and_says_so(
+        self, degradations: DegradationLog
+    ) -> None:
+        """5 degrees at 532 nm, where the weak model reads 4.5 Np^2 and reality does not."""
+
+        def at(regime: ScintillationRegime) -> float:
+            return float(
+                log_irradiance_variance(
+                    deg_to_rad(5.0),
+                    wavelength_m=5.32e-7,
+                    degradations=degradations,
+                    regime=regime,
+                )
+            )
+
+        weak = at(ScintillationRegime.WEAK)
+        strong = at(ScintillationRegime.MODERATE_TO_STRONG)
+        assert weak > WEAK_FLUCTUATION_VARIANCE_LIMIT
+        assert strong == pytest.approx(
+            float(saturated_log_irradiance_variance(weak, wave=PathWave.PLANE)), rel=1e-12
+        )
+        codes = [entry.code for entry in degradations]
+        assert codes == [
+            "turbulence.weak-fluctuation-limit-exceeded",
+            "turbulence.scintillation-saturated",
+        ]
+        entry = degradations.entries[1]
+        assert entry.severity is Severity.WARNING
+        assert entry.details["peak_rytov_variance_np2"] == pytest.approx(weak)
+        assert entry.details["peak_variance_np2"] == pytest.approx(strong)
+
+    def test_the_saturated_branch_is_silent_where_the_weak_one_is(
+        self, degradations: DegradationLog
+    ) -> None:
+        """Same trigger point for both regimes: 1 Np^2 of Rytov variance, not of output.
+
+        The threshold has to be on the Rytov variance, because the saturated
+        value can never reach 1 — its ceiling is 0.6948 — so testing the output
+        would mean never warning at all.
+        """
+        log_irradiance_variance(
+            deg_to_rad(70.0),
+            wavelength_m=1.55e-6,
+            degradations=degradations,
+            regime=ScintillationRegime.MODERATE_TO_STRONG,
+        )
+        assert len(degradations) == 0
+
+    def test_the_downlink_and_the_uplink_both_carry_the_choice(self) -> None:
+        """The wrappers forward it rather than owning a second default."""
+        for function in (downlink_log_irradiance_variance, uplink_log_irradiance_variance):
+            assert (
+                inspect.signature(function).parameters["regime"].default is ScintillationRegime.WEAK
+            )
+
+        def at(regime: ScintillationRegime) -> float:
+            return float(
+                downlink_log_irradiance_variance(
+                    deg_to_rad(5.0),
+                    aperture_diameter_m=1.0,
+                    wavelength_m=5.32e-7,
+                    station_height_m=5.5,
+                    degradations=DegradationLog(),
+                    regime=regime,
+                )
+            )
+
+        weak = at(ScintillationRegime.WEAK)
+        strong = at(ScintillationRegime.MODERATE_TO_STRONG)
+        assert 0.0 < strong < weak
+
+    @pytest.mark.parametrize("bad", [-1e-9, np.nan, np.inf])
+    def test_a_variance_that_is_not_one_is_refused(self, bad: float) -> None:
+        with pytest.raises(DomainError, match="rytov_variance_np2"):
+            saturated_log_irradiance_variance(bad, wave=PathWave.PLANE)
+
+    def test_a_wave_that_is_not_a_pathwave_is_refused(self) -> None:
+        with pytest.raises(DomainError, match="wave must be a PathWave"):
+            saturated_log_irradiance_variance(0.1, wave="plane")  # type: ignore[arg-type]
+
+    def test_a_regime_that_is_not_a_regime_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="not a valid ScintillationRegime"):
+            log_irradiance_variance(
+                deg_to_rad(30.0),
+                wavelength_m=1.55e-6,
+                degradations=DegradationLog(),
+                regime="strong",  # type: ignore[arg-type]
+            )
+
+
+# --------------------------------------------------------------------------- #
 # Input validation
 # --------------------------------------------------------------------------- #
 
@@ -486,9 +863,24 @@ class TestRejectsBadInput:
 
 class TestModuleSurface:
     def test_all_is_sorted_and_complete(self) -> None:
+        """Sorted in ruff's order, not Python's, because ruff is the one that enforces it.
+
+        Every other module in ``quoss.channel`` asserts plain
+        ``sorted(__all__)``, and until stage 1.2 this one could too: the two
+        orders agree for any list of CONSTANTS and functions. They part company
+        as soon as a ``CamelCase`` class is exported, because ruff's ``RUF022``
+        groups by kind — constants, then classes, then functions — while
+        ``sorted`` interleaves ``PathWave`` between ``NEPER_SQ_TO_DB_SQ`` and
+        ``SATURATED_LOG_VARIANCE_ASYMPTOTE_NP2`` on the raw code points. Both
+        cannot hold, and asserting the one the linter does not enforce would
+        mean a file that passes this test and fails ``ruff check``.
+        """
         from quoss.channel import turbulence
 
-        assert turbulence.__all__ == sorted(turbulence.__all__)
+        def kind(name: str) -> int:
+            return 0 if name.isupper() else (1 if name[0].isupper() else 2)
+
+        assert turbulence.__all__ == sorted(turbulence.__all__, key=lambda n: (kind(n), n))
         for name in turbulence.__all__:
             assert hasattr(turbulence, name)
 

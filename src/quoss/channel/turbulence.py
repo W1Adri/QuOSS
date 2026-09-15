@@ -78,6 +78,7 @@ Recommendation ITU-R P.1621-2 (07/2015), §5.1.2 (equations (8a), (8b)) and
 
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import Final
 
 import numpy as np
@@ -100,13 +101,21 @@ from quoss.core.types import FloatArray
 
 __all__ = [
     "NEPER_SQ_TO_DB_SQ",
+    "SATURATED_LOG_VARIANCE_ASYMPTOTE_NP2",
+    "SCINTILLATION_LARGE_SCALE_COEFFICIENT",
+    "SCINTILLATION_LARGE_SCALE_CUTOFF",
+    "SCINTILLATION_SMALL_SCALE_COEFFICIENT",
+    "SCINTILLATION_SMALL_SCALE_CUTOFF",
     "WEAK_FLUCTUATION_VARIANCE_LIMIT",
+    "PathWave",
+    "ScintillationRegime",
     "aperture_averaging_factor",
     "cn2_path_moment",
     "downlink_log_irradiance_variance",
     "fried_parameter_m",
     "isoplanatic_angle_rad",
     "log_irradiance_variance",
+    "saturated_log_irradiance_variance",
     "turbulence_scale_height_m",
     "uplink_log_irradiance_variance",
 ]
@@ -135,6 +144,142 @@ because a fit was tuned there. Crossing it records a
 :class:`~quoss.core.errors.Severity.WARNING`, not a substitution: the value
 returned is still the model the caller asked for.
 """
+
+
+class PathWave(StrEnum):
+    """Which idealisation of the beam the scintillation formulas use.
+
+    **What the two words mean.** A scintillation formula does not know about
+    your telescope; it knows about the *shape of the wavefront* crossing the
+    turbulence. Two shapes have closed forms:
+
+    - ``PLANE`` — the wavefront arrives flat, as if the source were infinitely
+      far away and infinitely wide. A satellite downlink is this: by the time
+      the beam reaches the air it is kilometres across, so the few metres that
+      matter locally are flat.
+    - ``SPHERICAL`` — the wavefront expands from what looks like a point. A
+      short horizontal link fired from a small telescope is this once the beam
+      has spread well past its own Rayleigh range.
+
+    **Why it is a required argument and never a default.** The same path gives
+    a plane-wave variance 2.46 times the spherical one
+    (:data:`~quoss.channel.horizontal.PLANE_WAVE_RYTOV_COEFFICIENT` over
+    :data:`~quoss.channel.horizontal.KAUSHAL_SPHERICAL_WAVE_COEFFICIENT`,
+    1.2285 / 0.5), and in the saturation model of
+    :func:`saturated_log_irradiance_variance` it is also a different cutoff
+    coefficient. There is no value here that quietly means "I did not think
+    about it".
+
+    **How to choose.** :func:`quoss.channel.beam.rayleigh_range_km` gives
+    ``z_R``, the distance over which the beam stays roughly the size of its
+    transmitter. ``L`` much shorter than ``z_R`` is ``PLANE``; ``L`` much longer
+    is ``SPHERICAL``; ``L`` near ``z_R`` is neither, and
+    :func:`quoss.channel.horizontal.horizontal_loss_budget` says so with the
+    ratio in the warning.
+
+    **Why it lives here and not in** :mod:`quoss.channel.horizontal`. It used
+    to. It moved when :func:`saturated_log_irradiance_variance` arrived, because
+    that function is shared by the slant path and the horizontal one and needs
+    to know which wave it is given; ``horizontal`` re-exports the name, so
+    ``from quoss.channel.horizontal import PathWave`` still works.
+    """
+
+    PLANE = "plane"
+    SPHERICAL = "spherical"
+
+
+class ScintillationRegime(StrEnum):
+    """Which scintillation model turns a Rytov variance into a log-irradiance variance.
+
+    **The problem this enum names.** The Rytov variance ``sigma_R^2`` is what
+    first-order perturbation theory predicts the log-irradiance variance to be.
+    Below about 0.1 Np^2 it is also what you measure. Above 1 Np^2 it is not:
+    the real fluctuation *saturates* near a scintillation index of 1 while
+    ``sigma_R^2`` keeps growing without bound, so the first-order answer becomes
+    an overestimate that still looks like a number.
+
+    - ``WEAK`` — return ``sigma_R^2`` itself, ITU-R P.1622 equation (4a) or
+      ITU-R P.1814 equation (8). Correct below 1 Np^2, an overestimate above it,
+      and it says so in the degradation log
+      (``turbulence.weak-fluctuation-limit-exceeded``).
+    - ``MODERATE_TO_STRONG`` — pass ``sigma_R^2`` through
+      :func:`saturated_log_irradiance_variance`, the heuristic large-scale /
+      small-scale split of Gruneisen et al. equations (A8) and (A9). It equals
+      ``WEAK`` to first order in ``sigma_R^2`` and departs from it only where
+      ``WEAK`` is already wrong.
+
+    **Why both exist rather than one right answer.** ``MODERATE_TO_STRONG`` is
+    never worse — it reproduces ``WEAK`` where ``WEAK`` is valid, to 0.6 % at
+    the reference downlink's 0.0153 Np^2 — but it is a *heuristic* fit with no
+    ITU recommendation behind it, while ``WEAK`` is an ITU equation with a
+    printed number. Keeping both lets a result say which one it used, and lets
+    the difference be measured instead of asserted.
+    """
+
+    WEAK = "weak"
+    MODERATE_TO_STRONG = "moderate-to-strong"
+
+
+SCINTILLATION_LARGE_SCALE_COEFFICIENT: Final[float] = 0.49
+"""Numerator of the large-scale term: Ntanos et al. equation (12), Gruneisen et al. (A8), (A9)."""
+
+SCINTILLATION_SMALL_SCALE_COEFFICIENT: Final[float] = 0.51
+"""Numerator of the small-scale term of the same three equations.
+
+It is not a coincidence that 0.49 + 0.51 = 1: that is what makes the model
+reduce to the Rytov variance exactly, to first order, in weak turbulence. See
+:func:`saturated_log_irradiance_variance`.
+"""
+
+SCINTILLATION_LARGE_SCALE_CUTOFF: Final[dict[PathWave, float]] = {
+    PathWave.PLANE: 1.11,
+    PathWave.SPHERICAL: 0.56,
+}
+"""Cutoff coefficient of the large-scale term, per wave.
+
+1.11 is the plane wave — Ntanos et al. equation (12) and Gruneisen et al.
+equation (A8), which print it identically. 0.56 is the spherical wave, Gruneisen
+et al. equation (A9); Ntanos et al. have no spherical form, because a downlink
+does not need one.
+
+This is the *only* place the two equations differ — the small-scale term is the
+same in both — which is why one function serves the downlink and the horizontal
+path.
+"""
+
+SCINTILLATION_SMALL_SCALE_CUTOFF: Final[float] = 0.69
+"""Cutoff coefficient of the small-scale term, the same for both waves and all three sources."""
+
+_LARGE_SCALE_CUTOFF_EXPONENT: Final[float] = 7.0 / 6.0
+_SMALL_SCALE_CUTOFF_EXPONENT: Final[float] = 5.0 / 6.0
+_RYTOV_CUTOFF_POWER: Final[float] = 6.0 / 5.0
+"""Power of the **variance** in the cutoff denominators, ``6/5``, not ``12/5``.
+
+Both equations print ``sigma_R^(12/5)``, and ``sigma_R`` there is the standard
+deviation, so in terms of the variance ``s = sigma_R^2`` the denominators carry
+``s^(6/5)``. Typing ``12/5`` instead is a two-character slip that produces a
+number for every input and is wrong in exactly the regime the model exists for:
+with ``12/5`` the small-scale term falls as ``1/s`` instead of tending to
+:data:`SATURATED_LOG_VARIANCE_ASYMPTOTE_NP2`, so the "saturated" variance decays
+to zero as the turbulence grows. It was written that way first here, and what
+caught it was the published maximum of 1.24 for the scintillation index, which
+``tests/channel/test_turbulence.py`` now asserts.
+"""
+
+SATURATED_LOG_VARIANCE_ASYMPTOTE_NP2: Final[float] = (
+    SCINTILLATION_SMALL_SCALE_COEFFICIENT
+    / SCINTILLATION_SMALL_SCALE_CUTOFF**_SMALL_SCALE_CUTOFF_EXPONENT
+)
+"""What :func:`saturated_log_irradiance_variance` tends to as ``sigma_R^2`` grows: 0.6948 Np^2.
+
+Derived, not measured: as ``sigma_R^2 -> inf`` the large-scale term falls as
+``sigma_R^(-4/5)`` and the small-scale term tends to
+``0.51 / 0.69^(5/6) = 0.6948``. A log-irradiance variance of 0.6948 Np^2 is a
+scintillation index of ``exp(0.6948) - 1 = 1.0033``, which is the saturation to
+unity that the strong-turbulence literature describes, arrived at from the
+coefficients rather than imposed on them.
+"""
+
 
 _APERTURE_AVERAGING_COEFFICIENT: Final[float] = 1.1e7
 """Coefficient of ITU-R P.1622 equation (7), which wants its wavelength in micrometres.
@@ -268,6 +413,7 @@ def log_irradiance_variance(
     station_height_m: float = 0.0,
     rms_wind_speed_m_s: float = 21.0,
     ground_cn2_m23: float = ITU_GROUND_CN2_M23,
+    regime: ScintillationRegime = ScintillationRegime.WEAK,
 ) -> FloatArray:
     """Return the point-aperture variance of log-irradiance, Np^2.
 
@@ -305,6 +451,19 @@ def log_irradiance_variance(
         The r.m.s. wind speed, m/s.
     ground_cn2_m23
         Nominal ``C_n^2`` at ground level, m^(-2/3).
+
+    regime
+        :class:`~quoss.channel.turbulence.ScintillationRegime`. ``WEAK`` (the
+        default) returns the first-order value itself and records
+        ``turbulence.weak-fluctuation-limit-exceeded`` above
+        :data:`~quoss.channel.turbulence.WEAK_FLUCTUATION_VARIANCE_LIMIT`;
+        ``MODERATE_TO_STRONG`` returns the saturated value of
+        :func:`~quoss.channel.turbulence.saturated_log_irradiance_variance`
+        instead. The default is ``WEAK`` because every V2 check in this project
+        compares against a printed ITU number, and the saturated model is 3.4 %
+        below ITU-R P.1622 Table 2 even at that table's own weak point — a
+        difference worth seeing rather than absorbing. [ADR 0022](../../../docs/adr/0022-the-strong-regime.md)
+        says what each buys.
 
     Returns
     -------
@@ -347,28 +506,192 @@ def log_irradiance_variance(
         rms_wind_speed_m_s=rms_wind_speed_m_s,
         ground_cn2_m23=ground_cn2_m23,
     )
-    variance: FloatArray = (
+    rytov: FloatArray = (
         _LOG_IRRADIANCE_COEFFICIENT
         * moment
         / (wavelength_um ** (7.0 / 6.0) * np.sin(elevation) ** (11.0 / 6.0))
     )
+    selected = ScintillationRegime(regime)
+    peak = float(np.max(rytov)) if rytov.size else 0.0
 
-    peak = float(np.max(variance)) if variance.size else 0.0
+    if selected is ScintillationRegime.WEAK:
+        if peak > WEAK_FLUCTUATION_VARIANCE_LIMIT:
+            degradations.warn(
+                "turbulence.weak-fluctuation-limit-exceeded",
+                (
+                    f"Log-irradiance variance reaches {peak:.2f} Np^2, above the "
+                    f"{WEAK_FLUCTUATION_VARIANCE_LIMIT} Np^2 where the first-order theory behind "
+                    "ITU-R P.1622 equation (4a) holds. The value returned is still that model's, "
+                    "but real scintillation saturates instead of growing, so this overestimates "
+                    "it. ScintillationRegime.MODERATE_TO_STRONG returns the saturated value "
+                    "instead."
+                ),
+                where="quoss.channel.turbulence.log_irradiance_variance",
+                peak_variance_np2=peak,
+                limit_np2=WEAK_FLUCTUATION_VARIANCE_LIMIT,
+                min_elevation_rad=float(np.min(elevation)),
+            )
+        return rytov
+
+    variance = saturated_log_irradiance_variance(rytov, wave=PathWave.PLANE)
     if peak > WEAK_FLUCTUATION_VARIANCE_LIMIT:
+        saturated_peak = float(np.max(variance))
         degradations.warn(
-            "turbulence.weak-fluctuation-limit-exceeded",
+            "turbulence.scintillation-saturated",
             (
-                f"Log-irradiance variance reaches {peak:.2f} Np^2, above the "
-                f"{WEAK_FLUCTUATION_VARIANCE_LIMIT} Np^2 where the first-order theory behind "
-                "ITU-R P.1622 equation (4a) holds. The value returned is still that model's, "
-                "but real scintillation saturates instead of growing, so this overestimates it."
+                f"The Rytov variance of ITU-R P.1622 equation (4a) reaches {peak:.2f} Np^2, above "
+                f"the {WEAK_FLUCTUATION_VARIANCE_LIMIT} Np^2 where its first-order theory holds, "
+                f"so the value returned is the saturated {saturated_peak:.3f} Np^2 of Ntanos "
+                f"et al. equation (12) instead — a factor {saturated_peak / peak:.3f}. That model "
+                "is a heuristic fit, not an ITU recommendation, and assumes Kolmogorov turbulence "
+                "with no outer scale, which makes it an upper bound on the saturated value. "
+                "ScintillationRegime.WEAK returns the unsaturated one."
             ),
             where="quoss.channel.turbulence.log_irradiance_variance",
-            peak_variance_np2=peak,
+            peak_rytov_variance_np2=peak,
+            peak_variance_np2=saturated_peak,
             limit_np2=WEAK_FLUCTUATION_VARIANCE_LIMIT,
             min_elevation_rad=float(np.min(elevation)),
         )
     return variance
+
+
+def saturated_log_irradiance_variance(
+    rytov_variance_np2: FloatArray | float,
+    *,
+    wave: PathWave,
+) -> FloatArray:
+    """Return the log-irradiance variance in moderate-to-strong turbulence, Np^2.
+
+    **Ntanos et al. equation (12)** for :attr:`PathWave.PLANE` — the same paper
+    this project's end-to-end reference scenario comes from, which prints it
+    for "weak, mean, and strong turbulences" — and **Gruneisen et al. equation
+    (A9)** for :attr:`PathWave.SPHERICAL`, which Ntanos et al. do not need
+    because a downlink is a plane wave::
+
+        sigma_I^2 = exp[ 0.49 s / (1 + c s^(12/5))^(7/6)
+                       + 0.51 s / (1 + 0.69 s^(12/5))^(5/6) ] - 1,   s = sigma_R^2
+
+    with ``c = 1.11`` (plane) or ``c = 0.56`` (spherical). This function returns
+    the **bracket**, which is ``ln(1 + sigma_I^2)`` — the log-irradiance
+    variance — because that is what the fade laws of
+    :mod:`quoss.channel.link_budget` take, and because taking the exponential
+    only to take the logarithm again would throw away digits for nothing.
+
+    **What the two terms are.** The model splits the turbulence into eddies
+    larger than the beam, which refract it as a whole and make slow, deep
+    fades, and eddies smaller than the beam, which diffract it and make fast,
+    shallow ones. Each is filtered by its own cutoff: the ``(1 + c s^(12/5))``
+    denominators switch a term off once the turbulence is strong enough that
+    that scale stops contributing. In weak turbulence both denominators are 1,
+    the two numerators add to ``(0.49 + 0.51) s = s``, and the model **is** the
+    Rytov variance. In strong turbulence the large-scale term dies and the
+    small-scale one tends to :data:`SATURATED_LOG_VARIANCE_ASYMPTOTE_NP2`.
+
+    **Why saturation and not growth.** Once the beam has been broken into many
+    independent speckles, adding more turbulence adds more speckles, not deeper
+    ones: the irradiance approaches the negative-exponential statistics of fully
+    developed speckle, whose scintillation index is 1. The first-order theory
+    cannot see this because it assumes one weak perturbation, so it keeps
+    multiplying.
+
+    **Three open sources, and the one character they disagree on.** Ntanos et
+    al. equation (12), Gruneisen et al. equation (A8) and Kaushal & Kaddoum
+    equation (17) all print this formula; all three cite Andrews & Phillips,
+    which ADR 0009 gap 1 records as unopenable. The first two carry ``5/6`` in
+    the second denominator and the third carries ``7/6``. The ``7/6`` cannot be
+    right: it makes the "saturated" index *decay* to 0.031 at a Rytov variance
+    of 10 000, where the channel is at its most violent. Two against one, and
+    the limit decides it anyway.
+
+    **What it is not.** It is a heuristic, not a derivation, and it assumes
+    Kolmogorov turbulence with no inner or outer scale. A finite outer scale
+    lowers the peak. It is also a *point-receiver* result — Ntanos et al. call
+    it ``sigma^2_{I,point}`` — and this project multiplies it afterwards by
+    ITU-R P.1622's aperture-averaging factor, applied to the log-variance as
+    P.1622 equation (8) does. Ntanos et al. equation (14) instead defines their
+    averaging factor as a ratio of *indices*. The two conventions agree in weak
+    turbulence and part company here: at the reference downlink's 10 degrees
+    they differ by 0.39 dB of fade allowance. ADR 0009 gap 21, and ADR 0022 for
+    why the P.1622 one was kept.
+
+    Parameters
+    ----------
+    rytov_variance_np2
+        ``sigma_R^2`` of the same wave, Np^2, finite and non-negative. For the
+        plane wave this is ITU-R P.1622 equation (4a), ITU-R P.1814 equation
+        (8) or Ntanos et al. equation (13) — all the same quantity, with
+        coefficients 2.253, 1.2285 (already integrated along a uniform path)
+        and 2.25. For the spherical wave it is ``0.5 C_n^2 k^(7/6) L^(11/6)``,
+        which Gruneisen et al. equation (A5) and Kaushal & Kaddoum equation (9)
+        print with the same coefficient. Any shape.
+    wave
+        :class:`PathWave`, required. It selects the large-scale cutoff, 1.11 or
+        0.56.
+
+    Returns
+    -------
+    FloatArray
+        ``sigma^2_lnI`` in Np^2, shaped like the input. Never larger than
+        ``ln(1 + 1.2432) = 0.8082`` for a plane wave.
+
+    Raises
+    ------
+    DomainError
+        If any variance is not finite or is negative, or ``wave`` is not a
+        :class:`PathWave`.
+
+    Examples
+    --------
+    Weak turbulence: the reference downlink's 0.0153 Np^2 comes back essentially
+    unchanged, which is the property that lets this model be used everywhere
+    rather than only past a threshold.
+
+    >>> round(float(saturated_log_irradiance_variance(0.01528, wave=PathWave.PLANE)), 6)
+    0.015187
+
+    The reference day's worst sample, 1.48 Np^2, is where it earns its keep — a
+    factor 0.42 on the variance, which takes the 1 %-outage fade allowance of
+    :func:`quoss.channel.link_budget.scintillation_fade_db` from 15.5 dB to
+    9.4 dB, 6.1 dB of loss that was never there:
+
+    >>> round(float(saturated_log_irradiance_variance(1.48, wave=PathWave.PLANE)), 4)
+    0.6263
+
+    And it saturates instead of growing. Ten times more turbulence than that
+    moves it by a fifth:
+
+    >>> round(float(saturated_log_irradiance_variance(14.8, wave=PathWave.PLANE)), 4)
+    0.8051
+    """
+    if not isinstance(wave, PathWave):
+        raise DomainError(
+            "wave must be a PathWave, with no default: the plane and spherical forms of "
+            "Gruneisen et al. (A8) and (A9) differ in the large-scale cutoff, 1.11 against "
+            f"0.56. Got {wave!r}."
+        )
+    variance = np.asarray(rytov_variance_np2, dtype=np.float64)
+    if not np.all(np.isfinite(variance)) or np.any(variance < 0.0):
+        raise DomainError(
+            "rytov_variance_np2 must be finite and non-negative, in Np^2. It is the "
+            "first-order (Rytov) variance of the same wave, not a scintillation index and "
+            f"not a decibel figure. Got range [{float(np.min(variance))}, "
+            f"{float(np.max(variance))}]."
+        )
+    cutoff_power = variance**_RYTOV_CUTOFF_POWER
+    large_scale = (
+        SCINTILLATION_LARGE_SCALE_COEFFICIENT
+        * variance
+        / (1.0 + SCINTILLATION_LARGE_SCALE_CUTOFF[wave] * cutoff_power)
+        ** _LARGE_SCALE_CUTOFF_EXPONENT
+    )
+    small_scale = (
+        SCINTILLATION_SMALL_SCALE_COEFFICIENT
+        * variance
+        / (1.0 + SCINTILLATION_SMALL_SCALE_CUTOFF * cutoff_power) ** _SMALL_SCALE_CUTOFF_EXPONENT
+    )
+    saturated: FloatArray = large_scale + small_scale
+    return saturated
 
 
 def turbulence_scale_height_m(
@@ -511,6 +834,7 @@ def downlink_log_irradiance_variance(
     station_height_m: float = 0.0,
     rms_wind_speed_m_s: float = 21.0,
     ground_cn2_m23: float = ITU_GROUND_CN2_M23,
+    regime: ScintillationRegime = ScintillationRegime.WEAK,
 ) -> FloatArray:
     """Return the log-irradiance variance seen by a ground telescope, Np^2.
 
@@ -539,6 +863,19 @@ def downlink_log_irradiance_variance(
         The r.m.s. wind speed, m/s.
     ground_cn2_m23
         Nominal ``C_n^2`` at ground level, m^(-2/3).
+
+    regime
+        :class:`~quoss.channel.turbulence.ScintillationRegime`. ``WEAK`` (the
+        default) returns the first-order value itself and records
+        ``turbulence.weak-fluctuation-limit-exceeded`` above
+        :data:`~quoss.channel.turbulence.WEAK_FLUCTUATION_VARIANCE_LIMIT`;
+        ``MODERATE_TO_STRONG`` returns the saturated value of
+        :func:`~quoss.channel.turbulence.saturated_log_irradiance_variance`
+        instead. The default is ``WEAK`` because every V2 check in this project
+        compares against a printed ITU number, and the saturated model is 3.4 %
+        below ITU-R P.1622 Table 2 even at that table's own weak point — a
+        difference worth seeing rather than absorbing. [ADR 0022](../../../docs/adr/0022-the-strong-regime.md)
+        says what each buys.
 
     Returns
     -------
@@ -570,6 +907,7 @@ def downlink_log_irradiance_variance(
         station_height_m=station_height_m,
         rms_wind_speed_m_s=rms_wind_speed_m_s,
         ground_cn2_m23=ground_cn2_m23,
+        regime=regime,
     )
     factor = aperture_averaging_factor(
         elevation_rad,
@@ -591,6 +929,7 @@ def uplink_log_irradiance_variance(
     station_height_m: float = 0.0,
     rms_wind_speed_m_s: float = 21.0,
     ground_cn2_m23: float = ITU_GROUND_CN2_M23,
+    regime: ScintillationRegime = ScintillationRegime.WEAK,
 ) -> FloatArray:
     """Return the log-irradiance variance seen by a spacecraft, Np^2.
 
@@ -629,6 +968,19 @@ def uplink_log_irradiance_variance(
     ground_cn2_m23
         Nominal ``C_n^2`` at ground level, m^(-2/3).
 
+    regime
+        :class:`~quoss.channel.turbulence.ScintillationRegime`. ``WEAK`` (the
+        default) returns the first-order value itself and records
+        ``turbulence.weak-fluctuation-limit-exceeded`` above
+        :data:`~quoss.channel.turbulence.WEAK_FLUCTUATION_VARIANCE_LIMIT`;
+        ``MODERATE_TO_STRONG`` returns the saturated value of
+        :func:`~quoss.channel.turbulence.saturated_log_irradiance_variance`
+        instead. The default is ``WEAK`` because every V2 check in this project
+        compares against a printed ITU number, and the saturated model is 3.4 %
+        below ITU-R P.1622 Table 2 even at that table's own weak point — a
+        difference worth seeing rather than absorbing. [ADR 0022](../../../docs/adr/0022-the-strong-regime.md)
+        says what each buys.
+
     Returns
     -------
     FloatArray
@@ -641,6 +993,7 @@ def uplink_log_irradiance_variance(
         station_height_m=station_height_m,
         rms_wind_speed_m_s=rms_wind_speed_m_s,
         ground_cn2_m23=ground_cn2_m23,
+        regime=regime,
     )
 
 

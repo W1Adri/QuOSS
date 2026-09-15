@@ -51,7 +51,7 @@ from quoss.channel.link_budget import (
     downlink_noise_budget,
 )
 from quoss.channel.pointing import beam_to_jitter_ratio
-from quoss.channel.turbulence import downlink_log_irradiance_variance
+from quoss.channel.turbulence import ScintillationRegime, downlink_log_irradiance_variance
 from quoss.core.constants import SPEED_OF_LIGHT_M_S
 from quoss.core.errors import DegradationLog
 from quoss.core.rng import RandomSource
@@ -279,6 +279,7 @@ def hand_link(
     mask_deg: float = 10.0,
     step_s: float = 1.0,
     duration_s: float = 86_400.0,
+    regime: ScintillationRegime = ScintillationRegime.WEAK,
 ) -> HandLink:
     """Return the whole chain for one station, one mask and one turbulence height, memoised.
 
@@ -316,6 +317,7 @@ def hand_link(
         receiver_efficiency=chain,
         degradations=log,
         station_height_m=station_height_m,
+        regime=regime,
     )
     noise = downlink_noise_budget(
         NTANOS_STUDY_NIGHT_RADIANCE_W_M2_UM_SR,

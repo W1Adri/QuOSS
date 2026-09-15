@@ -23,6 +23,10 @@ Organised by the claim each block defends, not by the function it calls.
   see. The asymptotic integral is monotone in the mask and the finite bound is
   not, and lowering the mask from 8 to 2 degrees buys 71 % more seconds and
   destroys 6.0 % of the day's key.
+- ``TestWhatSaturatingTheScintillationDoesToTheMask`` — **the stage 1.2
+  measurement**: the same day with the moderate-to-strong scintillation model
+  instead of the weak one moves the interior optimum from 8 degrees to 4.5 and
+  the day's key up 6.4 %.
 - ``TestComposingADay`` — that ``n`` blocks at ``eps`` make a day at ``n eps``,
   what an honestly ``eps``-secure day costs (6.5 %), and the refusal when the
   composition is vacuous.
@@ -41,6 +45,7 @@ import inspect
 import numpy as np
 import pytest
 
+from quoss.channel.turbulence import ScintillationRegime
 from quoss.core.errors import DegradationLog, DomainError, Severity
 from quoss.qkd.base import KeyRegime, LinkConditions
 from quoss.qkd.bb84 import Bb84DecoyProtocol
@@ -597,6 +602,132 @@ class TestTheElevationMaskHasAnInteriorOptimum:
         assert events_growth == pytest.approx(0.0264, abs=2e-3)
         assert leakage_growth == pytest.approx(0.0550, abs=2e-3)
         assert leakage_growth > events_growth
+
+
+@pytest.mark.reference
+class TestWhatSaturatingTheScintillationDoesToTheMask:
+    """**The stage 1.2 measurement.** The interior optimum moves from 8 degrees to 4.5.
+
+    What changed, in one sentence
+    -----------------------------
+    Nothing in this module. The only difference between the two columns below is
+    that the channel was evaluated with
+    :attr:`~quoss.channel.turbulence.ScintillationRegime.MODERATE_TO_STRONG`
+    instead of ``WEAK`` — the log-irradiance variance of a sample whose Rytov
+    variance exceeds 1 Np^2 is the saturated value of Gruneisen et al. equation
+    (A8) rather than ITU-R P.1622 equation (4a)'s. The orbit, the pass table, the
+    sample indices, the protocol and the security parameters are identical, which
+    is what makes the comparison a comparison.
+
+    The table
+    ---------
+    ============  ===============  ===================  ========
+    mask (deg)    ``WEAK`` bits    saturated bits       change
+    ============  ===============  ===================  ========
+    2             408 946          458 862              +12.2 %
+    4.5           424 448          **462 945**          +9.1 %
+    5             426 988          462 936              +8.4 %
+    8             **434 938**      457 663              +5.2 %
+    10            432 985          449 514              +3.8 %
+    20            360 978          364 740              +1.0 %
+    ============  ===============  ===================  ========
+
+    Why the optimum moves *down*
+    ----------------------------
+    The interior optimum exists because a low sample brings error-correction
+    leakage faster than it brings certified single-photon events
+    (``TestTheElevationMaskHasAnInteriorOptimum``). What makes a low sample
+    expensive is its fade allowance, and the weak model charges it a fade that
+    saturation says is not there: at the reference day's worst sample the
+    variance falls from 1.48 to 0.63 Np^2, which is 6.1 dB off the 1 %-outage
+    allowance. Samples that did not pay for themselves under the weak model do
+    pay for themselves under the saturated one, so the mask that maximises the
+    day's certified key drops from 8 degrees to 4.5, and the day gains 6.4 %.
+
+    What this does **not** say
+    --------------------------
+    It does not say the reference day is worth 462 945 bits. Both columns are
+    V4 — QuOSS's own output — and the saturated one rests on a heuristic fit
+    whose only published anchor is a maximum scintillation index of 1.24
+    (``tests/channel/test_turbulence.py``). What it says is that the choice of
+    scintillation model is worth more than a decibel of margin: it moves a
+    design decision, the elevation mask, by three and a half degrees. A margin
+    that survives both columns is a margin; one that needs the saturated column
+    is a bet on the heuristic.
+
+    The split between channel and bound is in
+    ``tests/e2e/test_reference_scenarios.py::TestWhatTheSaturatedModelIsWorth``,
+    which is where the elasticity machinery of
+    ``TestWhyTheHigherStationGainsLess`` gets used for the case it was written
+    for.
+    """
+
+    SATURATED = ScintillationRegime.MODERATE_TO_STRONG
+    MASKS = (2.0, 4.5, 5.0, 8.0, 10.0, 20.0)
+
+    @staticmethod
+    def _bits(mask_deg: float, regime: ScintillationRegime) -> float:
+        return finite(link(mask_deg, regime=regime)).total_bits
+
+    def test_the_two_regimes_see_the_same_passes_and_the_same_samples(self) -> None:
+        """The control: the regime reaches the channel and nothing upstream of it."""
+        weak, saturated = link(8.0), link(8.0, regime=self.SATURATED)
+        assert weak.table.duration_s.tolist() == saturated.table.duration_s.tolist()
+        assert weak.samples.sample_index.tolist() == saturated.samples.sample_index.tolist()
+        assert np.any(
+            np.asarray(weak.conditions.transmittance)
+            != np.asarray(saturated.conditions.transmittance)
+        )
+
+    def test_the_saturated_optimum_is_at_four_and_a_half_degrees(self) -> None:
+        """Still interior, and three and a half degrees lower."""
+        totals = {mask: self._bits(mask, self.SATURATED) for mask in self.MASKS}
+        best = max(totals, key=lambda mask: totals[mask])
+        assert best == 4.5
+        assert totals[4.5] > totals[2.0]
+        assert totals[4.5] == pytest.approx(462_945.0, abs=2.0)
+
+    def test_the_weak_optimum_is_still_at_eight(self) -> None:
+        """Nothing about the default moved, which is what makes the shift attributable."""
+        totals = {mask: self._bits(mask, ScintillationRegime.WEAK) for mask in self.MASKS}
+        assert max(totals, key=lambda mask: totals[mask]) == 8.0
+        assert totals[8.0] == pytest.approx(434_938.0, abs=2.0)
+
+    def test_the_day_gains_six_per_cent_at_its_own_optimum(self) -> None:
+        """434 938 bits at 8 degrees against 462 945 at 4.5: +6.44 %."""
+        weak_best = self._bits(8.0, ScintillationRegime.WEAK)
+        saturated_best = self._bits(4.5, self.SATURATED)
+        assert saturated_best / weak_best - 1.0 == pytest.approx(0.0644, abs=5e-4)
+
+    @pytest.mark.parametrize("mask_deg", MASKS)
+    def test_saturating_never_costs_key_at_any_mask(self, mask_deg: float) -> None:
+        """V1, and the only sign this effect is allowed to have.
+
+        Saturation can only lower a variance
+        (``TestTheSaturatedRegimeInvariants``), a lower variance can only lower a
+        fade allowance, and a lower fade allowance can only raise a
+        transmittance. If any mask reported less key with the saturated model,
+        the plumbing would be wrong rather than the physics surprising.
+        """
+        assert self._bits(mask_deg, self.SATURATED) >= self._bits(
+            mask_deg, ScintillationRegime.WEAK
+        )
+
+    def test_the_gain_is_largest_where_the_mask_is_lowest(self) -> None:
+        """+12.2 % at 2 degrees against +1.0 % at 20: the effect is the low samples.
+
+        A monotone gain is the signature of the mechanism. Saturation changes
+        nothing above about 20 degrees, where the Rytov variance is 0.015 Np^2
+        and the model is the identity to 0.6 %; everything it is worth comes
+        from the samples a wide mask admits.
+        """
+        gains = [
+            self._bits(mask, self.SATURATED) / self._bits(mask, ScintillationRegime.WEAK) - 1.0
+            for mask in self.MASKS
+        ]
+        assert gains == sorted(gains, reverse=True)
+        assert gains[0] == pytest.approx(0.1221, abs=1e-3)
+        assert gains[-1] == pytest.approx(0.0104, abs=1e-3)
 
 
 class TestComposingADay:

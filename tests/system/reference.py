@@ -41,6 +41,7 @@ from quoss.channel.link_budget import (
     downlink_loss_budget,
     downlink_noise_budget,
 )
+from quoss.channel.turbulence import ScintillationRegime
 from quoss.core.errors import DegradationLog
 from quoss.core.types import TimeGrid
 from quoss.orbits.constellations import sun_synchronous_inclination_rad
@@ -145,6 +146,7 @@ def conditions_at(
     *,
     sky_radiance_w_m2_um_sr: float = NTANOS_STUDY_NIGHT_RADIANCE_W_M2_UM_SR,
     degradations: DegradationLog | None = None,
+    regime: ScintillationRegime = ScintillationRegime.WEAK,
 ) -> LinkConditions:
     """Evaluate the reference channel at exactly the samples a pass table lists.
 
@@ -170,6 +172,7 @@ def conditions_at(
         pointing_jitter_rad=NTANOS_POINTING_JITTER_RAD,
         receiver_efficiency=chain,
         degradations=log,
+        regime=regime,
     )
     noise = downlink_noise_budget(
         sky_radiance_w_m2_um_sr,
@@ -210,8 +213,14 @@ def link(
     step_s: float = 1.0,
     duration_s: float = 86_400.0,
     sky_radiance_w_m2_um_sr: float = NTANOS_STUDY_NIGHT_RADIANCE_W_M2_UM_SR,
+    regime: ScintillationRegime = ScintillationRegime.WEAK,
 ) -> Link:
-    """Return the whole chain for one elevation mask, memoised."""
+    """Return the whole chain for one elevation mask, memoised.
+
+    ``regime`` reaches the channel and nothing else: the geometry, the pass
+    table and the sample indices are identical for both values, which is what
+    makes the two runs comparable sample by sample.
+    """
     angles, grid = geometry(step_s, duration_s)
     table = find_passes(
         angles,
@@ -225,5 +234,10 @@ def link(
         grid=grid,
         table=table,
         samples=samples,
-        conditions=conditions_at(angles, samples, sky_radiance_w_m2_um_sr=sky_radiance_w_m2_um_sr),
+        conditions=conditions_at(
+            angles,
+            samples,
+            sky_radiance_w_m2_um_sr=sky_radiance_w_m2_um_sr,
+            regime=regime,
+        ),
     )

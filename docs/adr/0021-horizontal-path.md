@@ -86,20 +86,70 @@ Sin un camino horizontal, QuOSS no podía decir nada de ninguno de los dos.
   confirma con una segunda fuente la lectura en micrómetros del 1.1e7 de P.1622:
   en metros discreparía siete órdenes de magnitud.
 
-### Un ejemplo con números
+### Un ejemplo con números, con el régimen de cada fila a la vista
+
+**Corregido el 2026-09-15.** La versión anterior de esta tabla daba «56.8 a 636
+kbit/s, un factor 11.2» como un número, y las dos filas estaban calculadas con
+`PathWave.PLANE` a **3.16 rangos de Rayleigh** del transmisor —el lado
+equivocado de la idealización, que el propio módulo avisaba en un log que nadie
+leyó (`horizontal.plane-wave-beyond-the-rayleigh-range`)—.
+
+Ojo a qué varía la comparación, porque es fácil leerla mal: el **transmisor** es
+de 2.5 cm en las dos filas y lo que cambia es la **lente receptora**. El rango de
+Rayleigh solo depende del transmisor, `z_R = π (D_T/2)² / λ = 316.7 m`, así que
+`L / z_R = 3.158` en **las dos**. Las dos filas son el mismo régimen, y no es el
+régimen en que se calcularon.
 
 Enlace GE-1 de 1 km, `C_n^2 = 1e-14` (la columna «moderada» de P.1814), 1550 nm,
 transmisor de 2.5 cm, 5 µrad de jitter, 0.2 dB/km, receptor Ntanos et al.,
 BB84 decoy asintótico al 1 % de outage:
 
-| Lente | Geométrico | Escintilación | Clave |
-|---|---|---|---|
-| 2.5 cm | 7.78 dB | 3.80 dB | 56.8 kbit/s |
-| 10 cm | 0.24 dB | 1.12 dB | 636 kbit/s |
+| Lente | `L/z_R` | Geom. | Escint. plana | Escint. esf. | Clave plana | Clave esf. |
+|---|---|---|---|---|---|---|
+| 2.5 cm | 3.158 | 7.78 dB | 3.80 dB | 2.87 dB | 56.8 kbit/s | **70.2 kbit/s** |
+| 10 cm | 3.158 | 0.24 dB | 1.12 dB | 1.45 dB | 636.2 kbit/s | **589.9 kbit/s** |
+| factor | — | — | — | — | 11.20 | **8.41** |
 
-Un factor **11.2** de clave por pasar de 2.5 a 10 cm. El QBER apenas se mueve
-(1.01 % contra un suelo de 1 % de desalineamiento), así que para GE-1 la palanca
-es la pérdida, no la tasa de error.
+A 3.16 rangos de Rayleigh el haz se ha ensanchado a 3.3 veces su cintura, así
+que **la columna esférica es la citable** y la plana es el otro borde del
+intervalo. La respuesta verdadera es la onda gaussiana, que es el hueco 18 y no
+tiene fuente abierta aquí. Lo que este módulo puede afirmar es:
+
+> La lente vale **un factor entre 8.4 y 11.2**, y el enlace de 10 cm da **entre
+> 590 y 636 kbit/s**. Un intervalo, no un número.
+
+Y el intervalo **no está ordenado como las varianzas de punto**. Una onda
+esférica escintila 2.46 veces menos en un punto, pero su irradiancia está
+correlacionada en una escala mayor, así que una lente de 10 cm la promedia peor
+(el 0.214 de Kaushal & Kaddoum contra el 1.07). A 2.5 cm la plana es el borde
+pesimista y a 10 cm es el optimista: por eso el intervalo hay que **calcularlo**,
+no razonarlo desde el 2.46.
+(`tests/channel/test_horizontal.py::TestTheHeadlineLensComparisonIsABracket`.)
+
+El QBER apenas se mueve en ninguna de las cuatro celdas (1.01 % contra un suelo
+de 1 % de desalineamiento), así que para GE-1 la palanca es la pérdida, no la
+tasa de error.
+
+### Los límites de operación, como restricciones y no como notas
+
+Dos cotas duras de GE-1, expuestas como funciones con test y no como frases en
+este ADR, por la misma razón que el ADR 0009 da para cualquier número citado:
+una frase no se puede llamar ni rederivar, y ya hubo una que estuvo mal en
+quince sitios.
+
+- **`weak_theory_path_limit_m`** — la longitud a la que `σ_R²` llega a 1. Para
+  `C_n^2 = 1e-14` a 1550 nm son **2 413 m**. Cien veces menos turbulencia solo
+  compra un factor `100^(6/11) = 12.3`, no cien: el mismo exponente que hace
+  crecer la escintilación deprisa con la distancia hace crecer la distancia
+  utilizable despacio con la calidad del sitio. Es el límite de lo que este
+  proyecto puede **citar**, no de lo que un enlace puede hacer: con
+  `ScintillationRegime.MODERATE_TO_STRONG` ([ADR 0022](0022-the-strong-regime.md))
+  se sigue más allá, sobre un heurístico en vez de sobre una recomendación.
+- **`equivalent_bench_cn2_m23`** — el `C_n^2` que un banco necesita para igualar
+  la varianza de Rytov de un camino largo. **8.87e-10** para que 2 m igualen 1 km
+  de aire «moderado». Plegar el camino es la única palanca barata que hay: 10 m
+  en vez de 2 necesitan **19.1 veces menos**. Y es condición **necesaria y no
+  suficiente** — ver el hueco 20.
 
 ---
 
@@ -133,11 +183,22 @@ es la pérdida, no la tasa de error.
 
 - **Onda gaussiana** (hueco 18). Cerca del rango de Rayleigh ni la plana ni la
   esférica es correcta, y a 5 km la elección vale 21.7 contra 15.1 dB de
-  desvanecimiento.
+  desvanecimiento **con el modelo débil** — 8.41 contra 9.94 dB con el saturado,
+  que es la cifra que hay que citar. Ver abajo.
 - **Retrorreflector** (hueco 19). Ida y vuelta por el mismo aire, correlacionadas;
-  no es un camino de longitud `2L`.
-- **Régimen fuerte.** Con `C_n^2 = 1e-14` la varianza de Rytov llega a 1 a
-  **2.41 km**; más allá todo lleva aviso hasta que exista la etapa 1.2.
+  no es un camino de longitud `2L`. **Investigado el 2026-09-15 y sigue abierto**,
+  con el signo ya decidido: en geometría monoestática el doble paso **empeora**
+  la escintilación, medido a 1.1 km por Mahon et al. (*Appl. Opt.* 51:6147), y la
+  teoría es Andrews otra vez. **Consecuencia:** un GE-1 de un solo sentido con
+  dos terminales es modelable hoy y uno con retrorreflector no lo es.
+- **Régimen fuerte.** ~~Hasta que exista la etapa 1.2~~ **Cerrado el 2026-09-15**
+  por el [ADR 0022](0022-the-strong-regime.md), con el modelo compartido entre la
+  bajada y este camino. Con `C_n^2 = 1e-14` la varianza de Rytov sigue llegando a
+  1 a **2 413 m**, y más allá `ScintillationRegime.WEAK` avisa y
+  `MODERATE_TO_STRONG` satura. Lo que ese ADR mide y este no podía: a 5 km, los
+  **6.67 dB** que la sección siguiente atribuye a la elección de onda son
+  **1.53 dB** con el modelo saturado, y con el signo invertido — la mayor parte
+  de ese número era el modelo débil evaluado cuatro veces más allá de su límite.
 - **Emuladores.** `C_n^2` significa aquí turbulencia de Kolmogorov; una pantalla
   de fase en un SLM hay que caracterizarla en esos términos antes de pasarla.
   Para que dos metros de banco igualen un kilómetro moderado hace falta

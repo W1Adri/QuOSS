@@ -53,8 +53,8 @@ CLI, la API y el frontend son *consumidores* del mismo motor, no parte de él.
 > escenario de referencia declara `1.0` — «sin extinción modelada». Todas las
 > cifras de arriba son, por tanto, una **cota superior** sobre la atmósfera y una
 > afirmación exacta sobre todo lo demás. Es el hueco 14 del
-> [ADR 0009](docs/adr/0009-citation-policy.md), y hay dieciséis huecos declarados
-> y ninguno rellenado con la cita más plausible.
+> [ADR 0009](docs/adr/0009-citation-policy.md), y hay **veintiún** huecos
+> declarados y ninguno rellenado con la cita más plausible.
 >
 > Verificación al 2026-09-14: **3 259 tests**, 99 % de cobertura global, 100 % de
 > líneas y ramas en `core/`, `orbits/`, `channel/`, `qkd/`, `system/`,
