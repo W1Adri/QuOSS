@@ -428,6 +428,126 @@ class TestTheDwellTimes:
             reference_link.samples.segment_sum(np.zeros(3))
 
 
+class TestTheSegmentExtrema:
+    """`segment_max` and `segment_min`: the reduction a *requirement* needs.
+
+    A pass's yield is an integral over it — that is `segment_sum`. A pass's
+    demand on hardware is the **worst instant** in it: the peak Doppler a
+    receiver has to capture, the peak slew its loop has to follow, the widest
+    lead a steering mirror has to hold. Those are extrema, and reducing them
+    with a sum would give a number with no meaning at all.
+    """
+
+    @pytest.mark.physics
+    def test_each_pass_gets_its_own_extremes_and_not_the_days(self, reference_link: Link) -> None:
+        """The point of a *segment* reduction: four passes, four answers."""
+        samples = reference_link.samples
+        elevation = np.asarray(reference_link.angles.elevation_rad)[
+            samples.satellite_index, samples.sample_index
+        ]
+        peak = samples.segment_max(elevation)
+        floor = samples.segment_min(elevation)
+        assert peak.shape == (reference_link.table.n_passes,)
+        assert np.all(peak > floor)
+        assert float(peak.max()) == pytest.approx(
+            float(np.max(reference_link.table.sampled_culmination_elevation_rad)), rel=1e-12
+        )
+        # Every sampled instant is at or above the mask, by construction.
+        assert np.all(floor >= reference_link.table.minimum_elevation_rad)
+
+    @pytest.mark.physics
+    def test_the_sampled_peak_is_a_lower_bound_on_the_refined_one(
+        self, reference_link: Link
+    ) -> None:
+        """The caveat the docstring states, asserted: the true peak is between samples.
+
+        `find_passes` refines the culmination with a parabola through the three
+        samples around it, so `culmination_elevation_rad` is at or above the
+        largest elevation the grid actually holds. A reduction over samples
+        cannot see past the samples, and saying so is the difference between a
+        bound and a measurement.
+        """
+        samples = reference_link.samples
+        elevation = np.asarray(reference_link.angles.elevation_rad)[
+            samples.satellite_index, samples.sample_index
+        ]
+        sampled = samples.segment_max(elevation)
+        assert np.all(sampled <= reference_link.table.culmination_elevation_rad + 1e-12)
+
+    @pytest.mark.physics
+    def test_the_reduction_is_signed_so_a_magnitude_is_the_callers_choice(
+        self, reference_link: Link
+    ) -> None:
+        """`segment_max` of a signed series is not `segment_max` of its magnitude.
+
+        Doppler is the case: it runs from a large positive shift while
+        approaching to a large negative one while receding, so the signed
+        maximum is the blueshift and the magnitude maximum is whichever end is
+        larger. Keeping the reduction signed and making the caller write
+        ``np.abs`` keeps the two questions apart.
+        """
+        samples = reference_link.samples
+        alternating = np.where(np.arange(samples.size) % 2 == 0, -3.0, 1.0)
+        assert np.all(samples.segment_max(alternating) == 1.0)
+        assert np.all(samples.segment_max(np.abs(alternating)) == 3.0)
+        assert np.all(samples.segment_min(alternating) == -3.0)
+
+    @pytest.mark.physics
+    def test_min_is_not_the_negated_max_of_the_negated_values_by_accident(
+        self, reference_link: Link
+    ) -> None:
+        """The identity holds, which is what makes the second method a convenience.
+
+        Asserted rather than assumed because the reason `segment_min` exists is
+        that `-segment_max(-x)` is the kind of expression that gets one sign
+        wrong at the third call site.
+        """
+        samples = reference_link.samples
+        values = np.linspace(-7.0, 11.0, samples.size)
+        assert np.array_equal(samples.segment_min(values), -samples.segment_max(-values))
+
+    def test_a_pass_with_no_entries_gets_an_infinity_and_not_a_zero(self) -> None:
+        """No sample, no maximum. A zero would be a value nobody measured.
+
+        Unreachable from `find_passes`, which never builds an empty pass, so
+        this constructs the degenerate table by hand — the same reason
+        `segment_sum` documents its zero.
+        """
+        grid = TimeGrid.uniform(epoch_jd=2_460_676.5, duration_s=10.0, step_s=1.0)
+        table = PassTable(
+            satellite_index=np.array([0, 0]),
+            first_index=np.array([1, 5]),
+            last_index=np.array([2, 6]),
+            start_s=np.array([0.5, 4.5]),
+            end_s=np.array([2.5, 6.5]),
+            culmination_s=np.array([1.5, 5.5]),
+            culmination_elevation_rad=np.array([0.5, 0.5]),
+            sampled_culmination_elevation_rad=np.array([0.5, 0.5]),
+            truncated_start=np.zeros(2, dtype=np.bool_),
+            truncated_end=np.zeros(2, dtype=np.bool_),
+            minimum_elevation_rad=float(np.deg2rad(10.0)),
+            grid=grid,
+        )
+        only_first = PassSamples(
+            pass_index=np.array([0, 0]),
+            satellite_index=np.array([0, 0]),
+            sample_index=np.array([1, 2]),
+            dwell_s=np.array([1.0, 1.0]),
+            table=table,
+        )
+        assert only_first.segment_max(np.array([3.0, 4.0])).tolist() == [4.0, -np.inf]
+        assert only_first.segment_min(np.array([3.0, 4.0])).tolist() == [3.0, np.inf]
+
+    @pytest.mark.physics
+    def test_an_extremum_of_the_wrong_length_is_refused(self, reference_link: Link) -> None:
+        for reduce in (
+            reference_link.samples.segment_max,
+            reference_link.samples.segment_min,
+        ):
+            with pytest.raises(DomainError, match="one value per entry"):
+                reduce(np.zeros(3))
+
+
 class TestTruncation:
     """A fragment clipped by the grid is flagged and logged, never reported as a pass."""
 

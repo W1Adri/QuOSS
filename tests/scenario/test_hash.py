@@ -25,12 +25,39 @@ from quoss.scenario.hash import HASH_EXCLUDED_FIELDS, canonical_json, scenario_h
 from quoss.scenario.io import dumps_scenario, load_scenario, loads_scenario
 from quoss.scenario.models import Scenario
 
-REFERENCE_DIGEST = "feafee61257b303a9fdb838e66a981ea4c58c8fad94ec5dfeba7841d53a84227"
-"""SHA-256 of ``canonical_json(reference_castelldefels())`` on 2026-09-13.
+REFERENCE_DIGEST = "64132c82cf6f3cd810f8c58c270acdd7c74be1afda2f259ef9f1a51638647348"
+"""SHA-256 of ``canonical_json(reference_castelldefels())``, repinned 2026-09-15.
 
 If this changes, the canonical form changed: every cached result keyed on the
 old digest is unreachable and every provenance record stops matching its
-scenario. That is allowed only with a ``SCHEMA_VERSION`` bump and a note.
+scenario.
+
+**Two different things move this digest, and only one of them is a
+``SCHEMA_VERSION`` matter.** This docstring used to say a change was allowed
+"only with a ``SCHEMA_VERSION`` bump", which contradicts ``SCHEMA_VERSION``'s own
+rule that "adding an optional field with a default does not bump it". Both
+cannot be right, so they are separated here:
+
+1. **A field changes meaning, unit, name, or how it serialises.** An old file
+   would then be *misread* under the new code — the dangerous case. Bump
+   ``SCHEMA_VERSION``, so the old file is refused instead of misread.
+2. **A new optional field with a default appears.** An old file is still read
+   correctly; the default fills in and every existing scenario means exactly
+   what it did. No bump, per ``SCHEMA_VERSION``'s rule. But the canonical form
+   has gained a key, so the digest moves anyway.
+
+Case 2 costs a cache generation and stops *previously written results* from
+matching a re-derived digest. It does not endanger reading an old scenario,
+which is what ``SCHEMA_VERSION`` exists to protect.
+
+Repinned on 2026-09-15 under case 2: ``ReceiverSpec.doppler_capture_range_hz``
+was added, optional and ``None`` by default
+([ADR 0020](../../docs/adr/0020-declared-doppler-capture-range.md)).
+``SCHEMA_VERSION`` stays at 1 and every ``scenarios/*.yaml`` loads unchanged.
+
+Previous value, for anyone chasing a stale provenance record:
+``feafee61257b303a9fdb838e66a981ea4c58c8fad94ec5dfeba7841d53a84227``
+(2026-09-13).
 """
 
 
@@ -77,6 +104,7 @@ class TestEveryPhysicalFieldMovesTheDigest:
             ("channel.fade_combination", "additive"),
             ("receiver.gate_ns", 2.0),
             ("receiver.detector_count", 1),
+            ("receiver.doppler_capture_range_hz", 1e10),
             ("background.sky_radiance_w_m2_um_sr", 1.5e-5),
             ("protocol.signal_intensity", 0.5),
             ("protocol.key_basis_probability", 0.9),

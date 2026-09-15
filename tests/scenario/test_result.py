@@ -79,6 +79,14 @@ def series(station: str, g: TimeGrid) -> SeriesResults:
         elevation_rad=TimeSeries(g, np.linspace(-0.2, 0.8, n), name="elevation", unit="rad"),
         azimuth_rad=TimeSeries(g, np.linspace(0.0, 3.0, n), name="azimuth", unit="rad"),
         range_km=TimeSeries(g, np.linspace(2000.0, 700.0, n), name="range", unit="km"),
+        range_rate_km_s=TimeSeries(g, np.linspace(-6.0, 6.0, n), name="range_rate", unit="km/s"),
+        doppler_shift_hz=TimeSeries(
+            g, np.linspace(3.9e9, -3.9e9, n), name="doppler_shift", unit="Hz"
+        ),
+        doppler_rate_hz_s=TimeSeries(g, np.full(n, -1.3e9), name="doppler_rate", unit="Hz/s"),
+        point_ahead_angle_rad=TimeSeries(
+            g, np.linspace(2.6e-5, 5.0e-5, n), name="point_ahead", unit="rad"
+        ),
         transmittance=TimeSeries(g, channel, name="transmittance", unit=""),
         loss_total_db=TimeSeries(g, -10.0 * np.log10(channel), name="loss_total", unit="dB"),
         noise_per_gate=TimeSeries(
@@ -98,6 +106,11 @@ def passes(station_names: tuple[str, ...]) -> PassResults:
         end_s=np.arange(n, dtype=np.float64) * 1000.0 + 7.5,
         culmination_s=np.arange(n, dtype=np.float64) * 1000.0 + 5.2,
         culmination_elevation_rad=np.full(n, 0.8),
+        peak_one_sided_doppler_hz=np.full(n, 3.9e9),
+        doppler_excursion_hz=np.full(n, 7.8e9),
+        peak_doppler_slew_hz_s=np.full(n, 1.3e9),
+        max_point_ahead_angle_rad=np.full(n, 5.0e-5),
+        min_point_ahead_angle_rad=np.full(n, 2.6e-5),
         finite_bits=np.array([190_581.0, 0.0][:n]),
         asymptotic_bits=np.array([1_548_341.3, 319_898.3][:n]),
         truncated_start=np.zeros(n, dtype=bool),
@@ -465,6 +478,11 @@ class TestRoundTrip:
             end_s=np.zeros(0),
             culmination_s=np.zeros(0),
             culmination_elevation_rad=np.zeros(0),
+            peak_one_sided_doppler_hz=np.zeros(0),
+            doppler_excursion_hz=np.zeros(0),
+            peak_doppler_slew_hz_s=np.zeros(0),
+            max_point_ahead_angle_rad=np.zeros(0),
+            min_point_ahead_angle_rad=np.zeros(0),
             finite_bits=np.zeros(0),
             asymptotic_bits=np.zeros(0),
             truncated_start=np.zeros(0, dtype=bool),

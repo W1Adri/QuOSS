@@ -83,6 +83,7 @@ from quoss.core.errors import DomainError
 __all__ = [
     "CASE_MODULES",
     "EXPECTED_DISAGREEMENTS",
+    "PENDING_DISAGREEMENTS",
     "REGENERATE_COMMAND",
     "AccountedTerm",
     "Comparison",
@@ -100,17 +101,43 @@ REGENERATE_COMMAND: Final = "uv run python -m quoss.validation --write docs/vali
 
 CASE_MODULES: Final = (
     "quoss.validation.channel",
-    "quoss.validation.ntanos2021",
     "quoss.validation.satquma",
     "quoss.validation.micius",
 )
 """The modules :func:`run_all` collects, in the order the table lists them.
 
 Channel sources first because every link number downstream depends on them,
-then the reference link's paper, then the two external systems.
+then the two external systems.
+
+**One module is missing on purpose, and it is the most important one.** This
+tuple listed ``quoss.validation.ntanos2021`` before that module was written, so
+:func:`run_all` — the package's entry point — raised ``ModuleNotFoundError``
+rather than producing a short table. A table that cannot be produced at all
+says less than a table with a declared hole in it, which is the same rule
+ADR 0009 applies to citations, so the entry is removed and the hole is declared:
+see :data:`PENDING_DISAGREEMENTS` and ``notes/ROADMAP.md`` stage 8.
 """
 
 EXPECTED_DISAGREEMENTS: Final[Mapping[str, str]] = MappingProxyType(
+    {
+        "micius2017.diffraction-loss-1200km": (
+            "22 dB at 1200 km is not the diffraction loss of the printed 300 mm aperture; the "
+            "printed ~10 urad divergence is 2.8x its diffraction limit."
+        ),
+    }
+)
+"""Every case expected to come out ``NOT_REPRODUCED``, with why, one line each.
+
+Both directions are enforced by ``tests/validation/test_base.py``: a new
+disagreement that is not listed here fails CI, and so does a listed one that
+starts agreeing — which is good news, but news that must be read, because the
+case note and the ADR paragraph behind it describe a disagreement that no
+longer exists. Enforcing both directions is also why this mapping may not hold a
+key no module produces: an entry nobody can reach is a claim nobody can check,
+and those live in :data:`PENDING_DISAGREEMENTS` instead.
+"""
+
+PENDING_DISAGREEMENTS: Final[Mapping[str, str]] = MappingProxyType(
     {
         "ntanos2021.eq5-printed-gain-product": (
             "Eq. (5) as printed, (8/w0)^2, is 8x the energy-conserving 8/w0^2 and returns a "
@@ -132,19 +159,23 @@ EXPECTED_DISAGREEMENTS: Final[Mapping[str, str]] = MappingProxyType(
         "lim2014.block-1e4-reach": (
             "Fig. 1's 1e4 block reaching 135 km does not reproduce; ADR 0009 gap 16."
         ),
-        "micius2017.diffraction-loss-1200km": (
-            "22 dB at 1200 km is not the diffraction loss of the printed 300 mm aperture; the "
-            "printed ~10 urad divergence is 2.8x its diffraction limit."
-        ),
     }
 )
-"""Every case expected to come out ``NOT_REPRODUCED``, with why, one line each.
+"""The disagreements ``quoss.validation.ntanos2021`` will carry, kept because they are known.
 
-Both directions are enforced by ``tests/validation/test_base.py``: a new
-disagreement that is not listed here fails CI, and so does a listed one that
-starts agreeing — which is good news, but news that must be read, because the
-case note and the ADR paragraph behind it describe a disagreement that no
-longer exists.
+These six were written into :data:`EXPECTED_DISAGREEMENTS` before the module
+that produces them existed, which made them unreachable — a listed claim no
+test could check either way. They are **not** dropped, because each one is a
+real finding already measured and asserted elsewhere in the suite
+(``tests/channel/test_beam.py::TestPublishedGainProduct``,
+``tests/channel/test_background.py::TestTheFullMoonClaim``,
+``tests/qkd/test_finite_key.py``, and the Ntanos caveat of ADR 0009); what is
+missing is only the row in ``docs/validation.md`` that would name them.
+
+The day ``ntanos2021.py`` is written (stage 8.1), each identifier it produces
+moves from here into :data:`EXPECTED_DISAGREEMENTS`, and
+``tests/validation/test_base.py`` checks that the two mappings never share a
+key, so the move cannot be half-done.
 """
 
 

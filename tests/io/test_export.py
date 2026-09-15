@@ -35,6 +35,15 @@ EPOCH_JD = 2_460_676.5
 DAY_NUMBER = 2_460_677
 """JDN of 2025-01-01 (tests/system/reference.py::REFERENCE_DAY_NUMBER)."""
 
+CORE_FORMATS = ("json", "csv", "npz")
+"""The formats whose writers need nothing beyond numpy and the standard library.
+
+:data:`~quoss.io.export.FORMATS` is these plus ``"parquet"``, which needs
+``pyarrow`` — the ``quoss[export]`` extra, absent from a default install. Tests
+that do not care about Parquet export these, so that missing an optional extra
+skips one test instead of erroring seven.
+"""
+
 FINITE_BITS = (190_581.0, 0.0)
 ASYMPTOTIC_BITS = (1_548_341.0, 319_898.0)
 """Passes 1 and 2 of the reference day (docs/adr/0011, decision 2 table)."""
@@ -56,6 +65,10 @@ def build_result(*, monte_carlo: bool = True) -> SimulationResult:
         elevation_rad=ts("elevation", "rad", [-0.1, 0.2, 0.9, 0.3, -0.05]),
         azimuth_rad=ts("azimuth", "rad", [0.0, 1.0, 2.0, 3.0, 4.0]),
         range_km=ts("range", "km", [2500.0, 1500.0, 720.0, 1400.0, 2400.0]),
+        range_rate_km_s=ts("range_rate", "km/s", [-6.0, -4.0, 0.0, 4.0, 6.0]),
+        doppler_shift_hz=ts("doppler_shift", "Hz", [3.9e9, 2.6e9, 0.0, -2.6e9, -3.9e9]),
+        doppler_rate_hz_s=ts("doppler_rate", "Hz/s", [-1.3e9, -1.3e9, -1.7e9, -1.3e9, -1.3e9]),
+        point_ahead_angle_rad=ts("point_ahead", "rad", [2.6e-5, 4.0e-5, 5.0e-5, 4.0e-5, 2.6e-5]),
         transmittance=ts("transmittance", "", [nan, 1e-4, 3e-3, 2e-4, nan]),
         loss_total_db=ts("loss_total", "dB", [nan, 40.0, 25.2, 37.0, nan]),
         noise_per_gate=ts("noise_per_gate", "", [nan, 1e-6, 2e-6, 1e-6, nan]),
@@ -69,6 +82,11 @@ def build_result(*, monte_carlo: bool = True) -> SimulationResult:
         end_s=np.array([1.5, 3.75]),
         culmination_s=np.array([1.0, 3.0]),
         culmination_elevation_rad=np.array([0.9, 0.3]),
+        peak_one_sided_doppler_hz=np.array([3.9e9, 2.6e9]),
+        doppler_excursion_hz=np.array([7.8e9, 5.2e9]),
+        peak_doppler_slew_hz_s=np.array([1.7e9, 1.3e9]),
+        max_point_ahead_angle_rad=np.array([5.0e-5, 4.0e-5]),
+        min_point_ahead_angle_rad=np.array([2.6e-5, 2.6e-5]),
         finite_bits=np.array(FINITE_BITS),
         asymptotic_bits=np.array(ASYMPTOTIC_BITS),
         truncated_start=np.array([False, False]),
@@ -173,12 +191,40 @@ class TestFormats:
 
 
 class TestRealResultAllFormats:
-    """Export the real result in every format and read each file back."""
+    """Export the real result and read each file back.
+
+    Split over two fixtures by what the environment has. ``exported`` uses
+    :data:`CORE_FORMATS`, whose writers need nothing but numpy and the standard
+    library, so every test over CSV, npz and JSON runs in any environment.
+    ``exported_with_parquet`` adds Parquet and skips when ``pyarrow`` is absent.
+
+    **Why the split and not one ``importorskip``.** There was one, inside
+    ``test_parquet_reads_back``, and it never ran: the fixture had already
+    called ``export_result`` with ``"parquet"`` in the formats, which raises
+    ``ConfigurationError`` without ``pyarrow``, so the whole class errored — six
+    tests that have nothing to do with Parquet included. A skip guard has to sit
+    upstream of the thing that needs the dependency, not next to it. ``quoss``
+    installs without ``quoss[export]`` on purpose (pyarrow is 40 MB and not a
+    physics dependency), so a suite that errors without it is telling the truth
+    about the extra and a lie about the core.
+    """
 
     @pytest.fixture
     def exported(
         self, tmp_path: Path, degradations: DegradationLog
     ) -> tuple[Path, Any, SimulationResult]:
+        result = build_result()
+        out = export_result(
+            result, tmp_path / "run", formats=CORE_FORMATS, degradations=degradations
+        )
+        assert len(degradations) == 0
+        return tmp_path / "run", out, result
+
+    @pytest.fixture
+    def exported_with_parquet(
+        self, tmp_path: Path, degradations: DegradationLog
+    ) -> tuple[Path, Any, SimulationResult]:
+        pytest.importorskip("pyarrow", reason="Parquet export is the quoss[export] extra")
         result = build_result()
         out = export_result(result, tmp_path / "run", formats=FORMATS, degradations=degradations)
         assert len(degradations) == 0
@@ -191,9 +237,6 @@ class TestRealResultAllFormats:
             "daily.csv",
             "series_castelldefels.csv",
             "arrays.npz",
-            "passes.parquet",
-            "daily.parquet",
-            "series_castelldefels.parquet",
             "result.json",
         ]
         for f in out.files:
@@ -201,7 +244,7 @@ class TestRealResultAllFormats:
             assert f == ExportedFile(f.name, hashlib.sha256(data).hexdigest(), len(data))
         manifest = json.loads(out.manifest_path.read_text())
         assert manifest["files"] == [f.to_dict() for f in out.files]
-        assert manifest["export"]["formats"] == list(FORMATS)
+        assert manifest["export"]["formats"] == list(CORE_FORMATS)
         assert manifest["export"]["quoss_version"] == quoss.__version__
         assert manifest["export"]["created_utc"] == out.created_utc
         assert manifest["result"] == result.to_manifest_and_arrays()[0]
@@ -224,6 +267,11 @@ class TestRealResultAllFormats:
             "end_s",
             "culmination_s",
             "culmination_elevation_rad",
+            "peak_one_sided_doppler_hz",
+            "doppler_excursion_hz",
+            "peak_doppler_slew_hz_s",
+            "max_point_ahead_angle_rad",
+            "min_point_ahead_angle_rad",
             "finite_bits",
             "asymptotic_bits",
             "truncated_start",
@@ -280,6 +328,11 @@ class TestRealResultAllFormats:
             "azimuth_rad",
             "azimuth_deg",
             "range_km",
+            "range_rate_km_s",
+            "doppler_shift_hz",
+            "doppler_rate_hz_s",
+            "point_ahead_angle_rad",
+            "point_ahead_angle_deg",
             "transmittance",
             "loss_total_db",
             "noise_per_gate",
@@ -287,7 +340,13 @@ class TestRealResultAllFormats:
         ]
         assert len(rows) == 5
         assert rows[0][0] == "0.0" and float(rows[0][1]) == EPOCH_JD
-        assert rows[0][7] == "" and rows[2][7] == "0.003"  # NaN outside the pass, repr inside
+        transmittance = header.index("transmittance")
+        # NaN outside the pass, repr inside. The acquisition series beside it are
+        # geometry, so they are finite in both rows: that asymmetry is the schema's
+        # claim that a satellite has a position even where the link has no budget.
+        assert rows[0][transmittance] == "" and rows[2][transmittance] == "0.003"
+        doppler = header.index("doppler_shift_hz")
+        assert rows[0][doppler] != "" and rows[2][doppler] != ""
         series = result.series[0]
         for i, row in enumerate(rows):
             assert float(row[2]) == series.elevation_rad.values[i]
@@ -314,9 +373,32 @@ class TestRealResultAllFormats:
         assert rebuilt.passes.finite_bits.tolist() == list(FINITE_BITS)
         assert rebuilt.to_dict() == result.to_dict()
 
-    def test_parquet_reads_back(self, exported: tuple[Path, Any, SimulationResult]) -> None:
+    def test_the_parquet_files_join_the_list_and_the_manifest(
+        self, exported_with_parquet: tuple[Path, Any, SimulationResult]
+    ) -> None:
+        directory, out, _ = exported_with_parquet
+        assert [f.name for f in out.files] == [
+            "passes.csv",
+            "daily.csv",
+            "series_castelldefels.csv",
+            "arrays.npz",
+            "passes.parquet",
+            "daily.parquet",
+            "series_castelldefels.parquet",
+            "result.json",
+        ]
+        for f in out.files:
+            data = (directory / f.name).read_bytes()
+            assert f == ExportedFile(f.name, hashlib.sha256(data).hexdigest(), len(data))
+        manifest = json.loads(out.manifest_path.read_text())
+        assert manifest["files"] == [f.to_dict() for f in out.files]
+        assert manifest["export"]["formats"] == list(FORMATS)
+
+    def test_parquet_reads_back(
+        self, exported_with_parquet: tuple[Path, Any, SimulationResult]
+    ) -> None:
         pq = pytest.importorskip("pyarrow.parquet")
-        directory, _, _ = exported
+        directory, _, _ = exported_with_parquet
         passes = pq.read_table(directory / "passes.parquet").to_pydict()
         assert passes["station"] == ["castelldefels", "castelldefels"]
         assert passes["finite_bits"] == list(FINITE_BITS) and passes["has_key"] == [True, False]

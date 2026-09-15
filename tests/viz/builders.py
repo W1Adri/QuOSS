@@ -114,6 +114,14 @@ def _series(station: str, grid: TimeGrid, pass_indices: Sequence[int]) -> Series
         ),
         azimuth_rad=TimeSeries(grid, azimuth_rad, name="azimuth", unit="rad"),
         range_km=TimeSeries(grid, np.full(t.shape, 1500.0), name="range", unit="km"),
+        range_rate_km_s=TimeSeries(grid, np.full(t.shape, -3.0), name="range_rate", unit="km/s"),
+        doppler_shift_hz=TimeSeries(grid, np.full(t.shape, 1.9e9), name="doppler_shift", unit="Hz"),
+        doppler_rate_hz_s=TimeSeries(
+            grid, np.full(t.shape, -1.0e7), name="doppler_rate", unit="Hz/s"
+        ),
+        point_ahead_angle_rad=TimeSeries(
+            grid, np.full(t.shape, 4.0e-5), name="point_ahead", unit="rad"
+        ),
         transmittance=TimeSeries(grid, channel, name="transmittance", unit=""),
         loss_total_db=TimeSeries(
             grid, np.where(np.isnan(rate), np.nan, 30.0), name="loss", unit="dB"
@@ -178,6 +186,11 @@ def make_result(
         end_s=starts + np.asarray(DURATION_S[:n]),
         culmination_s=starts + np.asarray(DURATION_S[:n]) / 2.0,
         culmination_elevation_rad=np.asarray(deg_to_rad(np.asarray(PEAK_ELEVATION_DEG[:n]))),
+        peak_one_sided_doppler_hz=np.full(n, 4.2e9),
+        doppler_excursion_hz=np.full(n, 8.4e9),
+        peak_doppler_slew_hz_s=np.full(n, 3.8e7),
+        max_point_ahead_angle_rad=np.full(n, 5.06e-5),
+        min_point_ahead_angle_rad=np.full(n, 2.6e-5),
         finite_bits=np.asarray(finite_bits[:n], dtype=np.float64),
         asymptotic_bits=np.asarray(ASYMPTOTIC_BITS[:n]),
         truncated_start=np.zeros(n, dtype=bool),

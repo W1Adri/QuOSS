@@ -134,6 +134,7 @@ from quoss.orbits.propagator import Trajectory
 
 __all__ = [
     "LookAngles",
+    "doppler_rate_hz_s",
     "doppler_shift_hz",
     "look_angles",
 ]
@@ -478,3 +479,111 @@ def doppler_shift_hz(range_rate_km_s: FloatArray, carrier_frequency_hz: float) -
         raise DomainError("range_rate_km_s contains non-finite values.")
     range_rate_m_s = km_to_m(range_rate_km_s)
     return np.asarray(-range_rate_m_s / SPEED_OF_LIGHT_M_S * carrier_frequency_hz, dtype=np.float64)
+
+
+def doppler_rate_hz_s(
+    range_rate_km_s: FloatArray,
+    *,
+    t_s: FloatArray,
+    carrier_frequency_hz: float,
+) -> FloatArray:
+    r"""How fast the Doppler shift is sweeping, Hz per second.
+
+    What it is, and why it is a separate question from the shift itself
+    --------------------------------------------------------------------
+    :func:`doppler_shift_hz` says *where* the received carrier is. This says
+    how fast it is *moving*, which is a different requirement on the receiver
+    and the one that is easier to design past by accident.
+
+    A coherent receiver has two numbers: a **capture range**, the offset it can
+    still find a carrier within, and a **tracking rate**, the sweep its loop can
+    follow once locked. A pass can sit comfortably inside the first and leave
+    the second behind — and when it does, the symptom is a lock that was fine
+    all pass and drops near the horizon, which is the shape of the TBIRD
+    on-orbit experience: the end-of-pass Doppler ran past what the transceiver
+    could accept.
+
+    .. math::
+
+        \frac{d(\Delta f)}{dt} = -\frac{f_0}{c}\,\ddot{R}
+
+    How it is computed, and the error that buys
+    ---------------------------------------------
+    By differentiating the Doppler series along the time axis with second-order
+    central differences (:func:`numpy.gradient`, given the sample times, so a
+    non-uniform grid is handled). Not analytically: the exact range acceleration
+    needs the relative *acceleration* of satellite and station, which means the
+    force model, and a :class:`LookAngles` carries positions and velocities only.
+
+    That is a real approximation and it is small here for a reason worth
+    stating: the range-rate of a LEO pass varies on the scale of minutes, so a
+    grid of seconds resolves it with room to spare. Measured on the reference
+    day (700 km sun-synchronous over Castelldefels, 10 degree mask): the largest
+    per-pass ``|d(Delta f)/dt|`` is **41.547201 MHz/s** on a 1 s grid and
+    **41.549130 MHz/s** on a 0.1 s grid — they differ by 46 parts per million,
+    a hundred times finer than any transceiver specification is written to.
+
+    Parameters
+    ----------
+    range_rate_km_s : FloatArray
+        Rate of change of slant range, km/s — :attr:`LookAngles.range_rate_km_s`.
+        Differentiated along the **last** axis, which is the sample axis of
+        every :class:`LookAngles` field.
+    t_s : FloatArray
+        Sample times, seconds, one per column of ``range_rate_km_s``. Strictly
+        increasing; usually :attr:`~quoss.core.types.TimeGrid.t_s`.
+    carrier_frequency_hz : float
+        Nominal carrier frequency, Hz. As in :func:`doppler_shift_hz`.
+
+    Returns
+    -------
+    FloatArray
+        Rate of change of the Doppler shift, Hz/s, shaped like
+        ``range_rate_km_s``. Negative while the satellite is accelerating away.
+
+    Raises
+    ------
+    DomainError
+        If ``carrier_frequency_hz`` is not finite and positive, if
+        ``range_rate_km_s`` is not finite, if ``t_s`` is not strictly increasing
+        or not finite, if its length does not match the last axis, or if there
+        are fewer than two samples — one instant has no derivative, and
+        returning a zero there would be a rate nobody measured.
+
+    Examples
+    --------
+    A constant range-rate is not sweeping, whatever its value:
+
+    >>> import numpy as np
+    >>> rate = doppler_rate_hz_s(np.full(5, 3.0), t_s=np.arange(5.0), carrier_frequency_hz=1.934e14)
+    >>> bool(np.allclose(rate, 0.0))
+    True
+
+    A range-rate crossing zero at 1 km/s per second — the shape of a close
+    overpass — sweeps the carrier at 645 MHz per second, and the sign is
+    negative because the shift falls as the satellite starts to recede:
+
+    >>> rate = doppler_rate_hz_s(
+    ...     np.arange(-2.0, 3.0), t_s=np.arange(5.0), carrier_frequency_hz=1.934e14
+    ... )
+    >>> float(np.round(rate[2] / 1e6, 1))
+    -645.1
+    """
+    times = np.asarray(t_s, dtype=np.float64)
+    if times.ndim != 1:
+        raise DomainError(f"t_s must be one-dimensional, got shape {times.shape}.")
+    if times.size < 2:
+        raise DomainError(
+            f"a Doppler rate needs at least two samples to difference, got {times.size}."
+        )
+    if not np.all(np.isfinite(times)):
+        raise DomainError("t_s contains non-finite values.")
+    if not np.all(np.diff(times) > 0.0):
+        raise DomainError("t_s must be strictly increasing; a repeated instant has no rate.")
+    shift = doppler_shift_hz(range_rate_km_s, carrier_frequency_hz)
+    if shift.shape[-1] != times.size:
+        raise DomainError(
+            f"range_rate_km_s has {shift.shape[-1]} samples on its last axis but t_s has "
+            f"{times.size}; they are the same time axis."
+        )
+    return np.asarray(np.gradient(shift, times, axis=-1), dtype=np.float64)
