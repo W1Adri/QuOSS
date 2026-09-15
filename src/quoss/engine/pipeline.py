@@ -820,6 +820,14 @@ def _channel(
     ``afterpulse_probability = 0`` — every scenario in ``scenarios/`` — the
     term is exactly zero whatever this mean is, which the end-to-end identity
     checks.
+
+    The zenith transmittance is **resolved per station and not read as a
+    field**, because :class:`~quoss.scenario.models.ChannelSpec` accepts it
+    either as a number or as an extinction model (ADR 0023), and a model depends
+    on the wavelength and on how high the station stands. A declared number goes
+    through the same call and comes back unchanged, so a scenario that states a
+    transmittance is bit-identical to what it produced before the model existed
+    — which is what ``tests/e2e/test_reference_scenarios.py`` asserts.
     """
     transmitter, receiver, channel = scenario.transmitter, scenario.receiver, scenario.channel
     spec = scenario.protocol
@@ -829,7 +837,11 @@ def _channel(
         wavelength_m=transmitter.wavelength_m,
         transmit_aperture_m=transmitter.aperture_m,
         receive_aperture_m=station.receive_aperture_m,
-        zenith_transmittance=channel.zenith_transmittance,
+        zenith_transmittance=channel.zenith_transmittance_at(
+            wavelength_m=transmitter.wavelength_m,
+            station_altitude_m=station.altitude_m,
+            degradations=degradations,
+        ),
         pointing_jitter_rad=transmitter.pointing_jitter_rad,
         receiver_efficiency=receiver.chain_efficiency,
         degradations=degradations,

@@ -388,11 +388,47 @@ be opened, written down so nobody has to rediscover it.
   **What the correction changed downstream:** Ntanos et al.'s "as low as 20 dB"
   went from a 4.259 dB residual — which would have needed a vertical extinction
   of `L_zen = 0.375` at 1550 nm, an order of magnitude more than anything
-  credible — to **0.906 dB**, i.e. `L_zen = 0.812`, an ordinary clear-sky
-  value. The missing decibels were in the transmitter, not in the atmosphere.
+  credible — to **0.906 dB**, i.e. `L_zen = 0.812`, ~~an ordinary clear-sky
+  value~~. The missing decibels were in the transmitter, not in the atmosphere.
   That is a consistency and not a reproduction: the paper states no extinction
   and no truncation, and a residual landing in a plausible range is not evidence
   that it is the thing it resembles.
+
+  **And "ordinary clear-sky" did not survive getting a model behind it
+  (2026-09-15, [ADR 0023](../../docs/adr/0023-traceable-extinction.md)).**
+  Through a 1.2 km aerosol layer at 1550 nm, `L_zen = 0.812` is **6 km of
+  visibility** — *light fog* in ITU-R P.1817-1's own weather code — and in fact
+  **no visibility produces it at all**: the published law's 22.3 % step at 6 km
+  leaves the band from 0.883 to 1.129 dB unreachable, and 0.906 dB is inside it.
+  At the other end of the literature's spread for the scale height, 2 km, it is
+  reachable and means 9.8 km of visibility. Still compatible; no longer clear
+  sky. This is the second time this entry has had to be corrected by a
+  measurement, which is the argument for measuring.
+
+### Extinction (stage 1.1)
+
+- **Aerosol scattering has a model; molecular absorption still has no number.**
+  `channel/extinction.py` implements ITU-R P.1814 Eq. (4), visibility to specific
+  attenuation, verified against **32 published cells** (Kim et al. 2001 Tables 2
+  and 4, both laws, both wavelengths) to within half of the last printed digit.
+  What remains open is gap 23 of ADR 0009: two openable sources say molecular
+  absorption is "negligible" at FSO wavelengths **in words**, ITU-R P.1621-2
+  Figs. 1 and 2 are plots, and HITRAN answers but a line list is not a specific
+  attenuation — turning one into the other is an LBLRTM/MODTRAN-class radiative
+  transfer calculation this project does not have.
+- **The aerosol scale height is a site parameter with no published value**
+  (gap 22). 1.2 to 2 km is a factor 1.67 in optical depth: **0.230 against
+  0.384 dB** at 23 km of visibility and 1550 nm. Hence no default.
+- **A frozen MODTRAN table would be the V3 oracle this term lacks.** MODTRAN is
+  paid software, so what enters instead is the one published *ratio* from
+  somebody else's runs: Gruneisen et al. 2021 §III A report near-zenith
+  transmission at 775 nm as "about 90 %" of that at 1550 nm under normal haze.
+  Because 775 and 1550 differ by exactly a factor two, that ratio fixes the
+  1550 nm zenith optical depth at **0.0720 Np** (`L_zen = 0.9305`) *without*
+  needing the unpublished scale height, and the model reproduces it at 16.9 km of
+  visibility. Their absolute `η_trans = 0.9` at 780 nm does **not** follow from
+  it — the two statements together require `L_zen(1550) = 1.000` — so this is
+  compatible on the ratio and not reproduced on the level.
 - **Turbulence-induced beam spreading is not modelled**, on the source's own
   authority rather than by omission: ITU-R P.1622 §4.4 states it "is typically
   very small with respect to divergence and does not account for an appreciable

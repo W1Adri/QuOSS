@@ -961,6 +961,10 @@ def horizontal_loss_budget(
       default**, for the reason ``zenith_transmittance`` is required on the
       downlink (ADR 0009 gap 14): P.1814 gives the fog, rain and snow laws but no
       clear-air number, and 0.0 has to be written by whoever means it.
+      :func:`quoss.channel.extinction.aerosol_specific_attenuation_db_per_km` is
+      what computes one from a visibility, and it returns exactly this unit —
+      see ``docs/adr/0023-traceable-extinction.md``, including why P.1814's own
+      equation (4) prints dB/km for a quantity that is in nepers per km.
     - **pointing** and **scintillation**: the fade laws of
       :mod:`quoss.channel.link_budget`, with ``gamma`` from
       :func:`quoss.channel.pointing.beam_to_jitter_ratio` and the variance from

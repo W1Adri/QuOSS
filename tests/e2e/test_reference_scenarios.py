@@ -171,12 +171,19 @@ import numpy as np
 import pytest
 
 from quoss.channel.atmosphere import integrated_cn2_m13
+from quoss.channel.extinction import (
+    VisibilityScalingLaw,
+    zenith_transmittance_from_visibility,
+)
 from quoss.channel.turbulence import ScintillationRegime
 from quoss.core.errors import DegradationLog
 from quoss.engine.pipeline import Simulation, StationRun, simulate
+from quoss.engine.pipeline import run as run_scenario
 from quoss.qkd.base import LinkConditions, binary_entropy
 from quoss.scenario.defaults import reference_castelldefels
 from quoss.scenario.models import (
+    ChannelSpec,
+    ExtinctionSpec,
     MonteCarloSpec,
     MultiStationSpec,
     RelaySpec,
@@ -190,6 +197,7 @@ from .oracle import (
     REFERENCE_FINITE_BITS,
     REFERENCE_FINITE_DAY_BITS,
     STATIONS,
+    WAVELENGTH_M,
     HandLink,
     hand_link,
     hand_monte_carlo,
@@ -1393,6 +1401,205 @@ class TestWhatTheSaturatedModelIsWorth:
                 hand_link(name, station_height_m=altitude_m, regime=self.SATURATED).finite.key_bits
             )
             assert ((weak > 0.0) == (saturated > 0.0)).all(), name
+
+
+class TestWhatTheExtinctionModelIsWorth:
+    """**Stage 1.1.** The term the budget used to receive, priced by the same split.
+
+    Every scenario in ``scenarios/`` declares ``zenith_transmittance: 1.0`` —
+    honestly, because ``docs/adr/0009-citation-policy.md`` gap 14 had no number
+    to offer — so every figure this project has produced is for an atmosphere
+    that does not absorb or scatter. ``docs/adr/0023-traceable-extinction.md``
+    gives it a model, and this class is what that costs on the reference day.
+
+    The intervention is the third one through the same machinery
+    ------------------------------------------------------------
+    `x = mean(ln T)` and `y = ln(key bits)` as in
+    `TestWhyTheHigherStationGainsLess` (which moved the station up a mountain)
+    and `TestWhatTheSaturatedModelIsWorth` (which changed the scintillation
+    model). Here the intervention is switching ``zenith_transmittance`` from
+    1.0 to what :mod:`quoss.channel.extinction` returns for a stated visibility,
+    everything else held.
+
+    ==================================  ==========  ==========  ==========
+    air over Castelldefels              `dx` (T)    `E`         `dy` (key)
+    ==================================  ==========  ==========  ==========
+    23 km, "very clear air"             -15.6 %      1.52        -22.7 %
+    10 km, "clear"                      -32.3 %      1.67        -47.7 %
+    2 km, "light mist"                  -97.7 %      -           -100 %
+    ==================================  ==========  ==========  ==========
+
+    What it says
+    ------------
+    **A quarter of a decibel at zenith is a fifth of the day.** 23 km of
+    visibility is the clearest line in ITU-R P.1817-1's own weather code, and it
+    is 0.230 dB straight up — and 22.7 % of the certified key, because `E` is
+    1.52 rather than 1. The same station showed `E = 0.473` for a scintillation
+    *gain* in `TestWhatTheSaturatedModelIsWorth`, so the elasticity is not a
+    property of the station: it is a local derivative of a bound with a floor at
+    zero, and it is measured here over a step eight times larger and in the
+    other direction. Reporting either figure as "Castelldefels' elasticity"
+    would be reporting a tangent as a constant.
+
+    **At 2 km of visibility the day certifies nothing**, while the asymptotic
+    figure still claims 424 kbit. That is the unbounded-error pattern of
+    ``docs/adr/0011-the-block-is-the-pass.md`` again: the ratio between what the
+    two regimes report is not a factor, it is a division by zero.
+
+    **And infinite visibility reproduces the old numbers to the bit**, which is
+    what makes the model safe to introduce: a scenario that declares no
+    extinction and a scenario that models infinitely clear air are the same run.
+    """
+
+    VERY_CLEAR_KM = 23.0
+    CLEAR_KM = 10.0
+    LIGHT_MIST_KM = 2.0
+    SCALE_HEIGHT_M = 1200.0
+    """1.2 km. The thin end of the literature's spread (ADR 0009 gap 22)."""
+
+    @staticmethod
+    def _zenith(visibility_km: float, scale_height_m: float = 1200.0) -> float:
+        """``L_zen`` at Castelldefels for a locally measured visibility."""
+        return float(
+            zenith_transmittance_from_visibility(
+                visibility_km,
+                wavelength_m=WAVELENGTH_M,
+                aerosol_scale_height_m=scale_height_m,
+                station_altitude_m=CASTELLDEFELS_HEIGHT_M,
+                visibility_altitude_m=CASTELLDEFELS_HEIGHT_M,
+                law=VisibilityScalingLaw.KIM_2001,
+                degradations=DegradationLog(),
+            )
+        )
+
+    @classmethod
+    def _factors(cls, visibility_km: float) -> tuple[float, float, float]:
+        """Return `(dx, E, dy)` for switching from no extinction to this air."""
+        clear = hand_link("castelldefels", station_height_m=CASTELLDEFELS_HEIGHT_M)
+        hazy = hand_link(
+            "castelldefels",
+            station_height_m=CASTELLDEFELS_HEIGHT_M,
+            zenith_transmittance=cls._zenith(visibility_km),
+        )
+        d_x = mean_log_transmittance(hazy, None) - mean_log_transmittance(clear, None)
+        d_y = float(
+            np.log(
+                float(np.asarray(hazy.finite.key_bits).sum())
+                / float(np.asarray(clear.finite.key_bits).sum())
+            )
+        )
+        return d_x, d_y / d_x, d_y
+
+    def test_the_zenith_losses_of_the_three_airs(self) -> None:
+        """0.230, 0.530 and 5.142 dB — the model's own output, stated first."""
+        losses = {
+            v: -10.0 * float(np.log10(self._zenith(v)))
+            for v in (self.VERY_CLEAR_KM, self.CLEAR_KM, self.LIGHT_MIST_KM)
+        }
+        assert losses[self.VERY_CLEAR_KM] == pytest.approx(0.2304, abs=5e-4)
+        assert losses[self.CLEAR_KM] == pytest.approx(0.5299, abs=5e-4)
+        assert losses[self.LIGHT_MIST_KM] == pytest.approx(5.142, abs=5e-3)
+
+    def test_the_clearest_air_in_the_itu_weather_code_costs_a_fifth_of_the_day(self) -> None:
+        d_x, elasticity, d_y = self._factors(self.VERY_CLEAR_KM)
+        assert float(np.expm1(d_x)) == pytest.approx(-0.1558, abs=2e-3)
+        assert float(np.expm1(d_y)) == pytest.approx(-0.2274, abs=2e-3)
+        assert elasticity == pytest.approx(1.523, abs=0.02)
+
+    def test_clear_air_costs_half_of_it(self) -> None:
+        d_x, elasticity, d_y = self._factors(self.CLEAR_KM)
+        assert float(np.expm1(d_x)) == pytest.approx(-0.3227, abs=2e-3)
+        assert float(np.expm1(d_y)) == pytest.approx(-0.4772, abs=3e-3)
+        assert elasticity == pytest.approx(1.665, abs=0.02)
+
+    def test_light_mist_certifies_nothing_while_the_asymptote_still_claims_a_day(self) -> None:
+        """A ratio would be a division by zero, so the two numbers are stated apart."""
+        hazy = hand_link(
+            "castelldefels",
+            station_height_m=CASTELLDEFELS_HEIGHT_M,
+            zenith_transmittance=self._zenith(self.LIGHT_MIST_KM),
+        )
+        assert float(np.asarray(hazy.finite.key_bits).sum()) == 0.0
+        assert float(np.asarray(hazy.asymptotic.key_bits).sum()) == pytest.approx(
+            424_461.0, rel=2e-3
+        )
+
+    def test_the_engine_reproduces_the_hand_chain_through_the_schema(self) -> None:
+        """The whole point of wiring it: `run()` and the hand chain, to the bit.
+
+        The engine resolves the transmittance from
+        :class:`~quoss.scenario.models.ExtinctionSpec` per station; the hand
+        chain is handed the number. They have to be the same run.
+        """
+        scenario = reference_castelldefels()
+        modelled = scenario.model_copy(
+            update={
+                "channel": ChannelSpec(
+                    extinction=ExtinctionSpec(
+                        visibility_km=self.VERY_CLEAR_KM,
+                        visibility_altitude_m=CASTELLDEFELS_HEIGHT_M,
+                        aerosol_scale_height_m=self.SCALE_HEIGHT_M,
+                        scaling_law=VisibilityScalingLaw.KIM_2001,
+                    ),
+                    static_loss_db=scenario.channel.static_loss_db,
+                    outage_probability=scenario.channel.outage_probability,
+                    fade_combination=scenario.channel.fade_combination,
+                )
+            }
+        )
+        result = run_scenario(modelled)
+        expected = hand_link(
+            "castelldefels",
+            station_height_m=CASTELLDEFELS_HEIGHT_M,
+            zenith_transmittance=self._zenith(self.VERY_CLEAR_KM),
+        )
+        assert_identical(
+            np.asarray(result.passes.finite_bits),
+            np.asarray(expected.finite.key_bits),
+            "modelled-extinction finite bits",
+        )
+        assert float(np.asarray(result.daily.finite_bits)[0]) == 334_883.0
+
+    def test_declaring_no_extinction_and_modelling_infinite_visibility_are_one_run(self) -> None:
+        """The identity that makes this safe to land: bit-for-bit, not nearly.
+
+        A visibility of 1e300 km gives exactly 1.0 — the law's ``3.91/V`` is a
+        true zero, not an underflow — so the modelled scenario and the declared
+        one take the same branch of every subsequent floating-point operation.
+        `ENGINE_FINITE_DAY_BITS` is unmoved, which is why the 3 600 assertions
+        in this file did not have to be rewritten.
+        """
+        scenario = reference_castelldefels()
+        modelled = scenario.model_copy(
+            update={
+                "channel": ChannelSpec(
+                    extinction=ExtinctionSpec(
+                        visibility_km=1e300,
+                        visibility_altitude_m=CASTELLDEFELS_HEIGHT_M,
+                        aerosol_scale_height_m=self.SCALE_HEIGHT_M,
+                        scaling_law=VisibilityScalingLaw.KIM_2001,
+                    ),
+                    static_loss_db=scenario.channel.static_loss_db,
+                    outage_probability=scenario.channel.outage_probability,
+                    fade_combination=scenario.channel.fade_combination,
+                )
+            }
+        )
+        assert (
+            modelled.channel.zenith_transmittance_at(
+                wavelength_m=WAVELENGTH_M,
+                station_altitude_m=CASTELLDEFELS_HEIGHT_M,
+                degradations=DegradationLog(),
+            )
+            == 1.0
+        )
+        result = run_scenario(modelled)
+        assert_identical(
+            np.asarray(result.passes.finite_bits),
+            np.asarray(ENGINE_FINITE_BITS),
+            "infinite-visibility finite bits",
+        )
+        assert float(np.asarray(result.daily.finite_bits)[0]) == ENGINE_FINITE_DAY_BITS
 
 
 class TestTheEnsembleIsTheSameDraw:
