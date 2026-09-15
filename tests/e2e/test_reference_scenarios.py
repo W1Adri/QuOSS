@@ -124,6 +124,7 @@ from .oracle import (
     HandLink,
     hand_link,
     hand_monte_carlo,
+    mean_log_transmittance,
     station_set,
     station_spec,
 )
@@ -515,9 +516,18 @@ class TestTheFourHundredAndFiftySevenBits:
 
         Same satellite, same day, same receiver, same mask; only the station and
         therefore the height of the turbulence integral change. The `C_n^2`
-        ratio is the mechanism: the Hufnagel-Valley profile puts most of the
-        turbulence in the first kilometre, so a telescope 2 168 m up has an
-        order of magnitude less of it overhead.
+        ratio asserted alongside is *part* of the mechanism: the profile puts
+        most of the turbulence in the first kilometre, so a telescope 2 168 m up
+        has an order of magnitude less of it overhead.
+
+        It is deliberately only part, and this docstring used to claim it was
+        the whole thing. It cannot be: the `C_n^2` ratio rises with altitude
+        (9.82 at Calar Alto, 10.46 at the Teide OGS) while the key gain falls
+        (+35.7 %, +4.5 %). The turbulence integral explains a channel that is
+        6.94 % brighter at Calar Alto and 4.80 % at the Teide; what turns those
+        into +35.7 % and +4.5 % is the finite-key bound amplifying them by 4.55
+        and 0.934. `TestWhyTheHigherStationGainsLess` takes that apart and is
+        where the non-monotonicity is answered.
 
         This is why `tests/e2e` asserts the engine's number and not the older
         one. At 30 m the difference is invisible; at the altitudes real optical
@@ -547,6 +557,286 @@ class TestTheFourHundredAndFiftySevenBits:
         assert float(sea[2]) == 9_817.0
         assert float(up[2]) == 19_724.0
         assert float(up[2] / sea[2]) == pytest.approx(2.009, abs=0.001)
+
+
+class TestWhyTheHigherStationGainsLess:
+    """+35.7 % at Calar Alto (2 168 m) and +4.5 % at the Teide OGS (2 400 m), decomposed.
+
+    The question this class exists to answer
+    ----------------------------------------
+    `TestTheFourHundredAndFiftySevenBits` reports both figures and explains
+    neither. Read on its own it says something false by implication: that
+    starting the turbulence integral higher up buys more key, and that the
+    mechanism is "less atmosphere overhead". If that were the whole mechanism
+    the effect would have to be **monotonic in altitude** — a higher telescope
+    would always gain at least as much as a lower one. It is not. The Teide OGS
+    is 232 m *higher* than Calar Alto and gains **eight times less**.
+
+    An unexplained non-monotonicity in the headline number of an ADR is exactly
+    the failure mode CLAUDE.md is written against: a plausible number, sitting
+    next to a mechanism that does not produce it, with a passing suite
+    underneath. So this class takes the effect apart into two factors that can
+    be measured separately, and shows that the one people reach for (altitude)
+    is not the one doing the work.
+
+    The two factors, defined
+    ------------------------
+    Write `x = mean(ln T)` — the log-transmittance summary defined and defended
+    in `oracle.mean_log_transmittance` — and `y = ln(key bits for the day)`.
+    Moving the station's turbulence integral from sea level up to its real
+    altitude changes both:
+
+    - **`dx`, the channel factor.** How much brighter the link got. This is
+      atmospheric physics and nothing else: the ITU-R P.1621-2 surface term has
+      a 100 m scale height, so a telescope up a mountain has an order of
+      magnitude less turbulence above it.
+    - **`E = dy / dx`, the elasticity, or the bound's amplification.** How many
+      per cent of key one per cent of transmittance buys. "Elasticity" is the
+      economists' word for the ratio of two fractional changes, borrowed
+      because that is exactly what it is; nothing in it is economics.
+
+      `E = 1` means key is simply proportional to transmittance — one per cent
+      more light, one per cent more key. That is the asymptotic regime, where
+      the key rate is a rate and the pass just collects it.
+
+      `E >> 1` means the pass is at the **certification cliff**: the finite-key
+      bound subtracts a block of statistical penalties from the raw sifted key,
+      and on a pass where almost all of the key is eaten by those penalties,
+      what survives is a small difference of two large numbers. A small change
+      in the larger one moves the difference enormously. That is not a property
+      of the atmosphere; it is a property of the security proof.
+
+    `dy = E * dx` is an identity, not a discovery — `E` is defined as the
+    ratio. The content is that the two halves turn out to be separable and to
+    have separate causes, and that the second one is what makes the effect
+    non-monotonic.
+
+    What the numbers are
+    --------------------
+    ==============  ===========  ===========  ===========  ==========
+    station         altitude     `dx` (T)     `E`          `dy` (key)
+    ==============  ===========  ===========  ===========  ==========
+    Calar Alto       2 168 m      +6.94 %      4.55         +35.7 %
+    Teide OGS        2 400 m      +4.80 %      0.934        +4.5 %
+    ==============  ===========  ===========  ===========  ==========
+
+    Both factors point the same way, and **neither of them is altitude**:
+
+    1. Calar Alto's channel gains *more* (6.94 % against 4.80 %) despite being
+       lower, because its passes are lower in the sky — they culminate at 21 to
+       37 degrees, the Teide's at 57 and 72. A low pass looks through a long
+       slant path, so the near-ground layer that altitude removes is a larger
+       share of its turbulence integral. This is geometry, not height.
+    2. Calar Alto's bound amplifies by 4.55 and the Teide's by 0.934. Its
+       passes certify 1.1 % and 4.5 % of their own asymptotic key; the Teide's
+       certify 13.7 % and 16.8 %. Calar Alto is on the cliff and the Teide is
+       not.
+
+    The second factor is the bigger one, and the tests below show it by
+    swapping the elasticities: give the Teide OGS Calar Alto's `E` at its own
+    unchanged channel gain and it would report **+23.7 %** instead of +4.5 %;
+    give Calar Alto the Teide's `E` and it drops from +35.7 % to **+6.5 %**.
+
+    Why this is worth a test class and not a paragraph
+    --------------------------------------------------
+    Stage 1.2 changes the scintillation model. When it lands, some passes will
+    cross the cliff. Without this decomposition the only observable is the day
+    total, and a day total that moves by a factor of two is equally consistent
+    with "the turbulence model changed a lot" and "the turbulence model changed
+    by 0.02 dB and the bound amplified it". Those two need different responses,
+    and after the fact there is no way to tell them apart from the headline.
+    `dx` and `E` separate them: `dx` is the model, `E` is the bound.
+    """
+
+    LIVE_PASSES = (
+        ("calar_alto", 0),
+        ("calar_alto", 2),
+        ("castelldefels", 0),
+        ("castelldefels", 2),
+        ("tenerife_ogs", 0),
+        ("tenerife_ogs", 1),
+    )
+    """The six passes of the reference day that certify any key at all, at sea level.
+
+    The other four certify zero, so `ln(key)` is undefined on them and they
+    carry no elasticity. That they are exactly the four lowest passes is the
+    same cliff seen from one step further out.
+    """
+
+    @staticmethod
+    def _factors(name: str, pass_index: int | None = None) -> tuple[float, float, float]:
+        """Return `(dx, E, dy)` for a station's day, or for one of its passes."""
+        altitude_m = STATIONS[name][2]
+        sea = hand_link(name, station_height_m=0.0)
+        up = hand_link(name, station_height_m=altitude_m)
+        d_x = mean_log_transmittance(up, pass_index) - mean_log_transmittance(sea, pass_index)
+        if pass_index is None:
+            sea_bits = float(np.asarray(sea.finite.key_bits).sum())
+            up_bits = float(np.asarray(up.finite.key_bits).sum())
+        else:
+            sea_bits = float(np.asarray(sea.finite.key_bits)[pass_index])
+            up_bits = float(np.asarray(up.finite.key_bits)[pass_index])
+        d_y = float(np.log(up_bits / sea_bits))
+        return d_x, d_y / d_x, d_y
+
+    def test_the_channel_on_its_own_is_monotonic_in_altitude(self) -> None:
+        """Hold the geometry fixed and the physics behaves: more height, more key, always.
+
+        This is the control. The claim under test in this class is that the
+        non-monotonicity across stations comes from the pass geometry and the
+        bound, *not* from the turbulence model — so the turbulence model had
+        better be monotonic when nothing else is allowed to move.
+
+        One station, one day, one set of passes; only the height the integral
+        starts from changes. All three quantities rise together at every step
+        from sea level to 4 km: the integrated `C_n^2` falls, the mean
+        log-transmittance rises, the day's key rises. 56 925 bits at 0 m,
+        77 244 at 2 168 m, 90 695 at 4 km, with no step backwards.
+
+        If this test ever fails, the decomposition below is meaningless and the
+        bug is in `atmosphere.py`, not in the story about the cliff.
+        """
+        heights = (0.0, 500.0, 1000.0, 2168.0, 2400.0, 3000.0, 4000.0)
+        links = [hand_link("calar_alto", station_height_m=h) for h in heights]
+        cn2 = [integrated_cn2_m13(station_height_m=h) for h in heights]
+        log_transmittance = [mean_log_transmittance(link) for link in links]
+        key_bits = [float(np.asarray(link.finite.key_bits).sum()) for link in links]
+
+        assert cn2 == sorted(cn2, reverse=True)
+        assert log_transmittance == sorted(log_transmittance)
+        assert key_bits == sorted(key_bits)
+        assert key_bits[0] == 56_925.0
+        assert key_bits[3] == 77_244.0
+        assert key_bits[-1] == 90_695.0
+
+    def test_the_channel_factor_is_larger_at_the_lower_station(self) -> None:
+        """Factor one: Calar Alto's link brightens by 6.94 %, the Teide's by 4.80 %.
+
+        The lower station gains more channel, which already breaks "higher is
+        better" before the bound is involved at all. The cause is in the
+        culmination elevations asserted alongside: Calar Alto's live passes top
+        out at 36.9 and 32.7 degrees, the Teide's at 57.4 and 72.1. Turbulence
+        is integrated along the slant path, so at 33 degrees the path through
+        the first kilometre is about `1 / sin(33 deg) = 1.8` times longer than
+        at 57 degrees — the layer that altitude deletes is simply a bigger part
+        of what a low pass looks through.
+
+        The 0.75 % of channel gain that Calar Alto wins here is real but small.
+        It is not what turns 4.5 % into 35.7 %; the next test is.
+        """
+        calar_dx, _, _ = self._factors("calar_alto")
+        teide_dx, _, _ = self._factors("tenerife_ogs")
+
+        assert np.expm1(calar_dx) == pytest.approx(0.0694, abs=5e-5)
+        assert np.expm1(teide_dx) == pytest.approx(0.0480, abs=5e-5)
+        assert calar_dx > teide_dx
+
+        calar_culmination = np.rad2deg(
+            np.asarray(
+                hand_link("calar_alto", station_height_m=0.0).table.culmination_elevation_rad
+            )
+        )
+        teide_culmination = np.rad2deg(
+            np.asarray(
+                hand_link("tenerife_ogs", station_height_m=0.0).table.culmination_elevation_rad
+            )
+        )
+        assert calar_culmination.max() < teide_culmination.min()
+
+    def test_the_bound_amplifies_by_five_at_calar_alto_and_not_at_all_at_the_teide(self) -> None:
+        """Factor two, and the one that carries the effect: `E` is 4.55 against 0.934.
+
+        The Teide's elasticity being just under 1 is the statement that its
+        passes are in the ordinary regime — one per cent more light buys about
+        one per cent more key, as it would if there were no finite-key bound at
+        all. (Slightly under 1, because the penalties the bound subtracts grow
+        a little as the pass gets brighter.)
+
+        Calar Alto's 4.55 is the statement that its passes are not. The two
+        stations differ by a factor 4.9 in how hard their bound bites, which is
+        the whole of the eight-fold difference in the headline once the 1.4-fold
+        difference in channel gain is taken out.
+        """
+        _, calar_e, _ = self._factors("calar_alto")
+        _, teide_e, _ = self._factors("tenerife_ogs")
+
+        assert calar_e == pytest.approx(4.548, abs=0.001)
+        assert teide_e == pytest.approx(0.934, abs=0.001)
+        assert calar_e / teide_e == pytest.approx(4.87, abs=0.01)
+
+    def test_the_two_factors_reproduce_the_headline_figures(self) -> None:
+        """`dy = E * dx` lands on +35.7 % and +4.5 %, the numbers the ADR reports.
+
+        The identity is exact by construction, so what this checks is that the
+        two factors measured above are the ones belonging to these two
+        published figures and not to some neighbouring quantity — that the
+        decomposition is *of* the claim, not merely near it.
+        """
+        for name, expected_gain in (("calar_alto", 0.35694), ("tenerife_ogs", 0.04472)):
+            d_x, elasticity, d_y = self._factors(name)
+            assert np.expm1(elasticity * d_x) == pytest.approx(expected_gain, abs=1e-5)
+            assert np.expm1(d_y) == pytest.approx(expected_gain, abs=1e-5)
+
+    def test_swapping_the_elasticities_swaps_the_headlines(self) -> None:
+        """The counterfactual that shows which factor is load-bearing.
+
+        Hold each station's own channel gain — its own atmosphere, its own
+        passes — and give it the other station's bound amplification. The Teide
+        OGS goes from +4.5 % to **+23.7 %** and Calar Alto from +35.7 % to
+        **+6.5 %**: the two figures nearly trade places.
+
+        That is the answer to "why does the higher station gain less". Almost
+        none of it is the 232 m. It is that Calar Alto's passes sit on the
+        certification cliff and the Teide's do not, and a station on the cliff
+        converts a small optical improvement into a large key improvement.
+        """
+        calar_dx, calar_e, _ = self._factors("calar_alto")
+        teide_dx, teide_e, _ = self._factors("tenerife_ogs")
+
+        assert np.expm1(teide_dx * calar_e) == pytest.approx(0.2375, abs=5e-4)
+        assert np.expm1(calar_dx * teide_e) == pytest.approx(0.0647, abs=5e-4)
+
+    def test_the_elasticity_falls_as_the_pass_gets_further_from_the_cliff(self) -> None:
+        """The mechanism, stated as an invariant over all six live passes.
+
+        "Distance from the cliff" needs a measure, and the natural one is
+        already computed: the fraction of a pass's **asymptotic** key that the
+        finite bound certifies. The asymptotic key is what the same pass would
+        yield with an unbounded block and no statistical penalties, so
+        `finite / asymptotic` is exactly "how much of it survived the proof".
+        Near 0 the bound is eating nearly everything, which is the cliff; at
+        0.17 it is taking a large but ordinary toll.
+
+        Ordered by that fraction, the elasticities fall strictly and across
+        station boundaries — Calar Alto's worst pass at 1.1 % amplifies by
+        12.2, its better one at 4.5 % by 3.8, then Castelldefels at 12.3 % by
+        1.23, the Teide at 13.7 % by 1.09, Castelldefels at 14.2 % by 1.02, and
+        the Teide's best at 16.8 % by 0.83.
+
+        Six passes across three stations, two altitudes apiece, ordering
+        perfectly by a quantity that is not altitude and not elevation. That is
+        the claim: the amplifier is the bound's margin, full stop. It is also
+        what makes the effect predictable rather than anecdotal — a pass's
+        `finite / asymptotic` ratio is computable in advance, so which passes
+        stage 1.2 will move is knowable before it is written.
+        """
+        measured = []
+        for name, pass_index in self.LIVE_PASSES:
+            sea = hand_link(name, station_height_m=0.0)
+            finite = float(np.asarray(sea.finite.key_bits)[pass_index])
+            asymptotic = float(np.asarray(sea.asymptotic.key_bits)[pass_index])
+            _, elasticity, _ = self._factors(name, pass_index)
+            measured.append((finite / asymptotic, elasticity))
+
+        measured.sort()
+        margins = [margin for margin, _ in measured]
+        elasticities = [elasticity for _, elasticity in measured]
+        assert elasticities == sorted(elasticities, reverse=True)
+
+        assert margins[0] == pytest.approx(0.0108, abs=5e-5)
+        assert elasticities[0] == pytest.approx(12.18, abs=0.01)
+        assert margins[-1] == pytest.approx(0.1682, abs=5e-5)
+        assert elasticities[-1] == pytest.approx(0.826, abs=0.001)
 
 
 class TestTheEnsembleIsTheSameDraw:

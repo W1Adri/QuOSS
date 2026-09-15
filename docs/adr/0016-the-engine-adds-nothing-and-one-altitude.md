@@ -151,11 +151,84 @@ máscara; solo cambia la estación y por tanto desde dónde empieza la integral:
 | OGS del Teide | 2 400 m | 562 697 bits | 587 863 bits | **+4.5 %** | 10.46 |
 
 Y en el segundo pase vivo de Calar Alto, **9 817 bits contra 19 724**: el término
-lo **duplica**. El mecanismo es la forma de la atmósfera y no nada del código: el
-término de superficie de la Ec. (6) de la ITU-R P.1621-2 tiene una altura de
-escala de 100 m, así que casi toda la turbulencia está en el primer kilómetro y
-un telescopio a 2 168 m tiene un orden de magnitud menos encima. Es por lo que
-los observatorios están en montañas, dicho como número.
+lo **duplica**.
+
+#### 4.1. Por qué la estación más alta gana menos, que la tabla no explica
+
+La tabla, leída sola, afirma algo falso por implicación. La OGS del Teide está
+**232 m más alta** que Calar Alto y gana **ocho veces menos**. Si el mecanismo
+fuera solo «menos atmósfera encima», el efecto tendría que ser monótono en
+altura, y no lo es. Una no-monotonía sin explicar en la cifra de cabecera de un
+ADR es justo el modo de fallo contra el que está escrito el CLAUDE.md: un número
+plausible, con un mecanismo al lado que no lo produce.
+
+El efecto se separa en **dos factores**, medidos en
+`tests/e2e/test_reference_scenarios.py::TestWhyTheHigherStationGainsLess`. Con
+`x = media(ln T)` —la transmitancia resumida en logaritmo, porque lo que la
+altura cambia es multiplicativo— y `y = ln(bits del día)`:
+
+- **`dx`, el factor de canal.** Cuánto se ilumina el enlace. Es física
+  atmosférica y nada más.
+- **`E = dy/dx`, la elasticidad, o la amplificación de la cota.** Cuántos por
+  ciento de clave compra un por ciento de transmitancia. `E = 1` es el régimen
+  ordinario, donde la clave es proporcional a la luz. `E >> 1` es el
+  **acantilado de certificación**: la cota finite-key resta un bloque de
+  penalizaciones estadísticas, y en un pase donde casi toda la clave se la
+  comen esas penalizaciones, lo que sobrevive es una diferencia pequeña de dos
+  números grandes, que se mueve muchísimo si uno de ellos cambia poco.
+
+| Estación | Altitud | `dx` (transmitancia) | `E` | `dy` (clave) |
+|---|---|---|---|---|
+| Calar Alto | 2 168 m | **+6.94 %** | **4.55** | +35.7 % |
+| OGS del Teide | 2 400 m | **+4.80 %** | **0.934** | +4.5 % |
+
+Los dos factores apuntan en la misma dirección y **ninguno de los dos es la
+altura**:
+
+1. El canal de Calar Alto gana **más** (6.94 % contra 4.80 %) **siendo más
+   baja**, porque sus pases son más rasantes: culminan a 21–37°, los del Teide
+   a 57–72°. La turbulencia se integra a lo largo del camino inclinado, así que
+   a 33° el trayecto por el primer kilómetro es ~1.8 veces más largo que a 57°,
+   y la capa que la altura borra es una parte mayor de lo que ese pase
+   atraviesa. Esto es geometría, no altura.
+2. La cota de Calar Alto amplifica por 4.55 y la del Teide por 0.934. Sus pases
+   certifican el **1.1 %** y el **4.5 %** de su propia clave asintótica; los del
+   Teide, el **13.7 %** y el **16.8 %**. Calar Alto está en el acantilado y el
+   Teide no.
+
+El segundo factor es el que manda, y se ve intercambiándolos: dale al Teide la
+`E` de Calar Alto sobre su propia ganancia de canal y reporta **+23.7 %** en vez
+de +4.5 %; dale a Calar Alto la `E` del Teide y baja de +35.7 % a **+6.5 %**.
+Las dos cifras casi se cambian el sitio.
+
+El mecanismo, dicho como invariante sobre los **seis pases vivos** del día de
+referencia: ordenados por `finite / asymptotic` —la fracción de su clave
+asintótica que la cota certifica, que es la medida natural de «cuán lejos del
+acantilado»—, las elasticidades caen **estrictamente y cruzando fronteras de
+estación**: 1.1 % → 12.2, 4.5 % → 3.8, 12.3 % → 1.23, 13.7 % → 1.09, 14.2 % →
+1.02, 16.8 % → 0.83. Seis pases, tres estaciones, ordenando perfectamente por
+una cantidad que no es la altura ni la elevación.
+
+El control que hace que esto sea una afirmación y no una correlación: **con la
+geometría fija, la física sí es monótona.** Una sola estación, un solo día, un
+solo juego de pases, moviendo solo la altura desde la que empieza la integral —
+`C_n²` integrado, `media(ln T)` y los bits del día suben o bajan juntos en cada
+escalón de 0 a 4 km, sin un paso atrás: 56 925 bits a 0 m, 77 244 a 2 168 m,
+90 695 a 4 km.
+
+Que esto tenga su propio test y no un párrafo es por la etapa 1.2. Cuando cambie
+el modelo de centelleo, algunos pases cruzarán el acantilado, y un total diario
+que se mueve por un factor dos es igual de compatible con «el modelo cambió
+mucho» que con «el modelo cambió 0.02 dB y la cota lo amplificó». Piden respuestas
+distintas y desde la cifra de cabecera no se distinguen. `dx` y `E` los separan:
+`dx` es el modelo, `E` es la cota.
+
+La parte del mecanismo que sí es atmósfera sigue siendo cierta y es la de
+siempre: el término de superficie de la Ec. (6) de la ITU-R P.1621-2 tiene una
+altura de escala de 100 m, así que casi toda la turbulencia está en el primer
+kilómetro y un telescopio a 2 168 m tiene un orden de magnitud menos encima. Es
+por lo que los observatorios están en montañas, dicho como número. Lo que 4.1
+añade es que **eso solo explica `dx`**, y `dx` es el factor pequeño.
 
 Esto importa para lo que viene: las estaciones del enlace de CLAU son el
 Observatori del Montsec y la OGS del Teide, no una estación a nivel del mar.
