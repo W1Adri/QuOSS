@@ -38,6 +38,69 @@ In the language of `tests/golden/README.md` this is a **V4 bridge**: it shows
 the orchestration is faithful, and says nothing about whether the physics is
 right. That is what V2 and V3 are for.
 
+Two kinds of assertion, and only one of them is exact
+-----------------------------------------------------
+The argument above covers **route against route in one process**: the engine's
+array and the hand chain's array, computed seconds apart by the same library on
+the same CPU. Those stay ``==``, and they are what "the engine adds nothing"
+rests on.
+
+It does not cover a **literal written by hand** — ``ENGINE_ASYMPTOTIC_DAY_BITS =
+3_779_461.558061474`` — compared against what *another* machine computes. That
+is a golden across machines, and floating point is deterministic within a
+platform, not across them: IEEE 754 requires ``+ - * / sqrt`` to be correctly
+rounded and does not require it of ``exp``, ``log``, ``pow`` or ``erf``, so two
+conforming libraries may return neighbouring doubles for the same call. On
+2026-09-15 this file failed on a second machine in exactly its two non-integer
+literals, by 9 ULP of the value (1.1e-15 relative), while every route-against-
+route assertion passed there. The machine the literals were written on
+reproduced neither failure under numpy 2.4.4 or 2.4.6, nor with numpy's x86
+SIMD kernels switched off: it is the platform, not a version.
+
+So a literal goes through `assert_matches_literal`, against a bound derived from
+what may legitimately differ, `cross_platform_relative_bound`::
+
+    bound = 2 u eps kappa (n + G) + (N - 1) eps
+
+- ``eps = 2.22e-16``, and ``u = 1``: each elementary-function call is taken to
+  be within one ULP of the exact result — what ``libm`` implementations
+  document, and weaker than correct rounding, which is half a ULP.
+- ``n``: elementary-function call sites (``exp``, ``log``, ``pow``, ``erf``,
+  ``**`` with a non-integer exponent...) in the modules the chain runs through,
+  **counted from their source by the test**, so a new call site widens the bound
+  by itself. An iterative solver counts once: its converged answer is set by
+  its last evaluations, not by all of them. 140 today.
+- ``G``: the one cancellation upstream of the transmittance.
+  ``beam.geometric_transmittance`` is ``1 - exp(-x)``, and a one-ULP error in
+  ``exp`` becomes ``(1 - eta) / eta`` ULP in ``eta``. Read from the budget: 740
+  at the lowest sample of the reference day, where ``eta = 1.35e-3``.
+- ``kappa``: how much a relative change in the transmittance moves the day's
+  key, ``sum |dS / d ln eta| dwell / sum S dwell``, **measured** by a finite
+  difference on the protocol. It carries the cancellation of privacy
+  amplification against error correction. 1.064 today.
+- ``2``: both platforms may be wrong, in opposite directions.
+- ``(N - 1) eps``: the sum over ``N = 1 800`` samples in another order — a
+  different numpy may reduce differently, and each partial sum rounds by at
+  most half a ULP of the total.
+
+That is **8.15e-13 relative: 3.1e-6 bits, 6 618 ULP** — seven hundred times the
+9 ULP observed, and three hundred thousand times smaller than one bit, which is
+the smallest change to a day's key this file exists to catch
+(`test_the_bound_is_far_below_one_bit_and_a_one_bit_error_fails`).
+
+What the bound does **not** model is FMA contraction, a compiler fusing
+``a*b + c`` into one instruction and so rounding plain arithmetic differently.
+If a platform ever exceeds the bound, the failure says by how many ULP, and the
+model is what needs revisiting before the literal does. CI runs this file on
+macOS arm64 and on numpy 2.0 so that such a platform is found by CI and not by
+a colleague.
+
+The integer literals (``ENGINE_FINITE_BITS``, ``433_442.0``) stay ``==``, and
+not by assumption: the finite key is ``floor`` of a real number, and
+`test_no_finite_literal_sits_near_a_floor_boundary` shows every pass's
+unfloored length is at least **0.039 bits** from the nearest integer, against a
+derived error of 6e-7 bits.
+
 The discrepancy this file closes
 --------------------------------
 `StationSpec.altitude_m` is two things at once, and the scenario schema says so
@@ -98,6 +161,9 @@ TestTheAggregationAndTheRelayAddNothing
 
 from __future__ import annotations
 
+import ast
+import importlib
+import inspect
 from collections import Counter
 from typing import Any
 
@@ -107,6 +173,7 @@ import pytest
 from quoss.channel.atmosphere import integrated_cn2_m13
 from quoss.core.errors import DegradationLog
 from quoss.engine.pipeline import Simulation, StationRun, simulate
+from quoss.qkd.base import LinkConditions, binary_entropy
 from quoss.scenario.defaults import reference_castelldefels
 from quoss.scenario.models import (
     MonteCarloSpec,
@@ -114,6 +181,7 @@ from quoss.scenario.models import (
     RelaySpec,
     Scenario,
 )
+from quoss.system.key_volume import pass_key_volume
 from quoss.system.multi_ogs import AggregationPolicy, aggregate_stations
 from quoss.system.relay import trusted_node_relay
 
@@ -125,6 +193,8 @@ from .oracle import (
     hand_link,
     hand_monte_carlo,
     mean_log_transmittance,
+    reference_protocol,
+    reference_security,
     station_set,
     station_spec,
 )
@@ -142,10 +212,15 @@ height. The stage-3 figures are `REFERENCE_FINITE_BITS` and
 """
 
 ENGINE_ASYMPTOTIC_DAY_BITS = 3_779_461.558061474
-"""Full precision, because this file asserts exact equality and not a rounding."""
+"""Written at full precision on one machine, and compared through `assert_matches_literal`.
+
+Never with ``==``: see "Two kinds of assertion" in the module docstring. The
+digits are kept because the bound is 3.1e-6 bits, so the literal still pins the
+number to five decimal places on any platform.
+"""
 
 STAGE_THREE_ASYMPTOTIC_DAY_BITS = 3_776_680.752646787
-"""The same, at 0 m: what `tests/system` quotes as 3.78 Mbit."""
+"""The same, at 0 m: what `tests/system` quotes as 3.78 Mbit. Same comparison."""
 
 MONTE_CARLO = MonteCarloSpec(
     realisations=16,
@@ -176,6 +251,126 @@ def assert_identical(got: Any, expected: Any, what: str) -> None:
     a, b = np.asarray(got), np.asarray(expected)
     assert a.shape == b.shape, f"{what}: shapes {a.shape} != {b.shape}"
     assert np.array_equal(a, b, equal_nan=True), f"{what}: values differ"
+
+
+ELEMENTARY_FUNCTIONS = frozenset(
+    {
+        "exp", "expm1", "exp2", "log", "log1p", "log2", "log10", "power", "cbrt", "hypot",
+        "sin", "cos", "tan", "arcsin", "arccos", "arctan", "arctan2", "sinh", "cosh", "tanh",
+        "erf", "erfc", "erfcx", "erfinv", "erfcinv", "ndtr", "ndtri", "log_ndtr",
+        "xlogy", "xlog1py", "gammaln", "lambertw",
+    }
+)  # fmt: skip
+"""Calls whose result IEEE 754 does not require to be correctly rounded.
+
+``sqrt`` is absent on purpose: the standard does require it, like ``+ - * /``.
+"""
+
+CHAIN_MODULES = (
+    "quoss.core.units",
+    "quoss.orbits.kepler",
+    "quoss.orbits.frames",
+    "quoss.orbits.geometry",
+    "quoss.orbits.propagator",
+    "quoss.orbits.perturbations",
+    "quoss.orbits.constellations",
+    "quoss.channel.atmosphere",
+    "quoss.channel.turbulence",
+    "quoss.channel.beam",
+    "quoss.channel.pointing",
+    "quoss.channel.background",
+    "quoss.channel.detector",
+    "quoss.channel.link_budget",
+    "quoss.qkd.base",
+    "quoss.qkd.bb84",
+    "quoss.qkd.finite_key",
+    "quoss.system.passes",
+    "quoss.system.key_volume",
+)
+"""Every module the reference chain runs through, whole: an over-count, never an under-count."""
+
+ULP_PER_ELEMENTARY_CALL = 1.0
+"""``u``: how far from exact one call may be. One ULP; correct rounding would be half."""
+
+DIFFERENCE_STEP = 1e-6
+"""Relative step of the finite difference for ``kappa``.
+
+Its truncation error is of order the step itself, a millionth of ``kappa``, and
+its rounding noise of order ``eps / step = 2e-10``: both negligible against a
+``kappa`` of order one, which is all the bound needs of it.
+"""
+
+
+def assert_matches_literal(got: float, literal: float, *, relative_bound: float, what: str) -> None:
+    """Assert a computed value is within a derived cross-platform bound of a hand-written literal.
+
+    See "Two kinds of assertion" in the module docstring. The failure message
+    reports the distance in ULP, because that is the unit in which "another
+    platform" and "a real change" are told apart.
+    """
+    difference = abs(got - literal)
+    ulp = float(np.spacing(abs(literal)))
+    allowed = relative_bound * abs(literal)
+    assert difference <= allowed, (
+        f"{what}: {got!r} is {difference / ulp:.0f} ULP from the literal {literal!r}; the "
+        f"derived cross-platform bound is {allowed / ulp:.0f} ULP ({relative_bound:.2e} "
+        "relative). Beyond it this is a change in the computation, not in the platform — "
+        "unless the platform contracts arithmetic into FMA, which the bound does not model."
+    )
+
+
+def elementary_call_sites() -> int:
+    """Return ``n``: elementary-function call sites in `CHAIN_MODULES`, counted from source."""
+    count = 0
+    for name in CHAIN_MODULES:
+        tree = ast.parse(inspect.getsource(importlib.import_module(name)))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                function = node.func
+                called = (
+                    function.attr
+                    if isinstance(function, ast.Attribute)
+                    else getattr(function, "id", "")
+                )
+                count += called in ELEMENTARY_FUNCTIONS
+            elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Pow):
+                exponent = node.right
+                count += not (isinstance(exponent, ast.Constant) and type(exponent.value) is int)
+    return count
+
+
+def nudged_conditions(link: HandLink) -> LinkConditions:
+    """Return the link's conditions with every transmittance raised by `DIFFERENCE_STEP`."""
+    conditions = link.conditions
+    return LinkConditions(
+        transmittance=np.asarray(conditions.transmittance) * (1.0 + DIFFERENCE_STEP),
+        noise_counts_per_gate=conditions.noise_counts_per_gate,
+        misalignment_error=conditions.misalignment_error,
+        pulse_rate_hz=conditions.pulse_rate_hz,
+        gate_duration_s=conditions.gate_duration_s,
+    )
+
+
+def upstream_relative_error(link: HandLink) -> float:
+    """Return ``2 u eps (n + G)``: how far apart two platforms may put the transmittance."""
+    eps = float(np.finfo(np.float64).eps)
+    eta = 10.0 ** (-np.asarray(link.loss.geometric_db, dtype=np.float64) / 10.0)
+    cancellation = float(np.max((1.0 - eta) / eta))
+    return 2.0 * ULP_PER_ELEMENTARY_CALL * eps * (elementary_call_sites() + cancellation)
+
+
+def cross_platform_relative_bound(link: HandLink) -> float:
+    """Return the derived relative bound for a day's asymptotic key; see the module docstring."""
+    protocol = reference_protocol()
+    log = DegradationLog()
+    base = np.asarray(protocol.key_rate(link.conditions, degradations=log).secure_per_pulse)
+    nudged = np.asarray(
+        protocol.key_rate(nudged_conditions(link), degradations=log).secure_per_pulse
+    )
+    dwell = np.asarray(link.samples.dwell_s, dtype=np.float64)
+    kappa = float(np.sum(np.abs(nudged - base) * dwell) / (DIFFERENCE_STEP * np.sum(base * dwell)))
+    eps = float(np.finfo(np.float64).eps)
+    return kappa * upstream_relative_error(link) + (dwell.size - 1) * eps
 
 
 @pytest.fixture(scope="module")
@@ -422,11 +617,21 @@ class TestTheEngineAddsNothing:
         assert float(widest.max()) == pytest.approx(50.66e-6, rel=1e-3)
         assert float(narrowest.min()) == pytest.approx(24.69e-6, rel=1e-3)
 
-    def test_the_daily_table_sums_the_passes_and_nothing_else(self, engine: Simulation) -> None:
+    def test_the_daily_table_sums_the_passes_and_nothing_else(
+        self, engine: Simulation, by_hand: HandLink
+    ) -> None:
         daily = engine.result.daily
         assert daily.day_number.tolist() == [2_460_677]
         assert float(np.asarray(daily.finite_bits)[0]) == ENGINE_FINITE_DAY_BITS
-        assert float(np.asarray(daily.asymptotic_bits)[0]) == ENGINE_ASYMPTOTIC_DAY_BITS
+        assert_matches_literal(
+            float(np.asarray(daily.asymptotic_bits)[0]),
+            ENGINE_ASYMPTOTIC_DAY_BITS,
+            relative_bound=cross_platform_relative_bound(by_hand),
+            what="daily.asymptotic_bits",
+        )
+        assert float(np.asarray(daily.asymptotic_bits)[0]) == float(
+            np.asarray(engine.result.passes.asymptotic_bits).sum()
+        )
         assert float(np.asarray(daily.finite_bits)[0]) == float(
             np.asarray(engine.result.passes.finite_bits).sum()
         )
@@ -539,6 +744,94 @@ class TestTheOneTermThatIsNotACopy:
         assert float(engine_total[0]) == float(np.asarray(by_hand.noise.total_per_gate))
 
 
+class TestTheLiteralsHoldOnAnotherMachine:
+    """The cross-platform bound itself: what it is today, and that it can still fail."""
+
+    def test_the_bound_is_far_below_one_bit_and_a_one_bit_error_fails(
+        self, by_hand: HandLink
+    ) -> None:
+        """A tolerance that cannot fail proves nothing; this one fails at a millionth of a bit.
+
+        The numbers of the module docstring, recomputed: ``n = 140`` call
+        sites, ``G = 740``, ``kappa = 1.064``, ``N = 1 800``, so 8.15e-13
+        relative and 3.1e-6 bits. And the two directions that make it a test:
+        the 9 ULP by which the second machine differed passes, and a literal
+        one bit off does not.
+        """
+        bound = cross_platform_relative_bound(by_hand)
+        allowed_bits = bound * ENGINE_ASYMPTOTIC_DAY_BITS
+        assert elementary_call_sites() >= 140
+        assert bound == pytest.approx(8.15e-13, rel=0.05)
+        assert allowed_bits < 1e-5
+        observed_on_the_second_machine = 3_779_461.558061478 - ENGINE_ASYMPTOTIC_DAY_BITS
+        assert abs(observed_on_the_second_machine) < allowed_bits
+        got = float(np.asarray(by_hand.asymptotic.key_bits).sum())
+        with pytest.raises(AssertionError, match="ULP from the literal"):
+            assert_matches_literal(
+                got, ENGINE_ASYMPTOTIC_DAY_BITS + 1.0, relative_bound=bound, what="one bit off"
+            )
+
+    @pytest.mark.parametrize("height_m", [CASTELLDEFELS_HEIGHT_M, 0.0])
+    def test_no_finite_literal_sits_near_a_floor_boundary(self, height_m: float) -> None:
+        """Why ``ENGINE_FINITE_BITS`` and ``REFERENCE_FINITE_BITS`` may stay ``==``.
+
+        Lim et al.'s length is ``floor`` of ``s_0 + s_1 (1 - h(phi)) - leak -
+        penalty``. A cross-platform difference in that real number changes the
+        integer only if the number sits within the difference of an integer —
+        or, for a pass with no key, of 1, below which the length is zero. So the
+        unfloored length is rebuilt from the bound's own columns (and checked to
+        floor to the reported length), and its distance to the boundary is
+        compared with a derived error:
+
+        ``2 u eps (n + G) |d raw / d ln eta| + (N - 1) eps (s_0 + s_1 + leak + penalty)``
+
+        the first term for the transmittance, measured by finite difference
+        through the whole finite-key chain, and the second for the block sums.
+        Measured: the closest pass is **0.039 bits** from an integer (the first
+        pass at 30 m, 190 807.961) against **5.9e-7 bits** of possible error.
+        """
+        link = hand_link("castelldefels", station_height_m=height_m)
+        security = reference_security()
+
+        def unfloored(finite: Any) -> np.ndarray:
+            return np.asarray(
+                np.asarray(finite.vacuum_events)
+                + np.asarray(finite.single_photon_events)
+                * (1.0 - binary_entropy(np.asarray(finite.phase_error_rate)))
+                - np.asarray(finite.leakage_bits)
+                - security.penalty_bits,
+                dtype=np.float64,
+            )
+
+        assert link.finite.finite is not None
+        raw = unfloored(link.finite.finite)
+        assert np.array_equal(
+            np.maximum(np.floor(raw), 0.0), np.asarray(link.finite.key_bits, dtype=np.float64)
+        )
+        nudged = pass_key_volume(
+            nudged_conditions(link),
+            samples=link.samples,
+            protocol=reference_protocol(),
+            security=security,
+            degradations=DegradationLog(),
+        )
+        assert nudged.finite is not None
+        slope = np.abs(unfloored(nudged.finite) - raw) / DIFFERENCE_STEP
+        magnitude = (
+            np.asarray(link.finite.finite.vacuum_events)
+            + np.asarray(link.finite.finite.single_photon_events)
+            + np.asarray(link.finite.finite.leakage_bits)
+            + security.penalty_bits
+        )
+        eps = float(np.finfo(np.float64).eps)
+        samples = np.asarray(link.samples.dwell_s).size
+        error = upstream_relative_error(link) * slope + (samples - 1) * eps * magnitude
+        margin = np.where(raw < 1.0, 1.0 - raw, np.minimum(raw - np.floor(raw), np.ceil(raw) - raw))
+        assert np.all(margin > error), f"margin {margin} against error {error}"
+        assert float(np.max(error)) < 1e-6
+        assert float(np.min(margin)) > 0.03
+
+
 class TestTheFourHundredAndFiftySevenBits:
     """Both published day figures, reproduced from one hand chain, one argument apart."""
 
@@ -552,9 +845,11 @@ class TestTheFourHundredAndFiftySevenBits:
         bits = np.asarray(at_sea_level.finite.key_bits)
         assert tuple(bits.tolist()) == REFERENCE_FINITE_BITS
         assert float(bits.sum()) == REFERENCE_FINITE_DAY_BITS
-        assert (
-            float(np.asarray(at_sea_level.asymptotic.key_bits).sum())
-            == STAGE_THREE_ASYMPTOTIC_DAY_BITS
+        assert_matches_literal(
+            float(np.asarray(at_sea_level.asymptotic.key_bits).sum()),
+            STAGE_THREE_ASYMPTOTIC_DAY_BITS,
+            relative_bound=cross_platform_relative_bound(at_sea_level),
+            what="asymptotic day at 0 m",
         )
 
     def test_the_engine_figure_is_the_hand_chain_at_the_stations_own_height(

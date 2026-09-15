@@ -60,10 +60,10 @@ Two decibel conventions, and why both are named
 This is the one place a plausible-looking helper produces a silently wrong
 number. A *loss* in dB is a positive quantity whose transmittance is below one:
 
->>> db_to_linear(45.0)  # a 45 dB *gain*
-31622.776601683792
->>> loss_db_to_transmittance(45.0)  # a 45 dB *loss*
-3.1622776601683795e-05
+>>> f"{db_to_linear(45.0):.12g}"  # a 45 dB *gain*
+'31622.7766017'
+>>> f"{loss_db_to_transmittance(45.0):.12g}"  # a 45 dB *loss*
+'3.16227766017e-05'
 
 A single ``db_to_linear`` used for both is off by nine orders of magnitude, and
 the wrong answer still looks like a transmittance. Hence two explicitly named
@@ -393,10 +393,18 @@ def loss_db_to_transmittance(loss_db: FloatLike) -> FloatLike:
     --------
     >>> loss_db_to_transmittance(0.0)
     1.0
-    >>> loss_db_to_transmittance(30.0)
-    0.001
-    >>> loss_db_to_transmittance(45.0)
-    3.1622776601683795e-05
+    >>> f"{loss_db_to_transmittance(30.0):.12g}"
+    '0.001'
+    >>> f"{loss_db_to_transmittance(45.0):.12g}"
+    '3.16227766017e-05'
+
+    Printed to twelve digits and not seventeen, on purpose. ``10 ** -4.5`` goes
+    through ``pow``, which no platform is required to round correctly: the exact
+    value lies 0.29 ULP from the double this machine returns, so a library that
+    is within 0.71 ULP — inside what any ``libm`` documents — may return the
+    neighbour and print a different seventeenth digit. Twelve digits are the
+    same on every conforming platform; see
+    ``tests/e2e/test_reference_scenarios.py`` for the arithmetic of the rule.
     """
     return _like(10.0 ** (-np.asarray(loss_db) / 10.0), loss_db)
 
@@ -472,8 +480,8 @@ def dbm_to_w(p_dbm: FloatLike) -> FloatLike:
     --------
     >>> dbm_to_w(30.0)
     1.0
-    >>> dbm_to_w(0.0)
-    0.001
+    >>> f"{dbm_to_w(0.0):.12g}"
+    '0.001'
     """
     return _like(10.0 ** ((np.asarray(p_dbm) - _DBM_OFFSET_DB) / 10.0), p_dbm)
 

@@ -52,6 +52,16 @@ en `_validation.py` — los mismos porcentajes que antes.
 
 ---
 
+## Las que se cerraron el 2026-09-15
+
+| # | Qué era | Cómo se cerró |
+|---|---|---|
+| 12 | El docstring de `tests/e2e/test_reference_scenarios.py` justificaba la igualdad exacta de **todas** sus aserciones con «la misma función con los mismos argumentos devuelve los mismos doubles». Es verdad para ruta contra ruta en un proceso; no lo es para dos literales escritos a mano en una máquina, que fallaron por **9 ULP** en otra | Dos clases de aserción separadas. Los literales van contra una cota derivada (8.15e-13 relativo) y los enteros se quedan exactos con una prueba de margen. CI corre en macOS arm64 y numpy 2.0. `LAST_CHANGES.md` §35 |
+| 13 | `combined_fade_db` decía ser «exact» y convergida «below a part in 1e20 of a decibel». Con `γ` grande —apuntado despreciable, el caso de un enlace horizontal— devolvía **1.602 dB** donde la respuesta es **0.101**, y **124.9** donde es **8.23**, por cancelación catastrófica en el exponente de `_emg_cdf` | La identidad `erfcx`, exacta y sin cancelación, y `γ = ∞` como límite. `TestTheJointFadeWhenPointingIsNegligible`. §35 |
+| 14 | `equivalent_beam_radius_m` dividía por `exp(-v²)` subdesbordado cuando la lente es más de ~21 radios de haz —un banco normal—: `RuntimeWarning`, o `γ = 7.9e137` sin más queja que el aviso de rango | Radio equivalente `+inf` pasado `v² = 700`, que es el límite de la propia ley, con el aviso diciéndolo. `TestALensFarWiderThanTheBeam`. §35 |
+
+---
+
 ## Consideraciones que **no** son defectos, pero conviene tener conscientes
 
 - **Hay dos enlaces de referencia y seguirá habiéndolos.** El de la etapa 3

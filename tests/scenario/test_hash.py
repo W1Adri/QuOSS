@@ -14,7 +14,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -23,10 +25,10 @@ import pytest
 from quoss.scenario.defaults import reference_castelldefels
 from quoss.scenario.hash import HASH_EXCLUDED_FIELDS, canonical_json, scenario_hash
 from quoss.scenario.io import dumps_scenario, load_scenario, loads_scenario
-from quoss.scenario.models import Scenario
+from quoss.scenario.models import SCHEMA_VERSION, Scenario
 
 REFERENCE_DIGEST = "64132c82cf6f3cd810f8c58c270acdd7c74be1afda2f259ef9f1a51638647348"
-"""SHA-256 of ``canonical_json(reference_castelldefels())``, repinned 2026-09-15.
+"""SHA-256 of ``canonical_json(reference_castelldefels())``. Its history is `DIGEST_HISTORY`.
 
 If this changes, the canonical form changed: every cached result keyed on the
 old digest is unreachable and every provenance record stops matching its
@@ -50,15 +52,64 @@ Case 2 costs a cache generation and stops *previously written results* from
 matching a re-derived digest. It does not endanger reading an old scenario,
 which is what ``SCHEMA_VERSION`` exists to protect.
 
-Repinned on 2026-09-15 under case 2: ``ReceiverSpec.doppler_capture_range_hz``
-was added, optional and ``None`` by default
-([ADR 0020](../../docs/adr/0020-declared-doppler-capture-range.md)).
-``SCHEMA_VERSION`` stays at 1 and every ``scenarios/*.yaml`` loads unchanged.
+How to repin without it reading as drift
+-----------------------------------------
+A repinned digest and a silently drifted one are the same diff — one hex string
+replaced by another — so the difference has to be something a test can check,
+not something a reviewer has to remember. It is `DIGEST_HISTORY`:
 
-Previous value, for anyone chasing a stale provenance record:
-``feafee61257b303a9fdb838e66a981ea4c58c8fad94ec5dfeba7841d53a84227``
-(2026-09-13).
+- **Every repin appends an entry**: the new digest, the date, which case it is,
+  the dotted path of the field that moved it, and why ``SCHEMA_VERSION`` did or
+  did not move.
+- **A case-2 entry is proved, not asserted.**
+  `TestTheDigestHistoryIsReproducible` deletes the named fields from today's
+  canonical form, newest first, and requires the result to hash to each earlier
+  digest in turn. A repin that names the wrong field, or a drift that names none
+  (a float formatted differently, an enum written by name), cannot reproduce the
+  previous digest and fails there.
+- **A case-1 entry cannot be reproduced by deletion** — the old form had a field
+  that meant something else — so what is checked for it is the bump itself.
 """
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class DigestRepin:
+    """One value `REFERENCE_DIGEST` has had, and what moved it there."""
+
+    digest: str
+    date: str
+    schema_version: int
+    added_fields: tuple[str, ...]
+    """Dotted paths of optional fields that entered the canonical form (case 2)."""
+    bumped_schema: bool
+    """True for case 1: a field changed meaning, and ``SCHEMA_VERSION`` moved."""
+    why: str
+
+
+DIGEST_HISTORY: tuple[DigestRepin, ...] = (
+    DigestRepin(
+        digest="feafee61257b303a9fdb838e66a981ea4c58c8fad94ec5dfeba7841d53a84227",
+        date="2026-09-13",
+        schema_version=1,
+        added_fields=(),
+        bumped_schema=False,
+        why="First pin, with the scenario contract of stage 4 (ADR 0014).",
+    ),
+    DigestRepin(
+        digest="64132c82cf6f3cd810f8c58c270acdd7c74be1afda2f259ef9f1a51638647348",
+        date="2026-09-15",
+        schema_version=1,
+        added_fields=("receiver.doppler_capture_range_hz",),
+        bumped_schema=False,
+        why=(
+            "Case 2. ReceiverSpec.doppler_capture_range_hz was added, optional and None by "
+            "default (ADR 0020). Every scenarios/*.yaml loads unchanged and means what it did, "
+            "so SCHEMA_VERSION stays at 1; the canonical form gained the key "
+            '"doppler_capture_range_hz":null, and that is the whole difference.'
+        ),
+    ),
+)
+"""Every value the reference digest has had, oldest first. Append; never edit."""
 
 
 def reference_dict() -> dict[str, Any]:
@@ -215,3 +266,64 @@ class TestThePinnedReferenceDigest:
         is an instruction to bump ``SCHEMA_VERSION``.
         """
         assert scenario_hash(reference_castelldefels()) == REFERENCE_DIGEST
+
+
+class TestTheDigestHistoryIsReproducible:
+    """What turns a repin from a claim into a fact: each old digest, rebuilt from today's form."""
+
+    def test_the_last_entry_is_the_pinned_digest(self) -> None:
+        assert DIGEST_HISTORY[-1].digest == REFERENCE_DIGEST
+        assert DIGEST_HISTORY[-1].schema_version == SCHEMA_VERSION
+
+    def test_the_rebuild_uses_the_canonical_serialisation_and_nothing_else(self) -> None:
+        """The deletion below re-serialises a dict; this checks it serialises the same way.
+
+        Without this, a reproduction could fail because the test wrote JSON with
+        other separators — or pass because it did. Re-dumping today's canonical
+        text unchanged must give back the identical bytes.
+        """
+        text = canonical_json(reference_castelldefels())
+        assert self._dump(json.loads(text)) == text
+
+    def test_every_case_two_repin_is_exactly_its_named_fields(self) -> None:
+        """Delete the fields each repin names, newest first; each older digest must reappear.
+
+        The 2026-09-15 repin is the worked example: remove
+        ``receiver.doppler_capture_range_hz`` — whose value in the reference
+        scenario is ``null`` — from today's canonical form, and the SHA-256 is
+        ``feafee61…``, the 2026-09-13 digest, to the last hex digit. A drift that
+        changed anything else would leave a different hash, and so would a
+        repin that named the wrong field.
+        """
+        payload = json.loads(canonical_json(reference_castelldefels()))
+        for newer, older in zip(DIGEST_HISTORY[:0:-1], DIGEST_HISTORY[-2::-1], strict=True):
+            if newer.bumped_schema:
+                assert newer.schema_version == older.schema_version + 1, newer.why
+                return
+            assert newer.schema_version == older.schema_version, newer.why
+            assert newer.added_fields, f"{newer.date}: a case-2 repin must name its fields"
+            for dotted in newer.added_fields:
+                *parents, leaf = dotted.split(".")
+                node = payload
+                for part in parents:
+                    node = node[part]
+                del node[leaf]
+            rebuilt = hashlib.sha256(self._dump(payload).encode("ascii")).hexdigest()
+            assert rebuilt == older.digest, (
+                f"removing {newer.added_fields} does not give back the {older.date} digest: "
+                f"the repin of {newer.date} moved something it does not name"
+            )
+
+    def test_a_drift_that_names_no_field_would_be_caught(self) -> None:
+        """The negative control: a changed value is not a deleted key, and does not reproduce."""
+        payload = json.loads(canonical_json(reference_castelldefels()))
+        del payload["receiver"]["doppler_capture_range_hz"]
+        payload["channel"]["zenith_transmittance"] = 0.999_999_999_999
+        rebuilt = hashlib.sha256(self._dump(payload).encode("ascii")).hexdigest()
+        assert rebuilt != DIGEST_HISTORY[-2].digest
+
+    @staticmethod
+    def _dump(payload: Any) -> str:
+        return json.dumps(
+            payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
+        )

@@ -34,6 +34,9 @@ detector
     the detector loses, what it invents, and when it is not listening.
 link_budget
     Assembles the above into separable loss components and a noise rate.
+horizontal
+    The same budget for a path with constant ``C_n^2`` and no elevation: a bench,
+    or a horizontal link of a few kilometres.
 
 No re-exports, deliberately — see :mod:`quoss.core` for the reasoning. Import
 from the module that defines the name.

@@ -275,7 +275,7 @@ from enum import StrEnum
 from typing import Final
 
 import numpy as np
-from scipy.special import erfinv, log_ndtr, ndtr
+from scipy.special import erfcx, erfinv, log_ndtr, ndtr
 
 from quoss.channel._validation import (
     validated_duration_s,
@@ -840,6 +840,41 @@ def gaussian_truncation_efficiency(truncation_ratio: float) -> float:
     return float(numerator**2 / denominator)
 
 
+_POINTING_FADE_FREE_RATIO: Final[float] = 1e150
+"""The beam-to-jitter ratio at and above which the pointing fade is exactly zero.
+
+Two reasons for a threshold, and neither is a physical choice. First, ``gamma``
+is legitimately **infinite**: :func:`quoss.channel.pointing.equivalent_beam_radius_m`
+returns ``inf`` once the receiving aperture is more than about 21 beam radii
+wide, which is the law's own limit (a beam that small never leaves a lens that
+large) and a normal geometry on an optical bench. Second, ``gamma**2`` overflows
+past 1.34e154, and :func:`combined_fade_db` multiplies it by a Gaussian width of
+up to hundreds of decibels.
+
+What the threshold costs is below anything a decibel can express: at
+``gamma = 1e150`` the pointing fade at a 1e-15 outage is
+``4.343 * ln(1e15) / 1e300 = 1.5e-298`` dB, and it is reported as ``0.0``.
+"""
+
+
+def _validated_beam_to_jitter_ratio(beam_to_jitter_ratio_value: FloatArray | float) -> FloatArray:
+    """Return ``gamma`` as an array: strictly positive, not NaN, ``+inf`` accepted.
+
+    ``+inf`` is the one non-finite value with a meaning: an aperture so much
+    wider than the beam that equation (9) of Farid & Hranilovic predicts no
+    pointing fade at all. See :data:`_POINTING_FADE_FREE_RATIO`.
+    """
+    gamma = np.asarray(beam_to_jitter_ratio_value, dtype=np.float64)
+    if np.any(np.isnan(gamma)) or np.any(gamma <= 0.0):
+        raise DomainError(
+            "beam_to_jitter_ratio_value must be strictly positive and not NaN; it is a beam "
+            "radius measured in pointing jitters, so zero would mean a beam of no width. "
+            "+inf is accepted: it is an aperture so much wider than the beam that the pointing "
+            f"law predicts no fade. Got range [{float(np.min(gamma))}, {float(np.max(gamma))}]."
+        )
+    return gamma
+
+
 def pointing_fade_db(
     beam_to_jitter_ratio_value: FloatArray | float,
     *,
@@ -901,14 +936,10 @@ def pointing_fade_db(
     0.0001 -> 2.060 dB
     """
     outage = _validated_outage_probability(outage_probability)
-    gamma = np.asarray(beam_to_jitter_ratio_value, dtype=np.float64)
-    if not np.all(np.isfinite(gamma)) or np.any(gamma <= 0.0):
-        raise DomainError(
-            "beam_to_jitter_ratio_value must be finite and strictly positive; it is a beam "
-            "radius measured in pointing jitters, so zero would mean a beam of no width. Got "
-            f"range [{float(np.min(gamma))}, {float(np.max(gamma))}]."
-        )
-    fade: FloatArray = DB_PER_NEPER * np.log(1.0 / outage) / gamma**2
+    gamma = _validated_beam_to_jitter_ratio(beam_to_jitter_ratio_value)
+    fade_free = gamma >= _POINTING_FADE_FREE_RATIO
+    capped = np.where(fade_free, 1.0, gamma)
+    fade: FloatArray = np.where(fade_free, 0.0, DB_PER_NEPER * np.log(1.0 / outage) / capped**2)
     return fade
 
 
@@ -1018,14 +1049,13 @@ def _fade_distribution_parameters(
     rate of the exponential pointing fade — the three numbers that define the
     exponentially modified Gaussian their sum follows. Broadcast against each
     other so a pass can vary both.
+
+    ``rate`` is ``+inf`` where ``gamma`` reaches :data:`_POINTING_FADE_FREE_RATIO`:
+    an exponential with infinite rate is a fade that is always zero, and
+    :func:`_emg_cdf` treats it as exactly that.
     """
-    gamma = np.asarray(beam_to_jitter_ratio_value, dtype=np.float64)
+    gamma = _validated_beam_to_jitter_ratio(beam_to_jitter_ratio_value)
     variance = np.asarray(log_irradiance_variance_np2, dtype=np.float64)
-    if not np.all(np.isfinite(gamma)) or np.any(gamma <= 0.0):
-        raise DomainError(
-            "beam_to_jitter_ratio_value must be finite and strictly positive. Got range "
-            f"[{float(np.min(gamma))}, {float(np.max(gamma))}]."
-        )
     if not np.all(np.isfinite(variance)) or np.any(variance < 0.0):
         raise DomainError(
             "log_irradiance_variance_np2 must be finite and non-negative, in Np^2. Got range "
@@ -1034,7 +1064,9 @@ def _fade_distribution_parameters(
     gamma, variance = np.broadcast_arrays(gamma, variance)
     mean = DB_PER_NEPER * 0.5 * variance
     sd = DB_PER_NEPER * np.sqrt(variance)
-    rate = gamma**2 / DB_PER_NEPER
+    fade_free = gamma >= _POINTING_FADE_FREE_RATIO
+    capped = np.where(fade_free, 1.0, gamma)
+    rate = np.where(fade_free, np.inf, capped**2 / DB_PER_NEPER)
     return mean, sd, rate
 
 
@@ -1043,25 +1075,65 @@ def _emg_cdf(
 ) -> FloatArray:
     """Return ``P(Gaussian(mean, sd) + Exponential(rate) <= level_db)``.
 
-    The exponentially modified Gaussian distribution function, written with
-    :func:`scipy.special.log_ndtr` in the exponent so that the two terms, which
-    cancel to many digits deep in the lower tail, never overflow on the way::
+    The exponentially modified Gaussian distribution function::
 
-        F(l) = Phi(z) - exp(-a (l - m) + a^2 s^2 / 2 + log Phi(z - a s)),  z = (l - m)/s
+        F(l) = Phi(z) - exp(-a (l - m) + a^2 s^2 / 2) Phi(z - a s),   z = (l - m)/s
 
-    A zero standard deviation is the pure exponential and is handled as a limit
-    rather than as a division, because a pass can genuinely reach a sample with
-    no turbulence in it.
+    **How the second term is evaluated is the whole content of this function.**
+    Written as it stands, its exponent is the difference of two terms of size
+    ``(a s)^2 / 2`` — one explicit, one inside ``log Phi(z - a s)`` — and they
+    cancel to within a few units. When the pointing fade is weak (``a`` large,
+    ``gamma`` large) that is cancellation at 1e20 or 1e60, the last bits of the
+    exponent are noise, and ``exp`` of the noise is a wrong answer that looks
+    like a right one. This function used to do exactly that: at
+    ``gamma = 1e10`` with ``sigma^2 = 1e-4`` it made :func:`combined_fade_db`
+    return **1.602 dB** where the joint fade is the scintillation fade alone,
+    **0.101 dB**, and at ``gamma = 1e30`` with ``sigma^2 = 0.5`` it returned
+    **124.9 dB** against **8.23**. Nothing on the reference downlink reached it
+    (``gamma`` is about 4.4 there); a horizontal link, where the beam is wide
+    against its own jitter, reaches it at once.
+
+    The fix is an identity, not an approximation. With ``Phi(x) = erfc(-x/sqrt 2)/2``
+    and the scaled complementary error function ``erfcx(t) = exp(t^2) erfc(t)``,
+    the exponents combine exactly::
+
+        exp(-a (l - m) + a^2 s^2 / 2) Phi(z - a s) = erfcx((a s - z) / sqrt 2) exp(-z^2 / 2) / 2
+
+    which has no cancellation anywhere and is used wherever ``a s >= z`` — the
+    bulk of the distribution. Where ``z > a s`` (far above the mean) ``erfcx``
+    of a large negative argument would overflow instead, and there the original
+    form is safe: its exponent is ``-a s (z - a s / 2) < 0`` and the two terms
+    no longer cancel.
+
+    Two degenerate cases are limits rather than divisions: a zero standard
+    deviation is the pure exponential (a pass can reach a sample with no
+    turbulence in it), and an infinite rate is the pure Gaussian (an aperture
+    wide enough that the pointing law predicts no fade).
     """
     degenerate = sd <= 0.0
+    fade_free = np.isinf(rate)
     safe_sd = np.where(degenerate, 1.0, sd)
-    z = (level_db - mean) / safe_sd
+    safe_rate = np.where(fade_free, 1.0, rate)
+    offset = level_db - mean
+    z = offset / safe_sd
+    shifted = safe_rate * safe_sd - z
+    far_above = shifted < 0.0
+    rate_far_above = np.where(far_above, safe_rate, 0.0)
     exponent = (
-        -rate * (level_db - mean) + 0.5 * (rate * safe_sd) ** 2 + log_ndtr(z - rate * safe_sd)
+        -rate_far_above * offset
+        + 0.5 * (rate_far_above * safe_sd) ** 2
+        + log_ndtr(z - rate_far_above * safe_sd)
     )
-    smooth = ndtr(z) - np.exp(exponent)
-    pure_exponential = -np.expm1(-rate * np.maximum(level_db - mean, 0.0))
-    result: FloatArray = np.where(degenerate, pure_exponential, smooth)
+    bulk = 0.5 * erfcx(np.maximum(shifted, 0.0) / np.sqrt(2.0)) * np.exp(-0.5 * z * z)
+    gaussian = ndtr(z)
+    smooth = gaussian - np.where(far_above, np.exp(exponent), bulk)
+    pure_exponential = -np.expm1(-safe_rate * np.maximum(offset, 0.0))
+    step = np.where(offset >= 0.0, 1.0, 0.0)
+    result: FloatArray = np.where(
+        degenerate,
+        np.where(fade_free, step, pure_exponential),
+        np.where(fade_free, gaussian, smooth),
+    )
     return result
 
 
@@ -1267,9 +1339,10 @@ class LossBudget:
         the *transmitter*, not of the range: it does not change over a pass, and
         it is the one term here that a beam expander removes.
     atmospheric_db : FloatArray
-        Clear-sky extinction along the slant path,
-        :func:`atmospheric_transmittance`. Zero exactly when the caller passed
-        ``zenith_transmittance=1.0``.
+        Clear-sky extinction along the path: :func:`atmospheric_transmittance` on
+        a slant path, zero exactly when the caller passed ``zenith_transmittance=1.0``;
+        ``extinction_db_per_km`` times the length on a horizontal one
+        (:func:`quoss.channel.horizontal.horizontal_loss_budget`).
     fade_db : FloatArray
         Pointing and scintillation together, at ``outage_probability``, combined
         by ``fade_combination``.
@@ -1570,6 +1643,41 @@ def downlink_loss_budget(
         ground_cn2_m23=ground_cn2_m23,
     )
 
+    return _assembled_loss_budget(
+        geometric=geometric,
+        atmospheric_db=np.asarray(transmittance_to_loss_db(atmospheric), dtype=np.float64),
+        gamma=gamma,
+        variance=variance,
+        chain=chain,
+        outage=outage,
+        static=static,
+        transmit_truncation_ratio=transmit_truncation_ratio,
+        combination=combination,
+    )
+
+
+def _assembled_loss_budget(
+    *,
+    geometric: FloatArray,
+    atmospheric_db: FloatArray,
+    gamma: FloatArray,
+    variance: FloatArray,
+    chain: float,
+    outage: float,
+    static: float,
+    transmit_truncation_ratio: float,
+    combination: FadeCombination,
+) -> LossBudget:
+    """Combine already-computed terms into a :class:`LossBudget`.
+
+    The part of a budget that does not depend on the geometry of the path: the
+    two fade laws, the combination rule, the truncation, the chain and the total.
+    Shared by :func:`downlink_loss_budget` and
+    :func:`quoss.channel.horizontal.horizontal_loss_budget` so that the two
+    budgets cannot drift apart in how they add their terms — which is also
+    where a strong-turbulence model, when one is added, will have to go.
+    Inputs are validated by the callers.
+    """
     pointing_db = pointing_fade_db(gamma, outage_probability=outage)
     scintillation_db = scintillation_fade_db(variance, outage_probability=outage)
     if combination is FadeCombination.EXACT:
@@ -1588,7 +1696,6 @@ def downlink_loss_budget(
         )
 
     geometric_db = np.asarray(transmittance_to_loss_db(geometric), dtype=np.float64)
-    atmospheric_db = np.asarray(transmittance_to_loss_db(atmospheric), dtype=np.float64)
     chain_db = float(transmittance_to_loss_db(chain))
     truncation_db = float(
         transmittance_to_loss_db(gaussian_truncation_efficiency(transmit_truncation_ratio))

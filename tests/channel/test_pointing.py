@@ -857,6 +857,71 @@ class TestTheOutOfRangeWarning:
 
 
 @pytest.mark.physics
+class TestALensFarWiderThanTheBeam:
+    """The bench geometry: a millimetre beam into a lens centimetres across.
+
+    Equation (9) divides by ``exp(-v^2)``, and past ``v^2 = 708`` that is a
+    division by an underflowed zero. Before `_EQUIVALENT_RADIUS_EXPONENT_LIMIT`
+    a 2 mm transmitter two metres from a 20 cm lens raised
+    ``RuntimeWarning: divide by zero`` — which this suite turns into an error —
+    and a 1 cm one returned ``gamma = 7.9e137`` with no complaint beyond the
+    range warning. The law's own limit is an infinite equivalent radius: a beam
+    that small never leaves a lens that large, so there is no pointing fade.
+    """
+
+    @staticmethod
+    def _ratio(transmit_m: float, receive_m: float, degradations: DegradationLog) -> float:
+        return float(
+            beam_to_jitter_ratio(
+                0.002,
+                jitter_rad=5e-6,
+                wavelength_m=1.55e-06,
+                transmit_aperture_m=transmit_m,
+                receive_aperture_m=receive_m,
+                degradations=degradations,
+            )
+        )
+
+    def test_past_the_limit_the_radius_is_infinite_and_the_warning_says_so(
+        self, degradations: DegradationLog
+    ) -> None:
+        assert self._ratio(0.002, 0.2, degradations) == np.inf
+        (entry,) = degradations.entries
+        assert entry.code == "pointing.gaussian-approximation-out-of-published-range"
+        assert entry.details["equivalent_radius_is_infinite"] is True
+        assert "+inf" in entry.message
+
+    def test_below_the_limit_it_is_finite_and_the_flag_is_false(
+        self, degradations: DegradationLog
+    ) -> None:
+        assert np.isfinite(self._ratio(0.01, 0.2, degradations))
+        assert degradations.entries[0].details["equivalent_radius_is_infinite"] is False
+
+    def test_the_radius_grows_monotonically_into_the_limit(self) -> None:
+        """No jump at the threshold other than the one to infinity, which is the limit itself."""
+        log = DegradationLog()
+        receivers = np.linspace(0.01, 0.2, 40)
+        radii = np.array(
+            [
+                float(
+                    equivalent_beam_radius_m(
+                        0.002,
+                        wavelength_m=1.55e-06,
+                        transmit_aperture_m=0.002,
+                        receive_aperture_m=float(receive),
+                        degradations=log,
+                    )
+                )
+                for receive in receivers
+            ]
+        )
+        finite = np.isfinite(radii)
+        first_infinite = int(np.argmin(finite))
+        assert np.isfinite(radii[0]) and np.isinf(radii[-1])
+        assert np.all(finite[:first_infinite]) and not np.any(finite[first_infinite:])
+        assert np.all(np.diff(radii[:first_infinite]) >= 0.0)
+
+
 class TestRejectsBadInput:
     def test_a_non_positive_jitter_is_rejected(self, degradations: DegradationLog) -> None:
         """Zero jitter is rejected rather than treated as perfect pointing.
