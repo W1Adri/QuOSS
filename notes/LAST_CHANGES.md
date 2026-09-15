@@ -5690,7 +5690,7 @@ fuera del simulador.
 
 **Cuatro series** sobre la rejilla entera —velocidad radial, desplazamiento
 Doppler, su derivada y el ángulo de point-ahead— y **cuatro columnas por pase**:
-`max_abs_doppler_hz`, `max_abs_doppler_rate_hz_s`, `max_point_ahead_angle_rad` y
+`peak_one_sided_doppler_hz`, `peak_doppler_slew_hz_s`, `max_point_ahead_angle_rad` y
 `min_point_ahead_angle_rad`.
 
 ### Las cifras del día de referencia

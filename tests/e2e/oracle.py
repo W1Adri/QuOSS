@@ -221,12 +221,22 @@ class HandLink:
         )
 
     @property
-    def pass_acquisition(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """``(max|doppler|, max|doppler rate|, max point-ahead, min point-ahead)`` per pass."""
+    def pass_acquisition(
+        self,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """``(one-sided |doppler|, doppler excursion, max|rate|, max lead, min lead)`` per pass.
+
+        The first two are the pair the engine keeps apart on purpose: the
+        amplitude of one side of the sweep, and the whole span from the
+        approaching extreme to the receding one. The second is computed as
+        ``max - min`` and not as twice the first, because on a real pass the
+        two extremes are not equal.
+        """
         _, doppler, rate, point_ahead = self.acquisition
         rows = np.asarray(self.samples.sample_index)
         return (
             self.samples.segment_max(np.abs(doppler[rows])),
+            self.samples.segment_max(doppler[rows]) - self.samples.segment_min(doppler[rows]),
             self.samples.segment_max(np.abs(rate[rows])),
             self.samples.segment_max(point_ahead[rows]),
             self.samples.segment_min(point_ahead[rows]),

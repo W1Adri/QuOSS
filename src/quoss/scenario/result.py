@@ -397,10 +397,16 @@ class PassRecord:
         ``end - start``, s.
     culmination_elevation_rad : float
         Peak elevation, rad.
-    max_abs_doppler_hz : float
-        Largest ``|Doppler shift|`` over the pass's samples, Hz.
-    max_abs_doppler_rate_hz_s : float
-        Largest ``|d(Doppler)/dt|`` over the pass's samples, Hz/s.
+    peak_one_sided_doppler_hz : float
+        Largest ``|Doppler shift|`` over the pass's samples, Hz. **One side**
+        of the sweep, not the width of it.
+    doppler_excursion_hz : float
+        ``max(shift) - min(shift)`` over the pass's samples, Hz. The **full
+        width** the receiver traverses, and the one a capture range is sized
+        against. Very nearly twice the field above, never exactly.
+    peak_doppler_slew_hz_s : float
+        Largest ``|d(Doppler)/dt|`` over the pass's samples, Hz/s. A rate, and
+        a separate specification from either width above.
     max_point_ahead_angle_rad, min_point_ahead_angle_rad : float
         Widest and narrowest point-ahead lead over the pass, rad.
     finite_bits, asymptotic_bits : float
@@ -422,8 +428,9 @@ class PassRecord:
     culmination_jd: float
     duration_s: float
     culmination_elevation_rad: float
-    max_abs_doppler_hz: float
-    max_abs_doppler_rate_hz_s: float
+    peak_one_sided_doppler_hz: float
+    doppler_excursion_hz: float
+    peak_doppler_slew_hz_s: float
     max_point_ahead_angle_rad: float
     min_point_ahead_angle_rad: float
     finite_bits: float
@@ -452,22 +459,33 @@ class PassResults:
         Refined instants, s.
     culmination_elevation_rad : FloatArray
         Peak elevation per pass, rad.
-    max_abs_doppler_hz : FloatArray
-        Largest ``|Doppler shift|`` of each pass, Hz — the offset a receiver's
-        **capture range** has to cover.
-    max_abs_doppler_rate_hz_s : FloatArray
-        Largest ``|d(Doppler)/dt|`` of each pass, Hz/s — the sweep its
-        **tracking loop** has to follow, which is the separate requirement.
+    peak_one_sided_doppler_hz : FloatArray
+        Largest ``|Doppler shift|`` of each pass, Hz. The **amplitude of one
+        side** of the sweep: how far from the nominal carrier the signal gets.
+        Sizing a capture range off this alone under-specifies it by a factor
+        very close to two — that is what the next column is for.
+    doppler_excursion_hz : FloatArray
+        ``max(shift) - min(shift)`` of each pass, Hz. The **full span** from
+        the approaching extreme to the receding one, which is what a receiver's
+        **capture or search range** has to cover. Measured, not doubled: the
+        two extremes of a real pass are not equal, so this runs 1.977 to 1.999
+        times the column above on the reference day rather than exactly twice.
+    peak_doppler_slew_hz_s : FloatArray
+        Largest ``|d(Doppler)/dt|`` of each pass, Hz/s — the rate its
+        **tracking loop** has to follow. A capture range and a tracking rate
+        are **two separate requirements**: a wide slow receiver loses lock at
+        the horizon, a fast narrow one never acquires.
     max_point_ahead_angle_rad, min_point_ahead_angle_rad : FloatArray
         Widest and narrowest point-ahead lead of each pass, rad. The *span*
         between them is what a fine-steering mirror is sized by.
     finite_bits, asymptotic_bits : FloatArray
         Key per pass under each regime.
 
-    Note on the four acquisition columns: each is reduced over the grid samples
+    Note on the five acquisition columns: each is reduced over the grid samples
     **inside** the pass, and a pass begins and ends between samples, so each is
     a bound rather than the exact extremum of the continuous pass — a lower
-    bound for the three maxima, an upper bound for the minimum. The size of
+    bound for the three maxima and for the excursion, an upper bound for the
+    minimum. The size of
     that gap is a property of the grid and is measured at
     :meth:`~quoss.system.passes.PassSamples.segment_max`.
     truncated_start, truncated_end : BoolArray
@@ -488,8 +506,9 @@ class PassResults:
     end_s: FloatArray
     culmination_s: FloatArray
     culmination_elevation_rad: FloatArray
-    max_abs_doppler_hz: FloatArray
-    max_abs_doppler_rate_hz_s: FloatArray
+    peak_one_sided_doppler_hz: FloatArray
+    doppler_excursion_hz: FloatArray
+    peak_doppler_slew_hz_s: FloatArray
     max_point_ahead_angle_rad: FloatArray
     min_point_ahead_angle_rad: FloatArray
     finite_bits: FloatArray
@@ -562,8 +581,9 @@ _PASS_FIELDS: tuple[tuple[str, type[np.generic]], ...] = (
     ("end_s", np.float64),
     ("culmination_s", np.float64),
     ("culmination_elevation_rad", np.float64),
-    ("max_abs_doppler_hz", np.float64),
-    ("max_abs_doppler_rate_hz_s", np.float64),
+    ("peak_one_sided_doppler_hz", np.float64),
+    ("doppler_excursion_hz", np.float64),
+    ("peak_doppler_slew_hz_s", np.float64),
     ("max_point_ahead_angle_rad", np.float64),
     ("min_point_ahead_angle_rad", np.float64),
     ("finite_bits", np.float64),
@@ -1065,8 +1085,9 @@ class SimulationResult:
                 culmination_jd=float(p.culmination_jd[i]),
                 duration_s=float(p.duration_s[i]),
                 culmination_elevation_rad=float(p.culmination_elevation_rad[i]),
-                max_abs_doppler_hz=float(p.max_abs_doppler_hz[i]),
-                max_abs_doppler_rate_hz_s=float(p.max_abs_doppler_rate_hz_s[i]),
+                peak_one_sided_doppler_hz=float(p.peak_one_sided_doppler_hz[i]),
+                doppler_excursion_hz=float(p.doppler_excursion_hz[i]),
+                peak_doppler_slew_hz_s=float(p.peak_doppler_slew_hz_s[i]),
                 max_point_ahead_angle_rad=float(p.max_point_ahead_angle_rad[i]),
                 min_point_ahead_angle_rad=float(p.min_point_ahead_angle_rad[i]),
                 finite_bits=float(p.finite_bits[i]),

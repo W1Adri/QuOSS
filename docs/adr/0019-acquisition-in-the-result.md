@@ -24,8 +24,8 @@ real llega a **±4.3 GHz**.
 Un receptor coherente tiene **dos** números frente a eso, y confundirlos es
 justo lo que este ADR existe para impedir:
 
-- el **rango de captura**: cuánto se puede haber ido la portadora y aún así
-  encontrarla;
+- el **rango de captura**: cuán ancha es la ventana dentro de la cual puede
+  encontrar la portadora;
 - la **velocidad de seguimiento**: cuán rápido puede barrer el lazo una vez
   enganchado.
 
@@ -68,12 +68,42 @@ llamativo; pero es solo la mitad de la especificación, y no es la mitad que fal
 tarde. Medido en el día de referencia (Castelldefels, 0.75 m, SSO a 700 km,
 máscara de 10°, 1550 nm), por pase:
 
-| Pase | Captura: máx \|Δf\| | Seguimiento: máx \|dΔf/dt\| |
-|---|---|---|
-| 1 | 4.19 GHz | 37.9 MHz/s |
-| 2 | 2.85 GHz | 19.2 MHz/s |
-| 3 | **4.27 GHz** | **41.5 MHz/s** |
-| 4 | 2.23 GHz | 16.8 MHz/s |
+| Pase | Pico de un lado: máx \|Δf\| | Excursión total: máx Δf − mín Δf | Seguimiento: máx \|dΔf/dt\| |
+|---|---|---|---|
+| 1 | 4.19 GHz | **8.37 GHz** | 37.9 MHz/s |
+| 2 | 2.85 GHz | **5.66 GHz** | 19.2 MHz/s |
+| 3 | **4.27 GHz** | **8.54 GHz** | **41.5 MHz/s** |
+| 4 | 2.23 GHz | **4.40 GHz** | 16.8 MHz/s |
+
+#### 1.a. Por qué la columna de la excursión existe, y por qué la primera no es el rango de captura
+
+Esta tabla tenía **dos** columnas y la primera se llamaba «Captura». Estaba mal,
+por un factor **2**, en el único parámetro que este ADR nombra como causa del
+fallo de TBIRD.
+
+El pico de un lado es `f0·|ṙ|max/c`: **cuán lejos de la portadora nominal llega
+la señal**. Pero la señal no se queda ahí. A lo largo del pase **recorre** de
++4.18 a −4.19 GHz, pasando por cero en la culminación, y un receptor tiene que
+poder encontrarla en cualquier punto de ese recorrido. Lo que dimensiona una
+ventana de captura o de búsqueda es por tanto la **excursión total**,
+`máx Δf − mín Δf` = **8.37 GHz**. Quien compre un transceptor contra «4.19 GHz»
+se queda con la mitad de la ventana que el pase necesita.
+
+La respuesta del repo a esta familia de error ya estaba escrita en otros sitios
+—`field_of_view_urad` (ángulo completo, no semiángulo), las dos transmitancias
+con nombre distinto de `link_budget.py`— y es ponerlo **en el nombre**. Así que
+existen las dos columnas, `peak_one_sided_doppler_hz` y `doppler_excursion_hz`,
+y ninguna de las dos es «la que hay que acordarse de multiplicar por dos».
+
+**Y no es literalmente un factor dos, lo que importa.** La excursión se **mide**
+como `máx − mín`, no se define como el doble del pico. En un pase real los dos
+extremos no son iguales —el pase no es simétrico respecto a la culminación y las
+muestras son una rejilla—, así que la razón va de **1.977 a 1.999** en el día de
+referencia, nunca 2.000. Derivar una columna de la otra cablearía una simetría
+que la geometría no tiene, y escondería cualquier error futuro que la rompiera.
+La desigualdad `máx − mín ≤ 2·máx(|máx|,|mín|)` sí es aritmética y vale siempre:
+es lo que aserta
+`tests/engine/test_pipeline.py::TestTheTwoDopplerConventions`.
 
 **Y lo que este día concreto *no* demuestra, dicho para no leerlo de más:** aquí
 las dos columnas ordenan los cuatro pases igual (3 > 1 > 2 > 4), porque las dos
@@ -81,8 +111,12 @@ las gobierna lo mismo — cuánto se acerca el pase: las culminaciones son 58.8�
 52.9°, 17.7° y 14.2°, y un pase bajo nunca llega a una geometría empinada, así
 que ni acelera mucho ni alcanza una velocidad radial grande. Que coincidan es un
 hecho sobre **estos cuatro pases**, no una ley, y no hace de una columna la otra:
-siguen siendo dos especificaciones distintas del receptor, y son 4.27 GHz y
-41.5 MHz/s, números que no se convierten el uno en el otro sin la geometría.
+siguen siendo dos especificaciones distintas del receptor, y son 8.54 GHz de
+ventana y 41.5 MHz/s de barrido, números que no se convierten el uno en el otro
+sin la geometría. Que no son restatements uno del otro se aserta por la vía
+débil y honesta: el cociente excursión/barrido —el tiempo que la señal tarda en
+cruzar su propia ventana— **no es constante** entre los cuatro pases, así que
+ninguna columna se calcula desde la otra.
 
 **Y el extremo está en los bordes, no en la culminación.** En la culminación el
 satélite se mueve **atravesando** la línea de visión, así que la velocidad radial
@@ -201,13 +235,11 @@ a esas divergencias es apuntar fuera del haz.
 
 ### Lo que no cierra
 
-- **No hay un campo de rango de captura en el escenario y por tanto no hay
-  aviso.** Hoy el resultado dice lo que el pase exige y el lector lo compara con
-  su transceptor. Un `receiver.doppler_capture_range_hz` opcional que levantara
-  un `WARNING` cuando un pase se sale encaja con la regla de «prohibido degradar
-  en silencio» y es el paso siguiente natural; no se añade aquí porque un campo
-  del escenario es un compromiso del contrato ([ADR 0014](0014-scenario-contract-and-provenance.md))
-  y merece su propia decisión.
+- ~~**No hay un campo de rango de captura en el escenario y por tanto no hay
+  aviso.**~~ **Cerrado** por el [ADR 0020](0020-declared-doppler-capture-range.md):
+  `receiver.doppler_capture_range_hz` es opcional y nulo por defecto, `null`
+  emite un INFO diciendo que no se ha contrastado nada, y un valor declarado
+  levanta un `WARNING` por pase que no cabe con los segundos que quedan fuera.
 - **Un segundo portador para la bajada clásica** (punto 2), que es de la
   etapa 2.2 de CLAU.
 - **El point-ahead no lleva su propio presupuesto de error.** El ángulo es

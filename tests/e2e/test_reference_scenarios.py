@@ -362,35 +362,55 @@ class TestTheEngineAddsNothing:
     def test_the_per_pass_acquisition_extrema_are_the_hand_extrema(
         self, engine: Simulation, by_hand: HandLink
     ) -> None:
-        peak_doppler, peak_rate, widest, narrowest = by_hand.pass_acquisition
+        peak_doppler, excursion, peak_rate, widest, narrowest = by_hand.pass_acquisition
         passes = engine.result.passes
-        assert_identical(passes.max_abs_doppler_hz, peak_doppler, "max_abs_doppler_hz")
-        assert_identical(passes.max_abs_doppler_rate_hz_s, peak_rate, "max_abs_doppler_rate_hz_s")
+        assert_identical(
+            passes.peak_one_sided_doppler_hz, peak_doppler, "peak_one_sided_doppler_hz"
+        )
+        assert_identical(passes.doppler_excursion_hz, excursion, "doppler_excursion_hz")
+        assert_identical(passes.peak_doppler_slew_hz_s, peak_rate, "peak_doppler_slew_hz_s")
         assert_identical(passes.max_point_ahead_angle_rad, widest, "max_point_ahead_angle_rad")
         assert_identical(passes.min_point_ahead_angle_rad, narrowest, "min_point_ahead_angle_rad")
 
     def test_what_the_reference_day_demands_of_a_transceiver(self, engine: Simulation) -> None:
         """The numbers the acquisition columns exist to produce, on the reference link.
 
-        At 1550 nm (``f0 = 1.934e14`` Hz) the reference day's four passes demand
-        a capture range of **4.19, 2.85, 4.27 and 2.23 GHz** and a tracking rate
-        of **37.9, 19.2, 41.5 and 16.8 MHz/s**. The point-ahead lead runs from
-        24.7 to 50.7 microradians — a factor two *within a single pass*, which
-        is why the span and not only the peak is reported.
+        At 1550 nm (``f0 = 1.934e14`` Hz) the reference day's four passes reach
+        a one-sided peak of **4.19, 2.85, 4.27 and 2.23 GHz**, sweep a total
+        excursion of **8.37, 5.66, 8.54 and 4.40 GHz**, and demand a tracking
+        rate of **37.9, 19.2, 41.5 and 16.8 MHz/s**. The point-ahead lead runs
+        from 24.7 to 50.7 microradians — a factor two *within a single pass*,
+        which is why the span and not only the peak is reported.
 
-        Read as a requirement: a transceiver whose capture range is under
-        ±4.3 GHz cannot acquire the best pass of this link at its horizon, and
-        one whose loop cannot slew 42 MHz/s cannot hold it there. That is the
-        TBIRD end-of-pass failure written as two columns of a result.
+        The first two rows are the distinction this test exists to keep visible.
+        "A capture range of 4.19 GHz" is the wrong reading of the first row and
+        this docstring used to give it: the signal does not sit 4.19 GHz off the
+        carrier, it *travels* from +4.18 to -4.19 GHz over the pass, and a
+        receiver has to be able to find it anywhere in between. The requirement
+        is **8.37 GHz** of window, or ±4.19 GHz written the other way, and
+        reading the peak as the range under-specifies the transceiver by a
+        factor two — in the parameter that ended TBIRD's passes early.
+
+        Read as a requirement: a transceiver whose search window is under
+        8.6 GHz cannot acquire the best pass of this link across its whole
+        length, and one whose loop cannot slew 42 MHz/s cannot hold it at the
+        horizon. That is the TBIRD end-of-pass failure written as two columns
+        of a result — two columns, because they are two requirements.
         """
         passes = engine.result.passes
-        assert np.asarray(passes.max_abs_doppler_hz).round(-6).tolist() == [
+        assert np.asarray(passes.peak_one_sided_doppler_hz).round(-6).tolist() == [
             4_187_000_000.0,
             2_847_000_000.0,
             4_272_000_000.0,
             2_226_000_000.0,
         ]
-        assert np.asarray(passes.max_abs_doppler_rate_hz_s).round(-4).tolist() == [
+        assert np.asarray(passes.doppler_excursion_hz).round(-6).tolist() == [
+            8_370_000_000.0,
+            5_662_000_000.0,
+            8_538_000_000.0,
+            4_399_000_000.0,
+        ]
+        assert np.asarray(passes.peak_doppler_slew_hz_s).round(-4).tolist() == [
             37_930_000.0,
             19_230_000.0,
             41_550_000.0,
@@ -435,15 +455,28 @@ class TestTheEngineAddsNothing:
         A degradation entry carries a ``code`` whose prefix names the module
         that raised it (``turbulence.``, ``finite-key.``, ``key_volume.``), and
         the pipeline's own entries are all under ``engine.``. So "the engine
-        adds nothing" is checkable on the log as well as on the numbers: on the
-        reference run there is not one ``engine.`` entry, because nothing
-        happened that only the orchestration could know about.
+        adds nothing" is checkable on the log as well as on the numbers.
 
         The codes are listed rather than counted loosely, because a warning that
         stops being raised is exactly as much of a change as a number that
         moves — the weak-fluctuation limit below is the one the reference link
         is known to exceed (`notes/LAST_CHANGES.md` §18), and losing it would
         turn a declared limitation into a silent one.
+
+        **The one ``engine.`` entry, and why it is allowed to be here.** This
+        test used to assert there were none at all, on the reasoning that
+        nothing happens in a reference run that only the orchestration could
+        know about. That stopped being true with
+        [ADR 0020](../../docs/adr/0020-declared-doppler-capture-range.md): the
+        engine is the only layer that sees the *scenario*, so it is the only one
+        that can notice ``receiver.doppler_capture_range_hz`` was never
+        declared. No physics module could raise that, because none of them is
+        handed the field.
+
+        It is an INFO, so it changes no number, and "the engine adds nothing"
+        is unharmed — the claim is about values, not about silence. What would
+        break the claim is an ``engine.`` entry at WARNING or worse, so that is
+        what is asserted instead of a blanket absence.
         """
         codes = Counter(str(entry["code"]) for entry in engine.result.warnings)
         assert codes == Counter(
@@ -456,9 +489,13 @@ class TestTheEngineAddsNothing:
                 "key_volume.asymptotic-upper-bound": 1,
                 "key_volume.day-composes-blocks": 1,
                 "key_volume.day-has-no-security-claim": 1,
+                "engine.acquisition.no-capture-range-declared": 1,
             }
         )
-        assert not [code for code in codes if code.startswith("engine.")]
+        engine_entries = [
+            entry for entry in engine.result.warnings if str(entry["code"]).startswith("engine.")
+        ]
+        assert [str(entry["severity"]) for entry in engine_entries] == ["info"]
 
 
 class TestTheOneTermThatIsNotACopy:

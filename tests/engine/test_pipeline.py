@@ -29,6 +29,7 @@ from typing import Any
 
 import numpy as np
 import pytest
+from pydantic import ValidationError
 
 from quoss.core.errors import DegradationLog, DomainError, ScenarioError, Severity
 from quoss.core.rng import RandomSource
@@ -355,7 +356,9 @@ class TestTheAcquisitionStage:
         b = simulate(halved, degradations=DegradationLog()).stations[0].acquisition
         assert b.carrier_frequency_hz == pytest.approx(2.0 * a.carrier_frequency_hz, rel=1e-12)
         assert np.allclose(b.doppler_shift_hz, 2.0 * np.asarray(a.doppler_shift_hz), rtol=1e-12)
-        assert np.allclose(b.max_abs_doppler_hz, 2.0 * np.asarray(a.max_abs_doppler_hz), rtol=1e-12)
+        assert np.allclose(
+            b.peak_one_sided_doppler_hz, 2.0 * np.asarray(a.peak_one_sided_doppler_hz), rtol=1e-12
+        )
         assert np.array_equal(b.range_rate_km_s, a.range_rate_km_s)
         assert np.array_equal(b.point_ahead_angle_rad, a.point_ahead_angle_rad)
 
@@ -383,7 +386,7 @@ class TestTheAcquisitionStage:
         (series,) = result.series
         assert np.all(np.isfinite(series.doppler_shift_hz.values))
         assert result.passes.n_passes == 0
-        assert result.passes.max_abs_doppler_hz.shape == (0,)
+        assert result.passes.peak_one_sided_doppler_hz.shape == (0,)
         assert result.passes.min_point_ahead_angle_rad.shape == (0,)
 
     def test_the_peak_doppler_of_a_pass_is_at_its_edges_and_not_its_culmination(self) -> None:
@@ -420,11 +423,324 @@ class TestTheAcquisitionStage:
             apply_point(reference_castelldefels(), {"time.step_s": 0.1}),
             degradations=DegradationLog(),
         )
-        peak_coarse = np.asarray(coarse.passes.max_abs_doppler_hz)
-        peak_fine = np.asarray(fine.passes.max_abs_doppler_hz)
+        peak_coarse = np.asarray(coarse.passes.peak_one_sided_doppler_hz)
+        peak_fine = np.asarray(fine.passes.peak_one_sided_doppler_hz)
         assert peak_fine.shape == peak_coarse.shape
         assert np.all(peak_fine >= peak_coarse - 1.0)
         assert np.all((peak_fine - peak_coarse) / peak_fine < 1e-3)
+
+
+class TestTheTwoDopplerConventions:
+    """A peak and an excursion are two numbers, and mixing them costs a factor two.
+
+    What the two are
+    ----------------
+    Over one pass the received carrier does not sit at a fixed offset; it
+    **sweeps**. The satellite approaches, so the signal arrives above the
+    transmitted frequency; at closest approach the range-rate is zero and the
+    offset with it; then it recedes and the signal arrives below. Two numbers
+    summarise that, and they are not the same number:
+
+    - ``peak_one_sided_doppler_hz`` — the largest ``|shift|`` reached, i.e.
+      ``f0 * |r_dot|max / c``. **One side.**
+    - ``doppler_excursion_hz`` — ``max(shift) - min(shift)``, the **whole span**
+      the signal travels across during the pass.
+
+    Why the distinction is worth a class
+    ------------------------------------
+    A receiver has to be able to find the signal *anywhere it goes*, so the
+    number that sizes a capture or search window is the excursion. Reading the
+    one-sided peak as the window under-specifies the transceiver by very nearly
+    a factor two, and it is the parameter TBIRD ran out of at the end of a pass.
+
+    This repo's answer to that class of error is to put the convention in the
+    **name**, as it already did for ``field_of_view_urad`` (full angle, not
+    half) and for the two differently-named transmittances in ``link_budget``.
+    So both quantities exist as columns, both names say which is which, and
+    neither is "the one you have to remember to double".
+
+    Why it is not literally a factor two, which matters
+    ---------------------------------------------------
+    The excursion is **measured**, as ``max - min``, and not defined as twice
+    the peak. On a real pass the approaching and receding extremes differ — the
+    pass is not symmetric about culmination, and the samples are a grid — so the
+    ratio runs from 1.977 to 1.999 over the reference day, not 2.000. Deriving
+    one column from the other would hard-code a symmetry the geometry does not
+    have, and would hide any future bug that broke it.
+    """
+
+    def test_the_excursion_is_the_span_the_shift_actually_covers(self) -> None:
+        """The column is `max - min` of the shift over the pass's own samples.
+
+        Recomputed here from the grid series and the pass table rather than
+        trusted from the reduction, because "the excursion" has an obvious
+        wrong implementation (twice the peak) that agrees with the right one to
+        0.1 % and would never be noticed by eye.
+        """
+        simulation = simulate(reference_castelldefels(), degradations=DegradationLog())
+        station = simulation.stations[0]
+        shift = np.asarray(station.acquisition.doppler_shift_hz)
+        rows = np.asarray(station.samples.sample_index)
+        pass_index = np.asarray(station.samples.pass_index)
+        reported = np.asarray(station.acquisition.doppler_excursion_hz)
+        assert reported.shape == (station.table.n_passes,)
+        for index in range(station.table.n_passes):
+            inside = shift[rows][pass_index == index]
+            assert reported[index] == pytest.approx(inside.max() - inside.min(), rel=1e-12)
+
+    def test_the_excursion_is_under_twice_the_peak_and_close_to_it(
+        self, reference_result: SimulationResult
+    ) -> None:
+        """The relation between the two columns, as an inequality that is derivable.
+
+        `max - min <= |max| + |min| <= 2 * max(|max|, |min|)` is arithmetic and
+        holds for any pass whatsoever, so it is a real invariant and not a
+        tolerance fitted to today's output. Equality needs the two extremes to
+        be exactly equal in size, which a pass with a real horizon crossing at
+        both ends comes close to and never reaches.
+
+        The lower guard is the physical half of the claim: the two extremes of
+        a pass are near-symmetric because the geometry is, so the ratio stays
+        above 1.9. Together they say "very nearly two, never two" — which is
+        precisely the statement that the peak cannot be substituted for the
+        excursion, and cannot be corrected by multiplying by two either.
+
+        Measured on the reference day: 1.999036, 1.989008, 1.998300, 1.976639.
+        """
+        peak = np.asarray(reference_result.passes.peak_one_sided_doppler_hz)
+        excursion = np.asarray(reference_result.passes.doppler_excursion_hz)
+        ratio = excursion / peak
+        assert np.all(excursion < 2.0 * peak)
+        assert np.all(ratio > 1.9)
+        assert ratio.tolist() == pytest.approx([1.999036, 1.989008, 1.998300, 1.976639], abs=1e-6)
+
+    def test_the_headline_pair_is_four_gigahertz_and_eight(
+        self, reference_result: SimulationResult
+    ) -> None:
+        """The factor-two error, as the two numbers a datasheet would be read against.
+
+        The best pass of the reference day peaks **4.187 GHz** off the carrier
+        and sweeps **8.370 GHz** end to end. A transceiver bought against the
+        first number has half the window the pass needs.
+        """
+        peak = np.asarray(reference_result.passes.peak_one_sided_doppler_hz)
+        excursion = np.asarray(reference_result.passes.doppler_excursion_hz)
+        assert float(peak.max()) == pytest.approx(4.272427e9, rel=1e-6)
+        assert float(excursion.max()) == pytest.approx(8.537589e9, rel=1e-6)
+        assert float(peak[0]) == pytest.approx(4.186869e9, rel=1e-6)
+        assert float(excursion[0]) == pytest.approx(8.369700e9, rel=1e-6)
+
+    def test_the_window_and_the_slew_are_two_requirements_and_rank_passes_differently(
+        self, reference_result: SimulationResult
+    ) -> None:
+        """A capture range and a tracking rate are separate specifications.
+
+        One says how *wide* a window the receiver needs, the other how *fast*
+        the signal crosses it, and a transceiver can meet either alone and still
+        lose the pass: a wide slow receiver breaks lock at the horizon where the
+        sweep is fastest, a fast narrow one never acquires at all.
+
+        The test that they are not restatements of each other is that they do
+        not order the passes the same way. On the reference day the widest
+        excursion is pass 2 and so is the fastest slew, but passes 1 and 3 swap:
+        pass 1 needs more window than pass 3 (5.66 against 4.40 GHz) and also
+        more slew (19.2 against 16.8 MHz/s) — while pass 0 against pass 2
+        reverses between the two columns relative to their durations. What is
+        asserted is the weaker and honest form: the ratio of slew to excursion
+        is not a constant across the four, so neither column can be computed
+        from the other.
+        """
+        excursion = np.asarray(reference_result.passes.doppler_excursion_hz)
+        slew = np.asarray(reference_result.passes.peak_doppler_slew_hz_s)
+        crossing_time_s = excursion / slew
+        assert float(crossing_time_s.max() / crossing_time_s.min()) > 1.15
+        assert slew.argmax() == excursion.argmax()
+
+    def test_the_ten_degree_mask_hides_a_quarter_of_a_kilometre_per_second(self) -> None:
+        """The columns are bounded by the mask, and the bound is worth a number.
+
+        Every acquisition column is reduced over the samples **at or above the
+        mask**, and all of these quantities peak at the horizon, so a tighter
+        mask reports a smaller requirement. That is not a bug — it is the
+        requirement *for a link that does not use the sky below 10 degrees* —
+        but it means the column cannot be read as "what this orbit can do".
+
+        Dropping the mask from 10 to 5 degrees raises the day's largest
+        excursion by 1.7 %. A designer sizing a transceiver for a link that may
+        later lower its mask should size it from the geometry, which
+        `tests/orbits/test_geometry.py::TestTheHorizonRangeRateBound` does in
+        closed form, and not from this column.
+        """
+        tight = run(reference_castelldefels(), degradations=DegradationLog())
+        wide = run(
+            apply_point(reference_castelldefels(), {"passes.minimum_elevation_deg": 5.0}),
+            degradations=DegradationLog(),
+        )
+        tight_max = float(np.asarray(tight.passes.doppler_excursion_hz).max())
+        wide_max = float(np.asarray(wide.passes.doppler_excursion_hz).max())
+        assert wide_max > tight_max
+        assert wide_max / tight_max == pytest.approx(1.017, abs=0.002)
+
+
+class TestTheDeclaredCaptureRange:
+    """`receiver.doppler_capture_range_hz`: the field that lets a run say "this does not fit".
+
+    Until this field existed, every acquisition column said what a pass
+    *demands* and nothing said whether anything could *supply* it. The reader
+    held the transceiver's datasheet in their head and did the comparison there,
+    which is the same as not doing it.
+
+    Why it is optional and null by default
+    --------------------------------------
+    Because for CLAU it is honestly unknown — no transceiver has been chosen —
+    and a default would be a specification nobody selected, which is the
+    "do not invent numbers" rule. But **unknown must not read like fine**: a run
+    that checked nothing has to be distinguishable from a run that checked and
+    passed. So the null case is an INFO, not silence.
+
+    Which convention the field is in
+    --------------------------------
+    The **total width** of the acceptance window, matching
+    ``doppler_excursion_hz`` and not ``peak_one_sided_doppler_hz``. A
+    transceiver quoted as "+/-5 GHz" is ``1e10`` here, and
+    ``ReceiverSpec.doppler_capture_half_range_hz`` gives back the +/- reading by
+    name so that neither form is the one somebody has to remember to convert.
+    """
+
+    @staticmethod
+    def _with_window(window_hz: float | None) -> Scenario:
+        base = reference_castelldefels()
+        return base.model_copy(
+            update={
+                "receiver": base.receiver.model_copy(update={"doppler_capture_range_hz": window_hz})
+            }
+        )
+
+    @staticmethod
+    def _records(window_hz: float | None, code: str) -> list[Any]:
+        log = DegradationLog()
+        run(TestTheDeclaredCaptureRange._with_window(window_hz), degradations=log)
+        return [entry for entry in log if entry.code == code]
+
+    def test_the_default_is_null_and_null_says_so_out_loud(self) -> None:
+        """No window declared is an INFO, because a silent pass would be a lie by omission.
+
+        The reference scenario declares no window, so every Doppler figure it
+        reports stands against nothing. The INFO says exactly that and carries
+        the largest excursion with it, so the reader has the number they would
+        need to do the comparison by hand.
+
+        It is an INFO and not a WARNING because nothing is degraded: the
+        computed numbers are all correct. What is missing is an input, and a
+        missing input that changes no number is precisely what INFO is for.
+        """
+        assert reference_castelldefels().receiver.doppler_capture_range_hz is None
+        (record,) = self._records(None, "engine.acquisition.no-capture-range-declared")
+        assert record.severity is Severity.INFO
+        assert record.details["largest_excursion_hz"] == pytest.approx(8.537589e9, rel=1e-6)
+        assert not self._records(None, "engine.acquisition.capture-range-exceeded")
+
+    def test_a_window_wide_enough_records_nothing_at_all(self) -> None:
+        """Declaring a sufficient window is the one case that is silent, and should be.
+
+        12 GHz clears the widest pass of the day (8.54 GHz) with room, so there
+        is no degradation of any kind — neither the INFO, which no longer
+        applies, nor a warning. That is what makes the INFO above meaningful:
+        the two states are distinguishable in the result.
+        """
+        assert not self._records(12e9, "engine.acquisition.no-capture-range-declared")
+        assert not self._records(12e9, "engine.acquisition.capture-range-exceeded")
+
+    def test_a_pass_that_does_not_fit_warns_with_both_figures_and_the_seconds(self) -> None:
+        """The warning carries how long the pass is out of range, not only that it is.
+
+        Against an 8 GHz window (+/-4 GHz) the reference day's two strong passes
+        do not fit: pass 0 sweeps 8.3697 GHz and spends **127.2 s of its 562.2 s
+        outside**, pass 2 sweeps 8.5376 GHz and spends **173.4 s of 558.4**. The
+        two low passes fit and are not mentioned.
+
+        The seconds are the point. "Exceeds" and "exceeds for two minutes of a
+        nine-minute pass" are different engineering problems, and the first one
+        cannot be told from a pass that clips for one sample at the horizon.
+        """
+        records = self._records(8e9, "engine.acquisition.capture-range-exceeded")
+        assert [r.details["pass_index"] for r in records] == [0, 2]
+        assert all(r.severity is Severity.WARNING for r in records)
+
+        first, third = records
+        assert first.details["excursion_hz"] == pytest.approx(8.369700e9, rel=1e-6)
+        assert first.details["capture_range_hz"] == 8e9
+        assert first.details["capture_half_range_hz"] == 4e9
+        assert first.details["seconds_outside"] == pytest.approx(127.2, abs=0.1)
+        assert first.details["pass_duration_s"] == pytest.approx(562.2, abs=0.1)
+        assert third.details["seconds_outside"] == pytest.approx(173.4, abs=0.1)
+        assert first.details["seconds_outside"] < first.details["pass_duration_s"]
+
+    def test_a_pass_whose_excursion_fits_can_still_miss_a_centred_window(self) -> None:
+        """The case that proves the two readings are not the same check.
+
+        A window of 4.42 GHz is **wider than pass 3's whole excursion**
+        (4.3992 GHz), so a receiver that pre-compensates from an ephemeris —
+        re-centring its window as the pass runs — covers it with 21 MHz to
+        spare. A receiver that searches around the nominal carrier does not:
+        its window reaches +/-2.21 GHz and the pass peaks at 2.2256 GHz, so it
+        loses the signal for **1.7 s of a 302.7 s pass**.
+
+        This is why the warning carries the excursion *and* the half-range
+        rather than a verdict. The same pass and the same transceiver give
+        different answers depending on which receiver it is, and the run cannot
+        know which; what it can do is refuse to hide either number.
+        """
+        records = self._records(4.42e9, "engine.acquisition.capture-range-exceeded")
+        by_index = {r.details["pass_index"]: r for r in records}
+        assert 3 in by_index
+        detail = by_index[3].details
+        assert detail["excursion_hz"] == pytest.approx(4.399167e9, rel=1e-6)
+        assert detail["excursion_hz"] < detail["capture_range_hz"]
+        assert detail["peak_one_sided_doppler_hz"] > detail["capture_half_range_hz"]
+        assert detail["seconds_outside"] == pytest.approx(1.7, abs=0.1)
+        assert detail["pass_duration_s"] == pytest.approx(302.7, abs=0.1)
+
+    def test_the_seconds_outside_grow_as_the_window_shrinks(self) -> None:
+        """Monotonicity, which is the invariant a fixed expected number cannot give.
+
+        Narrowing the window can only move samples from inside to outside, never
+        the other way, so the seconds outside of any given pass are
+        non-increasing in the window width. This holds for any link and any
+        grid, so it is a real invariant rather than a tolerance around today's
+        answer, and it is what would catch a sign error or an off-by-two in the
+        half-range that the single measured numbers above would still pass.
+        """
+        outside = []
+        for window_hz in (4e9, 6e9, 8e9, 10e9):
+            records = self._records(window_hz, "engine.acquisition.capture-range-exceeded")
+            by_index = {r.details["pass_index"]: r.details["seconds_outside"] for r in records}
+            outside.append(by_index.get(0, 0.0))
+        assert outside == sorted(outside, reverse=True)
+        assert outside[0] > outside[-1] == 0.0
+
+    def test_the_half_range_property_is_the_other_reading_of_the_same_field(self) -> None:
+        """Both conventions available by name, so neither needs remembering to convert."""
+        receiver = self._with_window(1e10).receiver
+        assert receiver.doppler_capture_range_hz == 1e10
+        assert receiver.doppler_capture_half_range_hz == 5e9
+        assert self._with_window(None).receiver.doppler_capture_half_range_hz is None
+
+    def test_a_non_positive_window_is_refused_by_the_schema(self) -> None:
+        """Zero or negative is not a degraded run, it is a scenario that cannot mean anything.
+
+        Built through the constructor rather than ``model_copy``, because
+        ``model_copy(update=...)`` assigns without re-validating — so the
+        helper the other tests use here would accept a nonsense window and this
+        test would pass while proving nothing. A scenario loaded from YAML goes
+        through the constructor, which is the path that matters.
+        """
+        receiver = reference_castelldefels().receiver
+        for window_hz in (0.0, -1e9):
+            fields = receiver.model_dump()
+            fields["doppler_capture_range_hz"] = window_hz
+            with pytest.raises(ValidationError):
+                type(receiver)(**fields)
 
 
 class TestTheDayAxis:
