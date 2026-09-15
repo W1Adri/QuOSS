@@ -47,19 +47,26 @@ CLI, la API y el frontend son *consumidores* del mismo motor, no parte de él.
 > en la integral de turbulencia. Las dos cifras se reproducen a la última cifra en
 > `tests/e2e/test_reference_scenarios.py`; la que se reporta es la del motor.
 >
-> **Un número que este README no puede dar:** la clave depende de una
-> transmitancia atmosférica que ninguna fuente abierta publica, así que
-> `zenith_transmittance` es un parámetro **obligatorio y sin defecto**, y el
-> escenario de referencia declara `1.0` — «sin extinción modelada». Todas las
-> cifras de arriba son, por tanto, una **cota superior** sobre la atmósfera y una
-> afirmación exacta sobre todo lo demás. Es el hueco 14 del
-> [ADR 0009](docs/adr/0009-citation-policy.md), y hay **veintiún** huecos
-> declarados y ninguno rellenado con la cita más plausible.
+> **Un número que este README todavía no da, y ahora se sabe cuánto vale:** las
+> cifras de arriba son para una atmósfera que **no absorbe ni dispersa**. El
+> escenario de referencia declara `zenith_transmittance: 1.0` —«sin extinción
+> modelada»— porque el hueco 14 del
+> [ADR 0009](docs/adr/0009-citation-policy.md) no tenía número que ofrecer, así
+> que son una **cota superior** sobre la atmósfera y una afirmación exacta sobre
+> todo lo demás.
 >
-> Verificación al 2026-09-14: **3 259 tests**, 99 % de cobertura global, 100 % de
-> líneas y ramas en `core/`, `orbits/`, `channel/`, `qkd/`, `system/`,
-> `scenario/`, `engine/`, `io/` y `viz/`. Lo que baja el global del 100 % es
-> `validation/base.py`, al 59 %, por la etapa 8 a medias.
+> Desde el [ADR 0023](docs/adr/0023-traceable-extinction.md) hay un modelo
+> —visibilidad → atenuación, por la Ec. (4) de la ITU-R P.1814— y con él la cota
+> tiene tamaño: **23 km de visibilidad, la línea más limpia del código
+> meteorológico de la UIT, son 0.230 dB cenitales y el 22.7 % de esos 433 442
+> bits**; 10 km son el 47.7 %; con 2 km de bruma el día **no certifica nada**.
+> `zenith_transmittance` sigue siendo obligatorio y sin defecto, y ahora
+> `ChannelSpec` acepta o ese número o el modelo, nunca ninguno de los dos. Hay
+> **veintitrés** huecos declarados y ninguno rellenado con la cita más plausible.
+>
+> Verificación al 2026-09-15: **3 640 tests**, **100 % de líneas y ramas** en
+> todo `src/quoss` — `core/`, `orbits/`, `channel/`, `qkd/`, `system/`,
+> `scenario/`, `engine/`, `io/`, `viz/` y `validation/`.
 >
 > Ver [`notes/ROADMAP.md`](notes/ROADMAP.md) para el orden de construcción,
 > [`notes/GUIA_REIMPLEMENTACION.md`](notes/GUIA_REIMPLEMENTACION.md) para el porqué de la

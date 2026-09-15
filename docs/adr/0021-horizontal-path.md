@@ -60,6 +60,15 @@ Sin un camino horizontal, QuOSS no podía decir nada de ninguno de los dos.
    misma razón que `zenith_transmittance` (hueco 14): P.1814 da la forma
    (Ec. (3), dB/km) y las leyes de niebla, lluvia y nieve, pero ningún número de
    aire limpio.
+
+   **Actualizado el 2026-09-15:** ahora hay de dónde sacarlo.
+   `channel/extinction.py` ([ADR 0023](0023-traceable-extinction.md)) convierte
+   una visibilidad en esta misma unidad por la Ec. **(4)** de la P.1814 —la que
+   este ADR no había mirado—, con el detalle de que esa ecuación **imprime
+   dB/km y devuelve nepers por kilómetro**, un factor 4.343. El argumento sigue
+   sin defecto: lo que cambia es que quien lo rellena puede calcularlo en vez de
+   inventarlo. Para GE-1, 23 km de visibilidad son **0.192 dB/km** a 1550 nm,
+   frente a los 0.2 dB/km que la tabla de ejemplo de más abajo supone a mano.
 5. **Mismo `LossBudget` y mismo ensamblado que la bajada**, por una función
    privada compartida, `_assembled_loss_budget`. Así las dos no pueden sumar sus
    términos de forma distinta, y un modelo de régimen fuerte que se ponga ahí

@@ -25,6 +25,10 @@ beam
     Divergence, geometric and diffraction coupling, beam wander.
 pointing
     Pointing loss and the fading that mechanical jitter produces.
+extinction
+    What the air absorbs and scatters away, from visibility: specific
+    attenuation along a horizontal path, and the vertical transmittance a slant
+    path is raised to.
 background
     Sky radiance, background count rate, and the detection time gate — including
     the law that prices the gate against the detector's timing jitter, because

@@ -52,20 +52,28 @@ included by ``model_dump``, so a file written by :func:`~quoss.scenario.io.dump_
 would carry ``latitude_rad`` next to ``latitude_deg``, and reading it back under
 ``extra="forbid"`` would then fail on its own output. Round-trip safety wins.
 
-Two fields have no default, on purpose
---------------------------------------
+Four fields have no default, on purpose
+---------------------------------------
 Every other field with a defensible published value carries it as a default.
-Two do not, and each one is a test (``tests/scenario/test_models.py::
-TestTheTwoFieldsWithoutADefault``) so that adding one is a visible decision:
+Four do not, and they are a test (``tests/scenario/test_models.py::
+TestTheFieldsWithoutADefault``) so that adding one is a visible decision:
 
-* :attr:`ChannelSpec.zenith_transmittance` — the atmosphere's vertical clear-sky
-  transmittance. ``docs/adr/0009-citation-policy.md`` gap 14: the scaling law is
-  published (Ntanos et al. 2021 Eq. (7)) and the number it scales is not, in
-  any openable source. A default here would be an invented number labelled
-  "published" by its position. The physics function
+* **Extinction, declared one of two ways and never neither.**
+  :attr:`ChannelSpec.zenith_transmittance` is the atmosphere's vertical
+  clear-sky transmittance as a number, and :attr:`ChannelSpec.extinction` is the
+  same thing as a model. ``docs/adr/0009-citation-policy.md`` gap 14: Ntanos et
+  al. 2021 Eq. (7) publishes the scaling law and no openable source publishes
+  the number it scales, so a default on either would be an invented number made
+  authoritative by its position. The physics function
   :func:`quoss.channel.link_budget.atmospheric_transmittance` refuses a default
   for the same reason, and this schema mirrors it: whoever has no extinction
-  writes ``1.0`` and has thereby declared it.
+  writes ``zenith_transmittance: 1.0`` and has thereby declared it. See
+  ``docs/adr/0023-traceable-extinction.md`` for what the model added and what it
+  left open.
+* :attr:`ExtinctionSpec.aerosol_scale_height_m` and
+  :attr:`ExtinctionSpec.scaling_law`, inside that model, for reasons of their
+  own: no openable source publishes a scale height (gap 22), and the two
+  published wavelength exponents are 43 dB per kilometre apart in fog.
 * :attr:`PassSpec.minimum_elevation_deg` — the elevation mask. ``docs/adr/0011-the-block-is-the-pass.md``
   §5 measured that the finite-key yield has an **interior optimum near 8°**
   (lowering the mask from 8° to 2° buys 71 % more seconds and destroys 6.0 % of
@@ -121,6 +129,10 @@ from quoss.channel.background import (
     interpolated_sky_radiance_w_m2_um_sr,
 )
 from quoss.channel.detector import receiver_efficiency
+from quoss.channel.extinction import (
+    VisibilityScalingLaw,
+    zenith_transmittance_from_visibility,
+)
 from quoss.channel.link_budget import FadeCombination
 from quoss.core.constants import WGS84_RADIUS_EQUATORIAL_KM
 from quoss.core.errors import DegradationLog, DomainError
@@ -141,6 +153,7 @@ __all__ = [
     "AggregationPolicyName",
     "BackgroundSpec",
     "ChannelSpec",
+    "ExtinctionSpec",
     "KeplerOrbit",
     "MonteCarloSpec",
     "MultiStationSpec",
@@ -596,27 +609,166 @@ class TransmitterSpec(SpecModel):
         return 1.0 / self.pulse_rate_hz
 
 
+class ExtinctionSpec(SpecModel):
+    """Atmospheric extinction as a model instead of a number.
+
+    The other way of declaring :attr:`ChannelSpec.zenith_transmittance`, and the
+    one that can be traced: visibility, an aerosol scale height and a published
+    scaling law, turned into a vertical transmittance by
+    :func:`quoss.channel.extinction.zenith_transmittance_from_visibility`. See
+    ``docs/adr/0023-traceable-extinction.md``, and the module docstring of
+    :mod:`quoss.channel.extinction` for what the model covers (aerosol
+    scattering) and what it does not (molecular absorption, gap 23).
+
+    **Two fields here have no default and both are unusual enough to say why.**
+    ``aerosol_scale_height_m`` has none because no openable source publishes one
+    for a generic site and the values in use span 1.2 to 2 km, a factor 1.67 in
+    optical depth (ADR 0009 gap 22). ``scaling_law`` has none because the two
+    published exponents are different physics in fog -- 43 dB over a kilometre
+    apart at 1550 nm -- and which is right is a hardware decision, not a
+    preference.
+
+    ``visibility_altitude_m`` is the altitude the visibility describes, and it is
+    separate from the station's because nothing in a visibility figure says
+    which it is. Set it to the station's altitude for a locally measured
+    visibility, in which case the altitude cancels exactly; set it to 0.0 for a
+    sea-level climatological figure, in which case a station at 2390 m keeps
+    only ``exp(-2390/H)`` of the aerosol column -- 0.031 dB instead of 0.230 at
+    23 km of visibility, 1550 nm and 1.2 km of scale height.
+
+    Examples
+    --------
+    >>> from quoss.core.errors import DegradationLog
+    >>> spec = ExtinctionSpec(
+    ...     visibility_km=23.0,
+    ...     visibility_altitude_m=30.0,
+    ...     aerosol_scale_height_m=1200.0,
+    ...     scaling_law="kim-2001",
+    ... )
+    >>> round(
+    ...     spec.zenith_transmittance(
+    ...         wavelength_m=1.55e-6, station_altitude_m=30.0, degradations=DegradationLog()
+    ...     ),
+    ...     5,
+    ... )
+    0.94833
+    """
+
+    visibility_km: float = Field(
+        gt=0.0,
+        description="Visual range at visibility_altitude_m, km. ITU-R P.1817-1 §12's code "
+        "table labels 23 km very clear air, 10 km clear, 2 km light mist and 0.05 km dense fog.",
+    )
+    visibility_altitude_m: float = Field(
+        ge=-500.0,
+        le=9000.0,
+        description="Altitude the visibility describes, m above the WGS-84 ellipsoid. Equal to "
+        "the station's for a locally measured visibility (the altitude then cancels exactly); "
+        "0.0 for a sea-level climatological figure.",
+    )
+    aerosol_scale_height_m: float = Field(
+        gt=0.0,
+        description="Height over which aerosol extinction falls by a factor e, m. REQUIRED, no "
+        "default: no openable source publishes one (ADR 0009 gap 22), and 1.2 to 2 km is a "
+        "factor 1.67 in optical depth.",
+    )
+    scaling_law: VisibilityScalingLaw = Field(
+        description="Which published wavelength exponent: 'itu-p1814' (ITU-R P.1814 Eqs. (4)-(5), "
+        "which is Kruse's law) or 'kim-2001' (Kim et al. 2001 Eq. (9) below 6 km). REQUIRED, no "
+        "default: in fog they differ by 43 dB per kilometre at 1550 nm.",
+    )
+
+    def zenith_transmittance(
+        self,
+        *,
+        wavelength_m: float,
+        station_altitude_m: float,
+        degradations: DegradationLog,
+    ) -> float:
+        """Resolve ``L_zen`` for one wavelength and one station.
+
+        The conversion from user units to physics units happens here, in the
+        schema, as every other conversion in this module does. It needs two
+        things that live on other models -- the transmitter's wavelength and the
+        station's altitude -- so it is a method taking them rather than a
+        property, and the engine is what brings the three together.
+
+        Parameters
+        ----------
+        wavelength_m : float
+            The transmitter wavelength, m.
+        station_altitude_m : float
+            The station's height above the ellipsoid, m
+            (:attr:`StationSpec.altitude_m`).
+        degradations : DegradationLog
+            Receives the warnings of
+            :func:`quoss.channel.extinction.aerosol_specific_attenuation_db_per_km`.
+
+        Returns
+        -------
+        float
+            Vertical transmittance in ``(0, 1]``.
+        """
+        return float(
+            zenith_transmittance_from_visibility(
+                self.visibility_km,
+                wavelength_m=wavelength_m,
+                aerosol_scale_height_m=self.aerosol_scale_height_m,
+                station_altitude_m=station_altitude_m,
+                visibility_altitude_m=self.visibility_altitude_m,
+                law=self.scaling_law,
+                degradations=degradations,
+            )
+        )
+
+
 class ChannelSpec(SpecModel):
     """The atmospheric and static terms of the downlink budget.
 
-    :attr:`zenith_transmittance` has **no default**; see the module docstring
-    and ``docs/adr/0009-citation-policy.md`` gap 14. ``outage_probability`` is
-    the quantile at which both fades (pointing and scintillation) are budgeted;
-    ``fade_combination`` says whether the two quantiles are combined exactly or
-    summed as Ntanos et al. 2021 §4.1 do.
+    Extinction is declared **exactly one of two ways, and there is no third**:
+    :attr:`zenith_transmittance`, a number the scenario author stands behind, or
+    :attr:`extinction`, a model with its inputs. Neither has a default and
+    declaring neither is refused, for the reason
+    ``docs/adr/0009-citation-policy.md`` gap 14 gives: there is no value of this
+    field that can quietly mean "I did not think about it". The two-ways shape
+    is :class:`BackgroundSpec`'s, for the same reason -- a value and a model are
+    two answers to one question, and taking both would leave a reader guessing
+    which one the run used.
+
+    ``outage_probability`` is the quantile at which both fades (pointing and
+    scintillation) are budgeted; ``fade_combination`` says whether the two
+    quantiles are combined exactly or summed as Ntanos et al. 2021 §4.1 do.
 
     Examples
     --------
     >>> ChannelSpec(zenith_transmittance=0.812).fade_combination
     <FadeCombination.EXACT: 'exact'>
+    >>> ChannelSpec(zenith_transmittance=0.812).models_extinction
+    False
+    >>> modelled = ChannelSpec(
+    ...     extinction=ExtinctionSpec(
+    ...         visibility_km=23.0,
+    ...         visibility_altitude_m=30.0,
+    ...         aerosol_scale_height_m=1200.0,
+    ...         scaling_law="kim-2001",
+    ...     )
+    ... )
+    >>> modelled.models_extinction
+    True
     """
 
-    zenith_transmittance: float = Field(
+    zenith_transmittance: float | None = Field(
+        default=None,
         gt=0.0,
         le=1.0,
-        description="Clear-sky vertical atmospheric transmittance, linear (0, 1]. REQUIRED, "
-        "no default: no openable source publishes a value (ADR 0009 gap 14), so writing "
-        "1.0 here is how a scenario declares 'no extinction modelled'.",
+        description="Clear-sky vertical atmospheric transmittance, linear (0, 1]. One of the "
+        "two ways to declare extinction; writing 1.0 here is how a scenario declares 'no "
+        "extinction modelled' (ADR 0009 gap 14).",
+    )
+    extinction: ExtinctionSpec | None = Field(
+        default=None,
+        description="The other way: a visibility, a scale height and a published scaling law, "
+        "resolved into a vertical transmittance per station and wavelength (ADR 0023).",
     )
     static_loss_db: float = Field(
         default=0.0,
@@ -636,6 +788,65 @@ class ChannelSpec(SpecModel):
         description="'exact' takes the joint quantile of the two fades; 'additive' sums the "
         "two marginal quantiles as the published budgets do (it overstates the fade).",
     )
+
+    @model_validator(mode="after")
+    def _exactly_one_extinction(self) -> ChannelSpec:
+        """Require a transmittance or a model, never both, never neither."""
+        if (self.zenith_transmittance is None) == (self.extinction is None):
+            raise ValueError(
+                "give exactly one of zenith_transmittance or extinction. A number and a model "
+                "are two answers to the same question, and giving neither would leave the "
+                "atmosphere at whatever the code happened to default to — which is the thing "
+                "docs/adr/0009-citation-policy.md gap 14 exists to prevent. A scenario that "
+                "does not model extinction writes zenith_transmittance: 1.0 and has said so."
+            )
+        return self
+
+    @property
+    def models_extinction(self) -> bool:
+        """True when the transmittance comes from a model rather than a number."""
+        return self.extinction is not None
+
+    def zenith_transmittance_at(
+        self,
+        *,
+        wavelength_m: float,
+        station_altitude_m: float,
+        degradations: DegradationLog,
+    ) -> float:
+        """Resolve ``L_zen`` whichever way it was declared.
+
+        A declared number does not depend on the wavelength or the station, and
+        a model does — the same visibility is 0.192 dB/km at 1550 nm and
+        0.465 at 785, and a station 2 km up sits above most of the aerosol. So
+        the engine calls this once per station rather than reading a field, and
+        a multi-station scenario gets a different atmosphere at each site from
+        one declaration.
+
+        Parameters
+        ----------
+        wavelength_m : float
+            The transmitter wavelength, m.
+        station_altitude_m : float
+            The station's height above the ellipsoid, m.
+        degradations : DegradationLog
+            Receives whatever the extinction model records; untouched when the
+            transmittance was declared as a number, because a number that was
+            written down deliberately has nothing to report.
+
+        Returns
+        -------
+        float
+            Vertical transmittance in ``(0, 1]``.
+        """
+        if self.zenith_transmittance is not None:
+            return self.zenith_transmittance
+        assert self.extinction is not None  # narrowed by the model validator
+        return self.extinction.zenith_transmittance(
+            wavelength_m=wavelength_m,
+            station_altitude_m=station_altitude_m,
+            degradations=degradations,
+        )
 
 
 class ReceiverSpec(SpecModel):

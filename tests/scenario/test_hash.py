@@ -27,7 +27,7 @@ from quoss.scenario.hash import HASH_EXCLUDED_FIELDS, canonical_json, scenario_h
 from quoss.scenario.io import dumps_scenario, load_scenario, loads_scenario
 from quoss.scenario.models import SCHEMA_VERSION, Scenario
 
-REFERENCE_DIGEST = "64132c82cf6f3cd810f8c58c270acdd7c74be1afda2f259ef9f1a51638647348"
+REFERENCE_DIGEST = "0108a01f5fccfa76f63bae671565e1ea14afbe3bdc14eb1c212fccce1f324224"
 """SHA-256 of ``canonical_json(reference_castelldefels())``. Its history is `DIGEST_HISTORY`.
 
 If this changes, the canonical form changed: every cached result keyed on the
@@ -106,6 +106,22 @@ DIGEST_HISTORY: tuple[DigestRepin, ...] = (
             "default (ADR 0020). Every scenarios/*.yaml loads unchanged and means what it did, "
             "so SCHEMA_VERSION stays at 1; the canonical form gained the key "
             '"doppler_capture_range_hz":null, and that is the whole difference.'
+        ),
+    ),
+    DigestRepin(
+        digest="0108a01f5fccfa76f63bae671565e1ea14afbe3bdc14eb1c212fccce1f324224",
+        date="2026-09-15",
+        schema_version=1,
+        added_fields=("channel.extinction",),
+        bumped_schema=False,
+        why=(
+            "Case 2. ChannelSpec.extinction was added, optional and None by default "
+            "(ADR 0023): the second of the two ways to declare extinction. "
+            "ChannelSpec.zenith_transmittance went from required to optional in the same "
+            "change, which is *not* case 1 — its meaning, unit and serialisation are "
+            "untouched, and every scenarios/*.yaml still carries it and still means what it "
+            'did. The canonical form gained the key "extinction":null, and that is the whole '
+            "difference."
         ),
     ),
 )

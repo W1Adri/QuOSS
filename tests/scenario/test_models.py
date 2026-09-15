@@ -29,6 +29,7 @@ from __future__ import annotations
 import ast
 import datetime as dt
 import inspect
+import math
 from pathlib import Path
 from types import NoneType, UnionType
 from typing import Any, get_args
@@ -62,6 +63,7 @@ from quoss.scenario.models import (
     AggregationPolicyName,
     BackgroundSpec,
     ChannelSpec,
+    ExtinctionSpec,
     KeplerOrbit,
     MonteCarloSpec,
     MultiStationSpec,
@@ -108,14 +110,41 @@ def with_override(data: dict[str, Any], path: str, value: Any) -> dict[str, Any]
 
 
 # --------------------------------------------------------------------------- #
-class TestTheTwoFieldsWithoutADefault:
-    """Adding a default to either is a decision, and this is where it shows up."""
+class TestTheFieldsWithoutADefault:
+    """Adding a default to any of these is a decision, and this is where it shows up."""
 
-    def test_zenith_transmittance_is_required(self) -> None:
-        """ADR 0009 gap 14: no openable source publishes the value, so none is invented."""
-        assert ChannelSpec.model_fields["zenith_transmittance"].is_required()
-        with pytest.raises(ValidationError, match="zenith_transmittance"):
-            ChannelSpec()  # type: ignore[call-arg]
+    def test_extinction_must_be_declared_one_of_the_two_ways(self) -> None:
+        """ADR 0009 gap 14, now with a second way of answering it (ADR 0023).
+
+        Neither ``zenith_transmittance`` nor ``extinction`` is individually
+        required — either alone is a complete declaration — so what is asserted
+        is the pair: a ``ChannelSpec`` with neither is refused, and so is one
+        with both. A default on either would be an invented atmosphere made
+        authoritative by sitting in a signature.
+        """
+        assert not ChannelSpec.model_fields["zenith_transmittance"].is_required()
+        assert not ChannelSpec.model_fields["extinction"].is_required()
+        with pytest.raises(ValidationError, match="exactly one of zenith_transmittance"):
+            ChannelSpec()
+        with pytest.raises(ValidationError, match="exactly one of zenith_transmittance"):
+            ChannelSpec(
+                zenith_transmittance=0.9,
+                extinction=ExtinctionSpec(
+                    visibility_km=23.0,
+                    visibility_altitude_m=0.0,
+                    aerosol_scale_height_m=1200.0,
+                    scaling_law="kim-2001",
+                ),
+            )
+
+    def test_the_two_fields_inside_the_extinction_model_are_required(self) -> None:
+        """A scale height nobody published, and a law that is a physics choice."""
+        assert ExtinctionSpec.model_fields["aerosol_scale_height_m"].is_required()
+        assert ExtinctionSpec.model_fields["scaling_law"].is_required()
+        assert ExtinctionSpec.model_fields["visibility_km"].is_required()
+        assert ExtinctionSpec.model_fields["visibility_altitude_m"].is_required()
+        with pytest.raises(ValidationError, match="aerosol_scale_height_m"):
+            ExtinctionSpec(visibility_km=23.0, visibility_altitude_m=0.0, scaling_law="kim-2001")  # type: ignore[call-arg]
 
     def test_minimum_elevation_is_required(self) -> None:
         """ADR 0011 §5: interior optimum near 8 deg, so the mask is a design variable."""
@@ -126,7 +155,100 @@ class TestTheTwoFieldsWithoutADefault:
     def test_the_descriptions_say_why(self) -> None:
         """A reader of the schema, not only of the tests, must see the reason."""
         assert "ADR 0009" in str(ChannelSpec.model_fields["zenith_transmittance"].description)
+        assert "ADR 0023" in str(ChannelSpec.model_fields["extinction"].description)
+        assert "ADR 0009 gap 22" in str(
+            ExtinctionSpec.model_fields["aerosol_scale_height_m"].description
+        )
         assert "ADR 0011" in str(PassSpec.model_fields["minimum_elevation_deg"].description)
+
+
+# --------------------------------------------------------------------------- #
+class TestExtinctionIsResolvedNotRead:
+    """The two ways produce a transmittance through the same call.
+
+    The engine never reads ``channel.zenith_transmittance``; it asks
+    ``zenith_transmittance_at`` for one, with a wavelength and a station. That
+    is what lets a single declaration give three stations three different
+    atmospheres, and what makes a declared number bit-identical to what it was
+    before the model existed.
+    """
+
+    @staticmethod
+    def _modelled(**overrides: object) -> ChannelSpec:
+        fields: dict[str, object] = {
+            "visibility_km": 23.0,
+            "visibility_altitude_m": 0.0,
+            "aerosol_scale_height_m": 1200.0,
+            "scaling_law": "kim-2001",
+        }
+        fields.update(overrides)
+        return ChannelSpec(extinction=ExtinctionSpec(**fields))
+
+    def test_a_declared_number_comes_back_unchanged_and_logs_nothing(self) -> None:
+        spec = ChannelSpec(zenith_transmittance=0.812)
+        log = DegradationLog()
+        got = spec.zenith_transmittance_at(
+            wavelength_m=1.55e-6, station_altitude_m=30.0, degradations=log
+        )
+        assert got == 0.812
+        assert spec.models_extinction is False
+        assert len(log) == 0
+
+    def test_a_model_depends_on_the_wavelength(self) -> None:
+        """0.192 dB/km at 1550 nm against 0.465 at 785, so ``L_zen`` differs."""
+        spec = self._modelled()
+        log = DegradationLog()
+        infrared = spec.zenith_transmittance_at(
+            wavelength_m=1.55e-6, station_altitude_m=0.0, degradations=log
+        )
+        near = spec.zenith_transmittance_at(
+            wavelength_m=785e-9, station_altitude_m=0.0, degradations=log
+        )
+        assert infrared == pytest.approx(0.94833, abs=5e-6)
+        assert near == pytest.approx(0.87945, abs=5e-6)
+        assert spec.models_extinction is True
+
+    def test_a_sea_level_visibility_gives_three_stations_three_atmospheres(self) -> None:
+        """Castelldefels at 30 m, Calar Alto at 2168 m, Teide OGS at 2390 m."""
+        spec = self._modelled()
+        log = DegradationLog()
+        got = [
+            spec.zenith_transmittance_at(
+                wavelength_m=1.55e-6, station_altitude_m=altitude_m, degradations=log
+            )
+            for altitude_m in (30.0, 2168.0, 2390.0)
+        ]
+        assert got == pytest.approx([0.94958, 0.99133, 0.99279], abs=5e-6)
+        assert got[0] < got[1] < got[2]
+
+    def test_a_locally_measured_visibility_makes_the_station_altitude_irrelevant(self) -> None:
+        """The other reading, and it is the ordinary one for a site survey.
+
+        A visibility measured where the station stands describes the bottom of
+        the aerosol column above it, whatever altitude that bottom is at. So
+        setting ``visibility_altitude_m`` equal to the station's altitude gives
+        the same transmittance at 30 m and at 2390 m — and that identity is the
+        reason the two altitudes are separate fields rather than one.
+        """
+        log = DegradationLog()
+        got = [
+            self._modelled(visibility_altitude_m=altitude_m).zenith_transmittance_at(
+                wavelength_m=1.55e-6, station_altitude_m=altitude_m, degradations=log
+            )
+            for altitude_m in (30.0, 2168.0, 2390.0)
+        ]
+        assert got[0] == pytest.approx(got[1], rel=1e-15)
+        assert got[0] == pytest.approx(got[2], rel=1e-15)
+        assert got[0] == pytest.approx(math.exp(-0.053048), abs=5e-6)
+
+    def test_the_models_warnings_reach_the_log_the_engine_passes(self) -> None:
+        """A fog visibility under the disputed law has to surface in ``warnings[]``."""
+        spec = self._modelled(visibility_km=0.05, scaling_law="itu-p1814")
+        log = DegradationLog()
+        spec.zenith_transmittance_at(wavelength_m=1.55e-6, station_altitude_m=0.0, degradations=log)
+        assert [entry.code for entry in log] == [
+            "extinction.kruse-exponent-below-the-fog-threshold"
+        ]
 
 
 # --------------------------------------------------------------------------- #

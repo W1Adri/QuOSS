@@ -95,8 +95,8 @@ pair with an explicit ``efficiency``. Both are stored, both are tested against
 each other, and neither is the product of the other with anything the caller has
 to remember.
 
-Atmospheric extinction is an input, not a model
------------------------------------------------
+Atmospheric extinction is an input to *this* function, and now has a model
+--------------------------------------------------------------------------
 "Extinction" is the light lost to the atmosphere by absorption in molecular
 bands and by scattering off molecules and aerosols — distinct from turbulence,
 which redistributes light rather than removing it, and distinct from cloud,
@@ -104,17 +104,35 @@ which is not a loss but an outage.
 
 :func:`atmospheric_transmittance` implements Ntanos et al. equation (7),
 ``L_a = L_zen^(1/cos zeta)``: the vertical transmittance raised to the air mass.
-The scaling law is published and numbered. **The number it is raised from is
-not.** Ntanos et al. cite a reference for equation (7) and never state
-``L_zen``; ITU-R P.1621-2 gives absorption in its §2 and scattering in its §3
-only as **figures** — Figures 1, 2 and 4 are plots with no accompanying table or
-closed form. Reading a curve off a plot and presenting the result as a published
-value is the thing ``docs/adr/0009-citation-policy.md`` exists to forbid.
+The scaling law is published and numbered. **The number it is raised from was
+not**, in any source this project could open: Ntanos et al. cite a reference for
+equation (7) and never state ``L_zen``, and ITU-R P.1621-2 gives absorption in
+its §2 and scattering in its §3 only as **figures** — Figures 1, 2 and 4 are
+plots with no accompanying table or closed form. Reading a curve off a plot and
+presenting the result as a published value is the thing
+``docs/adr/0009-citation-policy.md`` exists to forbid.
 
-So ``zenith_transmittance`` is a **required** argument with no default. A caller
-who has a measured or modelled extinction passes it; a caller who has none has
-to write ``1.0`` and thereby say so in their own code. There is no argument
-value that quietly means "I did not think about this".
+:mod:`quoss.channel.extinction` now computes one, from visibility through ITU-R
+P.1814 equations (4)-(5) — see ``docs/adr/0023-traceable-extinction.md``. That
+does **not** change this signature, and the reason is worth stating rather than
+inferring. This function's job is one line of a budget: transmittance raised to
+air mass. The model needs a visibility, an aerosol scale height and a choice of
+scaling law, none of which belong in a link budget's argument list, and one of
+which (the scale height) still has no published value. So
+``zenith_transmittance`` stays a **required** argument with no default: a caller
+who has a modelled extinction computes it and passes it, a caller with a
+measured one passes that, and a caller with none writes ``1.0`` and thereby says
+so. There is still no argument value that quietly means "I did not think about
+this", and the scenario schema mirrors the same shape one level up
+(:class:`quoss.scenario.models.ChannelSpec`: a number or a model, never
+neither).
+
+What that term is worth, now that it can be computed: 23 km of visibility —
+the clearest line in ITU-R P.1817-1's own weather code — is 0.230 dB straight
+up at 1550 nm, and costs **22.7 %** of the reference day's certified key
+(``tests/e2e/test_reference_scenarios.py::TestWhatTheExtinctionModelIsWorth``).
+Every scenario in ``scenarios/`` declares ``1.0``, so every figure this project
+has produced so far is for air that does not scatter.
 
 What that gap costs, measured: Ntanos et al. state that their total downlink
 loss "can get as low as 20 dB" for a 600 km link with a large telescope. Every

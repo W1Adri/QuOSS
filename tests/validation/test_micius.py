@@ -237,7 +237,7 @@ class TestWhatThePaperDoesNotGive:
         for field, why in MICIUS_UNPUBLISHED_SCENARIO_INPUTS:
             assert field and why.strip(), field
         with pytest.raises((DomainError, ValueError)):
-            ChannelSpec()  # type: ignore[call-arg]
+            ChannelSpec()
         with pytest.raises((DomainError, ValueError)):
             PassSpec()  # type: ignore[call-arg]
         row = case("micius2017.scenario-sifted-key-per-pass")

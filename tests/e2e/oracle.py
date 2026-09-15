@@ -280,11 +280,18 @@ def hand_link(
     step_s: float = 1.0,
     duration_s: float = 86_400.0,
     regime: ScintillationRegime = ScintillationRegime.WEAK,
+    zenith_transmittance: float = 1.0,
 ) -> HandLink:
     """Return the whole chain for one station, one mask and one turbulence height, memoised.
 
     The station's geometry uses its altitude (km, as `reference_stations.py`
     writes it: ``altitude_m / 1000``); the turbulence uses ``station_height_m``.
+
+    ``zenith_transmittance`` keeps its 1.0 here and nowhere in the package: this
+    is the hand chain, and its job is to be the thing the engine is compared
+    against, so its arguments carry the reference link's values. The scenario
+    schema is where the absence of a default is enforced
+    (`tests/scenario/test_models.py::TestTheFieldsWithoutADefault`).
     """
     latitude_deg, longitude_deg, altitude_m = STATIONS[name]
     path, grid = trajectory(step_s, duration_s)
@@ -312,7 +319,7 @@ def hand_link(
         wavelength_m=WAVELENGTH_M,
         transmit_aperture_m=NTANOS_TRANSMIT_APERTURE_M,
         receive_aperture_m=0.75,
-        zenith_transmittance=1.0,
+        zenith_transmittance=zenith_transmittance,
         pointing_jitter_rad=NTANOS_POINTING_JITTER_RAD,
         receiver_efficiency=chain,
         degradations=log,

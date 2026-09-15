@@ -110,7 +110,9 @@ Todas comprobadas abriendo el documento y extrayendo el texto.
 | Rendimiento y QBER a partir del canal | Ntanos et al. 2021 **Apéndice A** | (A4)–(A6) |
 | Tasa de detección, afterpulsing y tasa de error con detector real | **Lim et al. 2014**, §Evaluation | `D_k`, `R_k`, `e_k` (sin numerar en el paper) |
 | Fading por error de apuntado con jitter | **Farid & Hranilovic 2007**, *JLT* 25(7):1702 | (9), (10), (11) |
-| Extinción por visibilidad | **Kim, McArthur & Korevaar 2001**, *Proc. SPIE* 4214:26 | (6) |
+| Extinción por visibilidad; la ley de Kruse y sus tres ramas | **ITU-R P.1814** (08/2007) §4.2.1 | (4), (5) |
+| La misma ley, y la corrección del exponente en niebla; dos tablas de valores | **Kim, McArthur & Korevaar 2001**, *Proc. SPIE* 4214:26 | (5), (6), (9), Tablas 2 y 4 |
+| Dispersión molecular (Rayleigh); relación de Koschmieder; código internacional de visibilidad | **ITU-R P.1817-1** (02/2012) §3 y §12 | (3), (4), (12) y su tabla sin numerar |
 | Decoy vacuum+weak; tasa GLLP | **Ma, Qi, Zhao & Lo 2005**, *PRA* 72, 012326 | (1), (7)–(11), (34), (35), (37) |
 | Longitud de clave finita componible | **Lim, Curty, Walenta, Xu & Zbinden 2014**, *PRA* 89, 022307 | (1)–(5) |
 
@@ -269,6 +271,33 @@ Esta lista es la parte que hace que la de arriba signifique algo.
     declarada de tamaño plausible, y hasta ahí llega la afirmación: un residuo
     que cae en un rango creíble **no es prueba** de ser la cosa a la que se
     parece, y el paper no declara extinción en ninguna parte.
+
+    **Estrechado el 2026-09-15 por el [ADR 0023](0023-traceable-extinction.md), y
+    con una etiqueta de este mismo párrafo corregida.** El término dominante —la
+    dispersión por aerosol— sí tiene forma cerrada abierta y numerada: la
+    Ec. (4) de la **ITU-R P.1814**, que convierte visibilidad en atenuación
+    específica. `channel/extinction.py` la implementa, y con ella el hueco 14
+    pasa de «no hay número» a «hay modelo para la dispersión y no para la
+    absorción» (hueco 23). `zenith_transmittance` **sigue sin defecto**: el
+    modelo necesita una visibilidad, una altura de escala sin fuente (hueco 22) y
+    una elección de ley, ninguna de las cuales cabe en la lista de argumentos de
+    un presupuesto de enlace.
+
+    **Lo que cuesta, ahora medido:** 23 km de visibilidad —la línea más limpia
+    del código meteorológico de la P.1817-1— son 0.230 dB cenitales a 1550 nm y
+    el **22.7 %** de la clave certificada del día de referencia; 10 km son el
+    47.7 %; 2 km lo dejan en **cero**. Todos los escenarios de `scenarios/`
+    declaran `1.0`, así que todas las cifras publicadas por este proyecto son
+    para aire que no dispersa.
+
+    **Y la frase «una transmitancia cenital de cielo claro perfectamente
+    ordinaria» de arriba no sobrevive a tener un modelo detrás.** A través de una
+    capa de aerosol de 1.2 km de altura de escala, `L_zen = 0.812` corresponde a
+    **6 km de visibilidad** —*light fog* en la tabla de la propia UIT— y de hecho
+    **ninguna visibilidad lo produce**: el salto de la ley en 6 km deja
+    inalcanzable la banda de 0.883 a 1.129 dB, y 0.906 dB cae dentro. Con 2 km de
+    altura de escala sí es alcanzable, y son 9.8 km de visibilidad. Sigue siendo
+    *compatible*; deja de ser *cielo claro*.
 
     **La mitad más interesante es lo que hubo que añadir para que el residuo
     fuera plausible.** Sin el término de truncamiento, el mismo presupuesto suma
@@ -430,6 +459,52 @@ Esta lista es la parte que hace que la de arriba signifique algo.
     log-varianzas; aplicarla en el espacio del índice sería un tercer convenio
     que no imprime ninguna de las dos fuentes. Cerrarlo es implementar las Ecs.
     (15)–(16) de Ntanos et al. enteras. Ver [ADR 0022](0022-the-strong-regime.md).
+22. **La columna vertical de aerosol: la forma es un convenio y la altura de
+    escala no tiene fuente — y la ley de visibilidad lleva dentro la dispersión
+    molecular al exponente equivocado.** Dos cosas en un hueco porque las dos
+    salen del mismo sitio, el [ADR 0023](0023-traceable-extinction.md).
+
+    **La altura de escala.** `zenith_transmittance_from_visibility` integra
+    `β(h) = β_v exp(-(h - h_v)/H)`. La forma exponencial es lo que hace la capa
+    límite y es un convenio, no una cita; el valor de `H` **no lo publica
+    ninguna fuente abierta** para un sitio genérico, y los que están en uso van
+    de unos 1.2 a 2 km. Medido: es un factor **1.67** en profundidad óptica —
+    **0.230 contra 0.384 dB** a 23 km de visibilidad y 1550 nm—, más grande que
+    varios de los términos que el módulo existe para añadir. Por eso el argumento
+    es obligatorio y sin defecto, y por eso el residuo de Ntanos del hueco 14
+    cambia de «inalcanzable» a «9.8 km de visibilidad» según cuál se elija.
+
+    **La dispersión molecular contada dos veces, al exponente de aerosol.** La
+    visibilidad a 550 nm la fija la extinción **total**, moléculas incluidas, y
+    la Ec. (4) de la P.1814 escala el coeficiente entero por un exponente de
+    aerosol (1.3 o 1.6) donde la parte molecular va como `λ^-4`. Con las Ecs. (3)
+    y (4) de la **P.1817-1** —que sí dan la parte molecular en forma cerrada:
+    0.0517 dB/km a 550 nm, 0.0125 a 785 y 0.00082 a 1550, en su estado de
+    referencia— eso se puede medir en vez de mencionar: la parte molecular es el
+    **3.1 %** del coeficiente a 10 km de visibilidad y el **15.2 % a 50 km**, y
+    llevarla a 1550 nm con el exponente de aerosol deja el total **2.9 % alto a
+    10 km y 14.0 % alto a 50 km**. Restar a 550 nm y volver a sumar a `λ` **no lo
+    publica ninguna de las dos fuentes**, así que no se hace:
+    `molecular_scattering_specific_attenuation_db_per_km` existe para medir la
+    mala atribución, no para corregirla.
+23. **La absorción molecular no tiene número en ninguna fuente abierta.** Es la
+    mitad del hueco 14 que el ADR 0023 **no** cierra. Lo que hay son dos
+    afirmaciones en palabras, las dos verificadas leyendo el documento: la
+    P.1814 §4.1 dice que «usually the laser wavelengths are selected to fall
+    inside atmospheric transmission windows, so `γ_clear_air` is negligible», y
+    Kim et al. §3 que «the contributions of absorption to the total attenuation
+    coefficient are very small». **Ninguna imprime una cifra**, y las Figs. 1 y 2
+    de la P.1621-2 son gráficas (releídas el 2026-09-15 para comprobarlo).
+
+    **Y HITRAN no cierra el hueco, por una razón que no es el registro.**
+    `hitran.org` responde y su base de líneas pide cuenta; el problema de fondo
+    es que **una lista de líneas no es una atenuación específica**. Convertir una
+    en la otra es transferencia radiativa de la clase LBLRTM/MODTRAN —perfiles de
+    presión, temperatura y mezcla, ensanchamiento por colisión y Doppler,
+    continuos—, código que este proyecto no tiene y que habría que verificar a su
+    vez. MODTRAN es de pago; lo único que entra por aquí son las cifras que
+    Gruneisen et al. publican de sus propias corridas, y eso es una fuente
+    secundaria de un resultado, no un modelo.
 
 ### El caveat de Ntanos et al. 2021, que es la fuente V2 de punta a punta
 
@@ -529,6 +604,32 @@ la tasa de detección de al lado lleva `eta_sys`, y esa asimetría no es un deta
 puntos a pérdida cero—. Cuál de las dos lecturas es la
 suya se decidió contra su propio cociente publicado entre tamaños de bloque; es el
 hueco 16 de la lista de arriba, con las cuatro cifras que lo deciden.
+
+### El caveat de la ITU-R P.1814, y es de unidades
+
+Añadido el 2026-09-15 al implementar `channel/extinction.py`
+([ADR 0023](0023-traceable-extinction.md)).
+
+Su **Ec. (4)** dice que `γ_fog(λ)` está en **dB/km**, y lo que la expresión
+devuelve está en **nepers por kilómetro**. Es un factor 4.343 — **9.9 dB/km en
+una niebla de 1 km** a 1550 nm, 10.6 a 785 nm. El `3.91` del numerador es
+`ln(1/0.02)` redondeado, la definición del 2 % de la visibilidad invertida, y por
+tanto un coeficiente en nepers por construcción; en decibelios sería 16.99.
+
+**Dos tablas publicadas lo deciden, y las dos salen de esa misma ecuación:** la
+Tabla 2 de Kim et al. imprime 14 dB/km a 1 km de visibilidad y 785 nm, y la tabla
+del código internacional de visibilidad de la **ITU-R P.1817-1 §12** imprime 13.8
+en el mismo punto, donde la ecuación devuelve 3.175. La etiqueta se leyó de la
+**página 5 renderizada como imagen**, no del extractor de texto, porque una
+unidad entre paréntesis es justo lo que un extractor estropea.
+
+Y hay una tercera cosa que la P.1814 no dice y su hermana tampoco: **la tabla del
+código de visibilidad de la P.1817-1 no declara su longitud de onda**. Es la
+Ec. (4) a **785 nm** —las 15 celdas se reproducen al 2.8 % ahí, al 2.1 % en el
+mejor ajuste de 780.5 nm, y se equivocan entre 1.16 y 2.94 veces a 1550 nm—, así
+que la longitud de onda está determinada a un ±5 % y no mejor. Es una tabla útil
+y no es un anclaje V2 de un modelo dependiente de λ, y la diferencia entre esas
+dos cosas es esta política.
 
 ## Consecuencias
 

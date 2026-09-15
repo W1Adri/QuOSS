@@ -189,9 +189,10 @@ la bandera es hoy una puerta cerrada que marca dónde haría falta. Ver
 referencia canónica del canal (Andrews & Phillips) **no se cita por número de
 ecuación porque no se pudo abrir**. Fuentes primarias: ITU-R P.1621-2, P.1622 y
 Ntanos et al. 2021, todas gratuitas y numeradas. Catorce huecos declarados en
-vez de rellenados → [ADR 0009](../docs/adr/0009-citation-policy.md). **Etapa
-cerrada**: los siete módulos escritos, y ninguno de los huecos rellenado con la
-cita más plausible.
+vez de rellenados → [ADR 0009](../docs/adr/0009-citation-policy.md), **veintitrés
+hoy**. **Etapa cerrada** en sus siete módulos, más dos añadidos por las etapas
+1.1 y 1.2 del plan de fases (`horizontal.py` y `extinction.py`), y ninguno de los
+huecos rellenado con la cita más plausible.
 
 1. ✅ `channel/atmosphere.py` — perfil Cn² (HV 5/7), viento de Bufton, malla de
    integración de 139 capas y refracción. **Corregido al implementarlo:** la
@@ -338,6 +339,31 @@ cita más plausible.
    tenía este término predicho en 0.63 dB desde antes de que el módulo
    existiera: está corregido allí, con la forma cerrada verificada contra la
    integral de difracción por cuadratura
+8. ✅ `channel/horizontal.py` — **no estaba en este plan**, y lo pidió la
+   escalera de experimentos de tierra: `C_n^2` constante, sin elevación, la onda
+   declarada. Ver [ADR 0021](../docs/adr/0021-horizontal-path.md) y `LAST_CHANGES`
+   §36
+9. ✅ `channel/extinction.py` — **etapa 1.1 del plan de fases**: lo que el
+   presupuesto recibía, calculado. Visibilidad → atenuación específica por la
+   Ec. (4) de la **ITU-R P.1814**, y transmitancia cenital integrando un perfil
+   de aerosol con altura de escala declarada. **La trampa que da forma al
+   módulo:** esa Ec. (4) dice **dB/km** y devuelve **nepers por kilómetro** — un
+   factor 4.343, **9.9 dB/km en una niebla de 1 km** —, y lo deciden dos tablas
+   publicadas que salen de la misma ecuación (la Tabla 2 de Kim et al. y el
+   código internacional de visibilidad de la P.1817-1, que además **no dice su
+   longitud de onda** y resulta ser 785 nm). Las **dos** leyes de exponente que
+   existen están expuestas sin defecto porque en niebla difieren **42.9 dB/km** a
+   1550 nm, y solo una de las dos es continua en su unión de 6 km: la otra salta
+   un 22.3 %, lo bastante para que **ninguna visibilidad produzca** el residuo de
+   0.906 dB de Ntanos et al. que el hueco 14 llamaba «cielo claro ordinario» —el
+   valor alcanzable más cercano es 6 km de visibilidad, *light fog*—. **Lo que
+   mide:** 23 km de visibilidad, la línea más limpia del código de la UIT, son
+   0.230 dB cenitales y el **22.7 %** de la clave del día de referencia; 2 km la
+   dejan en **cero**. Y una visibilidad infinita reproduce el día anterior **bit a
+   bit**, que es lo que hizo seguro aterrizarlo. La absorción molecular sigue sin
+   número en ninguna fuente abierta (hueco 23; HITRAN responde y una lista de
+   líneas no es una atenuación). 32 celdas V2, 100 % de cobertura de líneas y
+   ramas, 81 tests. Ver [ADR 0023](../docs/adr/0023-traceable-extinction.md)
 
 ### 2.3 `qkd/` — de canal a clave
 1. ✅ `qkd/base.py` — la frontera: `LinkConditions` (entra transmitancia +

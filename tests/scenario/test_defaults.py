@@ -173,7 +173,11 @@ class TestReferenceCastelldefels:
             wavelength_m=s.transmitter.wavelength_m,
             transmit_aperture_m=s.transmitter.aperture_m,
             receive_aperture_m=station.receive_aperture_m,
-            zenith_transmittance=s.channel.zenith_transmittance,
+            zenith_transmittance=s.channel.zenith_transmittance_at(
+                wavelength_m=s.transmitter.wavelength_m,
+                station_altitude_m=station.altitude_m,
+                degradations=log_a,
+            ),
             pointing_jitter_rad=s.transmitter.pointing_jitter_rad,
             receiver_efficiency=s.receiver.chain_efficiency,
             outage_probability=s.channel.outage_probability,
