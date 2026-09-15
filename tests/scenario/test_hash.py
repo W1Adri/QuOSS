@@ -27,7 +27,7 @@ from quoss.scenario.hash import HASH_EXCLUDED_FIELDS, canonical_json, scenario_h
 from quoss.scenario.io import dumps_scenario, load_scenario, loads_scenario
 from quoss.scenario.models import SCHEMA_VERSION, Scenario
 
-REFERENCE_DIGEST = "0108a01f5fccfa76f63bae671565e1ea14afbe3bdc14eb1c212fccce1f324224"
+REFERENCE_DIGEST = "303a3729092aa0550384974e5591068d0ce7b3d217ba5a147b921f2228a653cd"
 """SHA-256 of ``canonical_json(reference_castelldefels())``. Its history is `DIGEST_HISTORY`.
 
 If this changes, the canonical form changed: every cached result keyed on the
@@ -122,6 +122,22 @@ DIGEST_HISTORY: tuple[DigestRepin, ...] = (
             "untouched, and every scenarios/*.yaml still carries it and still means what it "
             'did. The canonical form gained the key "extinction":null, and that is the whole '
             "difference."
+        ),
+    ),
+    DigestRepin(
+        digest="303a3729092aa0550384974e5591068d0ce7b3d217ba5a147b921f2228a653cd",
+        date="2026-09-15",
+        schema_version=1,
+        added_fields=("channel.scintillation_regime",),
+        bumped_schema=False,
+        why=(
+            "Case 2. ChannelSpec.scintillation_regime was added, optional and WEAK by default "
+            "(ADR 0022): which model turns the Rytov variance into the fade. WEAK is what the "
+            "channel already did, so every scenarios/*.yaml means exactly what it meant and "
+            "SCHEMA_VERSION stays at 1. The canonical form gained the key "
+            '"scintillation_regime":"weak", and that is the whole difference. This one costs a '
+            "cache generation for a reason worth the cost: the two values of the field differ "
+            "by 6.4 % of the reference day's key, so they must not be able to share an entry."
         ),
     ),
 )

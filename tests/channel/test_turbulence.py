@@ -680,12 +680,14 @@ class TestTheRegimeIsChosenAndSaid:
     def test_the_default_is_the_recommendation_and_not_the_heuristic(self) -> None:
         """``WEAK`` by default, so an ITU number stays an ITU number.
 
-        Measured cost of the choice at the one point P.1622 Table 2 pins: the
-        saturated model reads 3.4 % low there, at 0.0659 Np^2 — well inside the
-        weak regime, where it is the heuristic and not the recommendation that
-        is being approximate. Defaulting the other way would have moved every V2
-        anchor in this file by that much for a correction that matters only
-        below about 20 degrees.
+        Measured cost of the choice at the one point P.1622 Table 2 pins for
+        this project's own wavelength: the saturated model reads 3.4 % low
+        there, at 0.0659 Np^2 — well inside the weak regime, where it is the
+        heuristic and not the recommendation that is being approximate.
+
+        That 3.4 % is the **smallest** of the table's eight shifts, not the size
+        of the effect; the next test measures all eight, and six of them would
+        stop reproducing if the default were flipped.
         """
         assert (
             inspect.signature(log_irradiance_variance).parameters["regime"].default
@@ -707,6 +709,50 @@ class TestTheRegimeIsChosenAndSaid:
         strong = at(ScintillationRegime.MODERATE_TO_STRONG)
         assert weak == pytest.approx(0.0659, abs=5e-4)
         assert strong / weak - 1.0 == pytest.approx(-0.0341, abs=1e-3)
+
+    def test_what_the_default_would_cost_across_the_whole_published_table(self) -> None:
+        """The 3.4 % above is the *most favourable* of the eight cells, and here is the rest.
+
+        Quoting one cell as "the cost of the choice" is the failure mode
+        ``CLAUDE.md`` names: a number measured once, carried in prose, and read
+        as if it described the whole table. 1.55 um at 21 m/s is this project's
+        own wavelength and the smallest shift of the eight. Across Table 2 the
+        saturated model reads between **3.4 % and 21.1 %** below the weak one,
+        and **six of the eight published cells** would then fall outside the
+        half-a-printed-digit bound that `TestPublishedItuTable2` licenses -- so
+        flipping the default would not move the V2 anchors, it would lose them.
+
+        Measured here rather than asserted in the ADR, which is the difference
+        between "medido en este repo" and a number somebody remembers.
+        """
+        shifts: dict[tuple[float, float], float] = {}
+        outside = 0
+        for wind_m_s, row in ITU_P1622_TABLE_2.items():
+            for wavelength_um, published in row.items():
+
+                def at(
+                    regime: ScintillationRegime, um: float = wavelength_um, wind: float = wind_m_s
+                ) -> float:
+                    return float(
+                        log_irradiance_variance(
+                            deg_to_rad(ITU_P1622_TABLE_2_ELEVATION_DEG),
+                            wavelength_m=um * 1e-6,
+                            station_height_m=ITU_P1622_TABLE_2_STATION_HEIGHT_M,
+                            rms_wind_speed_m_s=wind,
+                            degradations=DegradationLog(),
+                            regime=regime,
+                        )
+                    )
+
+                weak = at(ScintillationRegime.WEAK)
+                saturated = at(ScintillationRegime.MODERATE_TO_STRONG)
+                shifts[(wavelength_um, wind_m_s)] = saturated / weak - 1.0
+                outside += abs(saturated - published) > 0.005
+        assert outside == 6
+        assert max(shifts.values()) == pytest.approx(-0.0341, abs=1e-3)
+        assert min(shifts.values()) == pytest.approx(-0.2110, abs=1e-3)
+        assert shifts[(1.55, 21.0)] == max(shifts.values())
+        assert shifts[(0.532, 30.0)] == min(shifts.values())
 
     def test_the_saturated_branch_returns_the_saturated_value_and_says_so(
         self, degradations: DegradationLog

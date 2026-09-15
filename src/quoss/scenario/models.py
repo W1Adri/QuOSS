@@ -134,6 +134,7 @@ from quoss.channel.extinction import (
     zenith_transmittance_from_visibility,
 )
 from quoss.channel.link_budget import FadeCombination
+from quoss.channel.turbulence import ScintillationRegime
 from quoss.core.constants import WGS84_RADIUS_EQUATORIAL_KM
 from quoss.core.errors import DegradationLog, DomainError
 from quoss.core.types import TimeGrid
@@ -739,10 +740,52 @@ class ChannelSpec(SpecModel):
     scintillation) are budgeted; ``fade_combination`` says whether the two
     quantiles are combined exactly or summed as Ntanos et al. 2021 §4.1 do.
 
+    The scintillation regime, and why it is a scenario field
+    -------------------------------------------------------
+    **Scintillation** is the twinkling of a star: pockets of air at different
+    temperatures act as weak lenses, so the power reaching the detector
+    fluctuates. The budget prices it as a *fade allowance* — how many decibels
+    to hold back so that the link still closes at the stated
+    ``outage_probability`` — and to do that it needs the variance of the
+    logarithm of the received irradiance.
+
+    There are two defensible ways to compute that variance and they are not the
+    same number. First-order perturbation theory gives the **Rytov variance**,
+    which is ITU-R P.1622 equation (4a) and grows without bound; real air
+    **saturates** near a scintillation index of 1, because the beam breaks into
+    many independent speckles and more turbulence adds more speckles rather than
+    deeper ones. :attr:`scintillation_regime` says which of the two the run
+    uses, and the reason it is here — in the scenario, hashed, rather than an
+    argument somebody passes at a call site — is that it moves a design
+    decision, not a decimal: on the reference day the interior optimum of the
+    elevation mask moves from **8° to 4.5°**, the day gains **+3.66 %** of
+    certified key at the scenario's own 10° mask and **+6.18 %** comparing each
+    regime at its own optimum (ADR 0022, and
+    ``tests/e2e/test_reference_scenarios.py``). A result that did not carry the
+    choice in its provenance would be two different days under one hash.
+
+    The default is ``WEAK``, and it is the conservative one in the sense that
+    matters here: saturation can only *lower* a variance, so ``WEAK`` never
+    reports more key than the alternative. It is also the one every V2 anchor of
+    this project is compared against: at ITU-R P.1622 Table 2's own fully-weak
+    point (75° elevation) the saturated model reads 3.4 % below the
+    recommendation at 1550 nm, and more at shorter wavelengths — six of that
+    table's eight published cells would stop reproducing if this default were
+    flipped (``tests/channel/test_turbulence.py``). Choosing
+    ``MODERATE_TO_STRONG`` is one line, and the channel records
+    ``turbulence.weak-fluctuation-limit-exceeded`` naming it whenever ``WEAK``
+    is used past its own validity limit.
+
     Examples
     --------
     >>> ChannelSpec(zenith_transmittance=0.812).fade_combination
     <FadeCombination.EXACT: 'exact'>
+    >>> ChannelSpec(zenith_transmittance=0.812).scintillation_regime
+    <ScintillationRegime.WEAK: 'weak'>
+    >>> ChannelSpec(
+    ...     zenith_transmittance=0.812, scintillation_regime="moderate-to-strong"
+    ... ).scintillation_regime
+    <ScintillationRegime.MODERATE_TO_STRONG: 'moderate-to-strong'>
     >>> ChannelSpec(zenith_transmittance=0.812).models_extinction
     False
     >>> modelled = ChannelSpec(
@@ -787,6 +830,17 @@ class ChannelSpec(SpecModel):
         default=FadeCombination.EXACT,
         description="'exact' takes the joint quantile of the two fades; 'additive' sums the "
         "two marginal quantiles as the published budgets do (it overstates the fade).",
+    )
+    scintillation_regime: ScintillationRegime = Field(
+        default=ScintillationRegime.WEAK,
+        description="Which scintillation model turns the Rytov variance into the fade. 'weak' "
+        "(the default) is ITU-R P.1622 equation (4a) itself, the number every V2 anchor in "
+        "this project is compared against; 'moderate-to-strong' saturates it with the "
+        "large-scale/small-scale split of Gruneisen et al. (A8)-(A9), which is never larger "
+        "and is 6.1 dB smaller at the reference day's worst sample. The default is 'weak' "
+        "because the saturated model reads 3.4 % below P.1622 Table 2 at 1550 nm and more "
+        "at shorter wavelengths, so six of that table's eight cells would stop reproducing; "
+        "ADR 0022 measures both and says what each buys.",
     )
 
     @model_validator(mode="after")

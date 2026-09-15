@@ -5,10 +5,14 @@
 - **Etapa:** 2.2 (`channel/`), etapa 1.2 del plan de fases.
 - **Afecta a:** `channel/turbulence.py` (`ScintillationRegime`, `PathWave`,
   `saturated_log_irradiance_variance`), `channel/horizontal.py`,
-  `channel/link_budget.py` (`downlink_loss_budget`).
+  `channel/link_budget.py` (`downlink_loss_budget`) y, desde el anexo del
+  2026-09-15, `scenario/models.py` (`ChannelSpec.scintillation_regime`) y
+  `engine/pipeline.py`.
 - **Extiende** al [ADR 0009](0009-citation-policy.md): una fuente nueva y dos
   huecos nuevos (20, 21); cierra la parte de escintilación del hueco «régimen
   fuerte» que el [ADR 0021](0021-horizontal-path.md) dejó abierta.
+- **Anexo del 2026-09-15:** la elección pasa a ser un campo del escenario, y el
+  precio de cambiar el predeterminado queda medido. Al final del fichero.
 
 ---
 
@@ -95,10 +99,16 @@ predeterminado es `WEAK`, por una razón medida:
 > el ajuste heurístico y no la recomendación.
 
 Poner el heurístico de predeterminado movería **todos** los anclajes V2 del
-canal un 3.4 % por una corrección que solo importa por debajo de ~20°, y
-convertiría «este número es de la P.1622» en falso en todo el proyecto. La regla
-del ADR 0009 es que un número publicado se reproduce o se declara; no que se
-mejore en silencio.
+canal por una corrección que solo importa por debajo de ~20°, y convertiría
+«este número es de la P.1622» en falso en todo el proyecto. La regla del ADR
+0009 es que un número publicado se reproduce o se declara; no que se mejore en
+silencio.
+
+**Y el 3.4 % es la celda más favorable de las ocho, no el tamaño del efecto.**
+Esa cifra es la de 1550 nm y 21 m/s, que es la longitud de onda de este
+proyecto; a lo largo de la Tabla 2 el desplazamiento llega al **21.1 %** y
+**seis de las ocho celdas** dejarían de reproducirse dentro de medio dígito
+impreso. Está medido, celda a celda, en el anexo del final.
 
 Lo que sí cambia es que la elección está **en la firma**, medida, y el aviso
 nombra la otra opción. Elegir `MODERATE_TO_STRONG` para un estudio de máscara es
@@ -226,8 +236,10 @@ contra 7.57**. Cinco y ocho decibelios y medio de desvanecimiento que no están.
 
 ## Alternativas descartadas
 
-- **Poner `MODERATE_TO_STRONG` de predeterminado.** Movería los anclajes V2 un
-  3.4 % donde el heurístico es el que aproxima. Medido arriba.
+- **Poner `MODERATE_TO_STRONG` de predeterminado.** Movería los anclajes V2
+  donde el heurístico es el que aproxima: entre el 3.4 % y el 21.1 % según la
+  celda, y seis de las ocho de la Tabla 2 dejarían de reproducirse. Medido en el
+  anexo, junto con las 84 aserciones que se pondrían rojas.
 - **Meterlo en `_assembled_loss_budget`**, como prometía el ADR 0021. Ahí la
   varianza ya está promediada por apertura, y las Ecs. (12) y (A9) son de
   detector puntual. Saturar allí saturaría la cantidad equivocada.
@@ -267,3 +279,168 @@ contra 7.57**. Cinco y ocho decibelios y medio de desvanecimiento que no están.
   de la distribución con que se convierte en decibelios, no necesariamente.
 - **Nada de esto es V2 de punta a punta.** Las cifras de clave de arriba son V4:
   salida propia de QuOSS sobre supuestos declarados.
+---
+
+## Anexo (2026-09-15): la elección es ahora un campo del escenario
+
+Este ADR se aceptó con el modelo escrito y **sin cableado**: `ChannelSpec` no
+tenía dónde declarar el régimen y `engine/pipeline.py` no lo pasaba, así que
+todas las cifras de «Lo que esto mide» se obtuvieron llamando al canal, a la
+tabla de pasos y al protocolo **a mano**, una máscara cada vez. Un resultado de
+diseño que solo reproduce un script suelto es un resultado que nadie puede
+volver a sacar de un fichero de escenario, y —peor— es un número que no entra en
+la procedencia: dos días que se diferencian un 3.66 % compartirían hash.
+
+### Lo que se añadió
+
+6. **`ChannelSpec.scintillation_regime`**, con predeterminado `WEAK`, pasado a
+   `downlink_loss_budget` desde `_channel`. El campo entra en el JSON canónico,
+   así que entra en el SHA-256 del escenario y por tanto en
+   `Provenance.scenario_hash` y en la clave de la caché de resultados. Los cinco
+   `scenarios/*.yaml` lo escriben explícitamente aunque sea el valor por defecto,
+   por la razón del ADR 0014: un defecto invisible es un parámetro que todo el
+   mundo recibe sin haberlo elegido.
+
+`SCHEMA_VERSION` **no** sube (caso 2 de `tests/scenario/test_hash.py`: campo
+opcional nuevo, ningún fichero cambia de significado), y el digest de referencia
+se repincha a `303a3729…`, con la entrada de `DIGEST_HISTORY` que lo demuestra
+borrando exactamente ese campo.
+
+### El día de referencia, ahora desde `run()`
+
+Mismo escenario, mismo día, misma máscara de 10°; lo único que cambia es el campo:
+
+| régimen | clave del día | pasos 1 y 3 | cambio |
+|---|---|---|---|
+| `weak` | 433 442 | 190 807 / 242 635 | — |
+| `moderate-to-strong` | **449 308** | 198 673 / 250 635 | **+3.66 %** |
+
+Y el barrido de máscara de la tabla de arriba es ahora **un `SweepSpec` de dos
+ejes** (`passes.minimum_elevation_deg` × `channel.scintillation_regime`, modo
+`grid`), ocho puntos, cada uno con su hash:
+
+| máscara | `weak` | saturado | cambio |
+|---|---|---|---|
+| 2° | 409 584 | 458 076 | +11.8 % |
+| **4.5°** | 425 073 | **462 358** | +8.8 % |
+| 8° | **435 462** | 457 341 | +5.0 % |
+| 20° | 361 199 | 364 774 | +1.0 % |
+
+**Los dos óptimos sobreviven** —8° en débil, 4.5° saturado, los dos interiores—
+y la ganancia sigue siendo monótona en lo baja que esté la máscara, que es la
+firma de que el efecto vive en las muestras bajas. El titular de este ADR
+—«el día gana 6.4 % en su propio óptimo»— sale **+6.18 %** por esta cadena
+(462 358 contra 435 462), por la misma razón de los 30 m que la sección
+siguiente mide.
+
+### Por qué estas cifras no son las de la tabla de arriba, y por qué no hay tolerancia
+
+La tabla de «Lo que esto mide» imprime 408 946 / 424 448 / 434 938 / 360 978 y
+458 862 / 462 945 / 457 663 / 364 740: hasta **786 bits** de diferencia. No es
+ruido ni tolerancia. Es el mismo desajuste del
+[ADR 0016](0016-the-engine-adds-nothing-and-one-altitude.md): aquella tabla sale
+de `tests/system/reference.py`, que deja el perfil de turbulencia en 0 m,
+mientras que el motor cablea los **30 m** de `StationSpec.altitude_m`.
+
+Así que no se compara contra una tolerancia elegida, se cierra por los dos
+extremos, y los dos son exactos:
+
+- las ocho celdas barridas **son** `oracle.hand_link` a 30 m, bit a bit;
+- las ocho celdas publicadas **son** la misma cadena a 0 m, bit a bit;
+- luego cada residuo **es igual** a `hand(30 m) − hand(0 m)`, celda a celda, y no
+  queda nada que una tolerancia pudiera absorber.
+
+### El residuo cambia de signo, y eso es física
+
+Los 30 m valen **+457 bits** en régimen débil —el titular del ADR 0016— y
+**−206 bits** en régimen saturado: 449 514 a nivel del mar contra 449 308 en la
+estación. El signo se invierte, y el mecanismo son los dos factores del producto
+de la Ec. (8) de la P.1622, `σ² = A · σ²_punto`, que se mueven en direcciones
+opuestas al subir la estación. Medido a 10° de elevación:
+
+| | 0 m | 30 m | cambio |
+|---|---|---|---|
+| `σ²_punto` (débil, Ec. 4b) | 1.5446 | 1.4780 | **−4.31 %** |
+| `σ²_punto` (saturado) | 0.63542 | 0.62602 | **−1.48 %** |
+| `A` (Ec. 7) | 0.072572 | 0.075102 | **+3.49 %** |
+| producto (débil) | 0.112092 | 0.111004 | −0.97 % |
+| producto (saturado) | 0.046113 | 0.047015 | **+1.96 %** |
+
+Quitar los primeros 30 m de aire baja la varianza de Rytov un 4.31 %, pero cerca
+de la saturación ese cambio **casi no llega a la salida**: el modelo saturado
+solo baja un 1.48 %. Mientras tanto `A` —el promediado de apertura, que depende
+de la *altura* de la turbulencia a través de la `z_0` de la Ec. (9)— sube un
+3.49 % en los dos regímenes por igual, porque la saturación no lo toca. En
+débil gana el primer factor; en saturado gana el segundo.
+
+El cruce está en **27.02°** de elevación: por encima la varianza saturada sigue
+bajando con la altura, por debajo sube. El día de referencia pasa el **67.7 %**
+de sus segundos en pase por debajo de ese cruce (elevación mediana 17.4°),
+porque un pase pasa la mayor parte de su duración cerca del horizonte, así que
+el total del día hereda el signo de las muestras bajas.
+
+**Esto no dice que una montaña sea mal sitio para un telescopio.** Dice que el
+**hueco 21** —el promediado de apertura en régimen saturado, que aquí se mantiene
+en el convenio de la P.1622— es exactamente la elección de modelado de la que
+depende ese signo, y sigue declarado abierto. Y dice que una cantidad medida en
+un régimen no se traslada al otro ni siquiera en el signo.
+
+---
+
+## Lo que costaría cambiar el predeterminado, medido
+
+La decisión de arriba —`WEAK` de predeterminado— **no cambia en esta ronda**, y
+esta sección existe para que cambiarla sea una decisión con precio y no una
+línea. Se midió flipando los defectos y corriendo la suite entera.
+
+### Flipar solo el esquema (`ChannelSpec.scintillation_regime`)
+
+**30 aserciones rojas**, y **ninguna es V2**: son el digest de referencia, las
+cadenas ruta-contra-ruta del motor, y —esto es lo interesante—
+`tests/scenario/test_scenario_files.py::TestFilesEqualTheirBuilders`, porque los
+cinco `scenarios/*.yaml` ahora **escriben** `scintillation_regime: weak`. Es
+decir: los escenarios comprometidos seguirían significando lo que significan
+hoy; lo que cambiaría es lo que recibe quien no declara nada.
+
+### Flipar también los defectos de la física (las siete firmas)
+
+**84 aserciones rojas**, y aquí sí están los anclajes V2:
+
+- **Seis de las ocho celdas de la Tabla 2 de la ITU-R P.1622** dejan de
+  reproducirse dentro de medio dígito impreso. El 3.4 % que este ADR cita es
+  **la celda más favorable**, 1550 nm y 21 m/s; a lo largo de la tabla el
+  desplazamiento va de **−3.4 % a −21.1 %** (532 nm, 30 m/s: 0.3618 → 0.2855
+  contra un 0.36 impreso).
+
+  | λ (µm) | viento | impreso | débil | saturado | desplaz. | ¿fuera de ±0.005? |
+  |---|---|---|---|---|---|---|
+  | 0.532 | 21 | 0.23 | 0.2293 | 0.1984 | −13.5 % | **sí** |
+  | 0.85 | 21 | 0.12 | 0.1328 | 0.1227 | −7.5 % | no |
+  | 1.064 | 21 | 0.09 | 0.1022 | 0.0964 | −5.6 % | **sí** |
+  | 1.55 | 21 | 0.07 | 0.0659 | 0.0636 | −3.4 % | **sí** |
+  | 0.532 | 30 | 0.36 | 0.3618 | 0.2855 | −21.1 % | **sí** |
+  | 0.85 | 30 | 0.19 | 0.2094 | 0.1837 | −12.3 % | **sí** |
+  | 1.064 | 30 | 0.14 | 0.1612 | 0.1461 | −9.3 % | **sí** |
+  | 1.55 | 30 | 0.10 | 0.1039 | 0.0979 | −5.7 % | no |
+
+- **La tabla de validación deja de decir «reproduced».**
+  `quoss.validation.channel.cases()` recalcula esas ocho celdas y deriva su
+  estado de los números (la regla del ADR 0018, reservado): con el defecto
+  flipado, seis pasan a «disagrees», y el doctest que imprime
+  `['reproduced', 'reproduced']` es uno de los 84.
+- Once celdas de `tests/channel/test_horizontal.py` y cinco de
+  `tests/channel/test_link_budget.py`, incluidos los anclajes contra Ntanos et
+  al., más diecisiete doctests de `src/` que son el manual de física.
+
+### La lectura
+
+El precio del flip no es «mover un 3.4 % los anclajes», que es como lo decía la
+primera versión de este ADR: es **perder seis de los ocho anclajes V2 más
+fuertes que tiene el canal**, y con ellos la frase «este número es de la
+P.1622». Lo que se compraría a cambio está medido igual de bien: +3.66 % de
+clave en el día de referencia, y una máscara óptima tres grados y medio más
+baja.
+
+La forma de tener las dos cosas sin pagar ninguna es la que ya está: el campo
+existe, el aviso nombra la alternativa en los dos sentidos, y elegir el saturado
+para un estudio de máscara es **una línea de YAML**.

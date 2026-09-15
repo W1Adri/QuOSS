@@ -53,6 +53,9 @@ channel:
   static_loss_db: 0.0
   outage_probability: 0.01      # NTANOS_OUTAGE_PROBABILITY (§4.1)
   fade_combination: exact       # joint quantile of the two fades; 'additive' reproduces the paper's sum
+  scintillation_regime: weak    # ITU-R P.1622 (4a) itself, what every V2 anchor compares against;
+                                # 'moderate-to-strong' saturates it (ADR 0022) and moves this day's
+                                # optimal mask from 8 to 4.5 degrees, +6.4 % key
 
 receiver:
   detector_efficiency: 0.85     # NTANOS_SNSPD_EFFICIENCY
