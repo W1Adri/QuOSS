@@ -103,7 +103,8 @@ Todas comprobadas abriendo el documento y extrayendo el texto.
 | Beam wander | ITU-R P.1622 | (11a), (11b) |
 | Escintilación en camino horizontal (onda plana); profundidades de desvanecimiento; extinción específica | **ITU-R P.1814** (2007) | (3), (8), Tabla 4 |
 | Onda esférica; promediado de apertura en camino horizontal; asíntotas de régimen fuerte | **Kaushal & Kaddoum**, arXiv:1506.04836 (fuente secundaria, ver hueco 17) | (8)–(11), (20), (21) |
-| Rytov en camino inclinado; escintilación en régimen fuerte | **Ntanos et al. 2021**, *Photonics* 8(12):544 | (12), (13) |
+| Rytov en camino inclinado; escintilación en régimen moderado-a-fuerte | **Ntanos et al. 2021**, *Photonics* 8(12):544 | (12), (13) |
+| Escintilación saturada, onda esférica; máximo publicado de `σ_I²` (1.24); Rytov esférico | **Gruneisen et al. 2021**, *PRApplied* 16, 014067 (arXiv:2006.07745) | (A4), (A5), (A8), (A9) |
 | Perfil HV modificado con la altitud de la estación | Ntanos et al. 2021 | (11) |
 | Potencia y cuentas de fondo | Ntanos et al. 2021 | (19), (20) |
 | Rendimiento y QBER a partir del canal | Ntanos et al. 2021 **Apéndice A** | (A4)–(A6) |
@@ -383,6 +384,52 @@ Esta lista es la parte que hace que la de arriba signifique algo.
     reforzada); tratarlo como un camino de `2L` es una aproximación sin fuente.
     Kaushal & Kaddoum escriben `σ_BW² = 1.44 C_n^2 L² W_0^(-1/3)` para el *beam
     wander*, sin número de ecuación; no se implementa.
+
+    **Lo que se averiguó el 2026-09-15, y por qué el hueco sigue abierto.** Se
+    buscó fuente para el doble paso correlacionado antes de intentar
+    implementarlo. El **signo del efecto está decidido y es el malo**: en
+    geometría **monoestática** —emisor y receptor juntos, que es lo que es un
+    retrorreflector— la escintilación del haz de vuelta está *realzada*, no
+    reducida. Mahon, Moore, Ferraro, Rabinovich y Suite, *Applied Optics*
+    51(25):6147 (2012), midieron un enlace retrorreflectado **horizontal de
+    1.1 km** durante cuatro días: «the scintillation measured over close-to-ground
+    retro-reflector links can be substantially **enhanced** due to the
+    correlations experienced by both the direct and reflected echo beams», con
+    varianzas de flujo de irradiancia **saturando en ~10** durante el día.
+
+    La teoría del doble paso es Andrews, Phillips y Miller, *Applied Optics*
+    36(3):698 (1997), y ahí está el problema: es **Andrews otra vez**, es decir el
+    hueco 1 con otro título, y la versión de registro es de pago. Así que el
+    hueco 19 no es «nadie lo ha estudiado», es «lo ha estudiado la misma fuente
+    que este proyecto no puede abrir». De los dos artículos anteriores solo se
+    leyó el **resumen**, que es lo que permite afirmar el signo y no la magnitud.
+
+    **Consecuencia de diseño, que es lo que el hueco existe para provocar:** un
+    GE-1 de **un solo sentido con dos terminales** sí es modelable hoy, con las
+    mismas funciones, y un GE-1 con retrorreflector no lo es. Ver el ADR 0021.
+20. **Un emulador de turbulencia no es un `C_n^2`.** `equivalent_bench_cn2_m23`
+    da el `C_n^2` que un banco necesita para igualar la varianza de Rytov de un
+    camino largo —8.9e-10 para que 2 m igualen 1 km de aire «moderado»— y esa
+    condición es **necesaria y no suficiente**. La escintilación es distorsión de
+    fase convertida en amplitud *por la propagación*, así que una pantalla de
+    fase necesita distancia después de ella: una pantalla al principio de un
+    banco de 2 m tiene 2 m para desarrollar lo que un kilómetro de aire
+    distribuido desarrolla de forma continua. La práctica de laboratorio es
+    igualar los números adimensionales —`D/r_0` y el número de Rytov— con varias
+    pantallas y óptica de relé entre ellas, no igualar un `C_n^2`. QuOSS no
+    modela pantallas de fase, y `C_n^2` es la entrada que toma.
+21. **El promediado de apertura en régimen saturado sigue el convenio de la
+    P.1622, no el de Ntanos et al.** La Ec. (8) de la ITU-R P.1622 multiplica la
+    **log-varianza** por `A`; la Ec. (14) de Ntanos et al. define su `A` como
+    cociente de **índices** de escintilación. En régimen débil es la misma
+    afirmación; en régimen saturado no. Medido en el día de referencia a 10° de
+    elevación con el telescopio de 0.75 m: `A·σ²_lnI = 0.0470` contra
+    `ln(1 + A·σ²_I) = 0.0633`, que son **2.29 contra 2.68 dB** de margen al 1 %
+    de outage, **0.39 dB**. Se mantiene el convenio de la P.1622 porque la `A`
+    que el proyecto usa es la Ec. (7) de la P.1622, definida como cociente de
+    log-varianzas; aplicarla en el espacio del índice sería un tercer convenio
+    que no imprime ninguna de las dos fuentes. Cerrarlo es implementar las Ecs.
+    (15)–(16) de Ntanos et al. enteras. Ver [ADR 0022](0022-the-strong-regime.md).
 
 ### El caveat de Ntanos et al. 2021, que es la fuente V2 de punta a punta
 

@@ -1,0 +1,269 @@
+# ADR 0022 — Régimen moderado-a-fuerte: un modelo compartido, y por qué **no** es el predeterminado
+
+- **Estado:** aceptada
+- **Fecha:** 2026-09-15
+- **Etapa:** 2.2 (`channel/`), etapa 1.2 del plan de fases.
+- **Afecta a:** `channel/turbulence.py` (`ScintillationRegime`, `PathWave`,
+  `saturated_log_irradiance_variance`), `channel/horizontal.py`,
+  `channel/link_budget.py` (`downlink_loss_budget`).
+- **Extiende** al [ADR 0009](0009-citation-policy.md): una fuente nueva y dos
+  huecos nuevos (20, 21); cierra la parte de escintilación del hueco «régimen
+  fuerte» que el [ADR 0021](0021-horizontal-path.md) dejó abierta.
+
+---
+
+## Contexto
+
+### Qué es la saturación de la escintilación, para quien llegue nuevo
+
+**Escintilación** es el parpadeo de una estrella: el aire caliente hace de lente
+y la potencia que llega al detector fluctúa. Se mide con la **varianza de
+log-irradiancia** `σ²_lnI`, en Np² («nepers al cuadrado» solo quiere decir que
+el logaritmo es natural). 0.1 Np² son oscilaciones del 30 % en potencia.
+
+Todo lo que QuOSS tenía hasta ahora es **teoría de Rytov de primer orden**: se
+supone que la perturbación es pequeña, se calcula a primer orden, y sale la
+**varianza de Rytov** `σ_R²`. Esa suposición se muerde la cola: el resultado
+*es* la perturbación, así que cuando `σ_R²` se acerca a 1 la teoría está diciendo
+que la perturbación es grande, es decir, que ella misma no valía.
+
+Lo que hace el aire real cuando la turbulencia crece no es parpadear cada vez
+más: **satura**. El haz se rompe en muchos moteados independientes, y añadir más
+turbulencia añade más moteados, no moteados más profundos. La estadística tiende
+a la del moteado plenamente desarrollado, cuyo **índice de escintilación**
+`σ_I²` —la varianza relativa de la irradiancia, no de su logaritmo— vale 1. La
+teoría de primer orden no puede ver eso, porque solo sabe multiplicar.
+
+El coste concreto: en el día de referencia de QuOSS, a 10° de elevación, la
+`σ_R²` de la Ec. (4a) de P.1622 llega a **1.48 Np²**. La saturación dice
+**0.63**. Son **6.1 dB** de desvanecimiento al 1 % de outage que no existen.
+
+### Por qué esto es una decisión y no un parche
+
+Porque hay dos números defendibles para el mismo canal, y la elección mueve un
+resultado de diseño. Las dos afirmaciones son ciertas a la vez:
+
+- La Ec. (4a) de P.1622 es una **recomendación de la UIT, citable por número**,
+  y es contra sus tablas que se anclan todas las verificaciones V2 del canal.
+- Por debajo de 20° esa ecuación **sobreestima**, y por debajo de 20° es donde se
+  decide la máscara de elevación.
+
+---
+
+## Decisión
+
+1. **Un modelo, `saturated_log_irradiance_variance`, en `turbulence.py`.**
+   Toma una varianza de Rytov y una `PathWave`, devuelve `σ²_lnI`:
+
+   ```
+   σ²_lnI = 0.49 s / (1 + c s^(6/5))^(7/6) + 0.51 s / (1 + 0.69 s^(6/5))^(5/6)
+   ```
+
+   con `s = σ_R²` y `c = 1.11` (plana) o `0.56` (esférica). Es exactamente el
+   corchete de la Ec. (12) de Ntanos et al., que es `ln(1 + σ_I²)`; devolver el
+   corchete y no `σ_I²` evita exponenciar para volver a tomar logaritmo.
+
+2. **Se elige con `ScintillationRegime`, y el predeterminado es `WEAK`.** Ver
+   «la decisión incómoda» abajo.
+
+3. **`PathWave` se muda de `horizontal.py` a `turbulence.py`**, y se reexporta.
+   El modelo lo necesita y lo comparten los dos caminos; dejarlo donde estaba
+   habría hecho que `turbulence` importara de `horizontal`, que es la dirección
+   contraria a la que tiene el paquete.
+
+4. **La saturación se aplica a la varianza *de punto*, antes del promediado de
+   apertura.** No en `_assembled_loss_budget`, que es donde el ADR 0021 dijo que
+   iría: para cuando una varianza llega ahí ya está promediada, y las Ecs. (12) y
+   (A9) son resultados de detector puntual. Lo que comparten la bajada y el
+   camino horizontal es **el modelo**, no el punto de llamada.
+
+5. **El aviso cambia de código, no desaparece.** Por encima de 1 Np² de `σ_R²`:
+   `turbulence.weak-fluctuation-limit-exceeded` en `WEAK` (nombrando la
+   alternativa) y `turbulence.scintillation-saturated` en `MODERATE_TO_STRONG`,
+   con los dos valores y su cociente. El umbral está sobre `σ_R²` y no sobre la
+   salida porque la salida saturada no puede llegar a 1 —su techo es 0.6948— así
+   que probar la salida sería no avisar nunca.
+
+### La decisión incómoda: el predeterminado sigue siendo `WEAK`
+
+El modelo saturado **nunca es peor**: reduce a `σ_R²` a primer orden. Aun así el
+predeterminado es `WEAK`, por una razón medida:
+
+> En el punto que fija la Tabla 2 de la **ITU-R P.1622** —75° de elevación,
+> estación a 5.5 m, 21 m/s— la `σ_R²` es 0.0659 Np² y el modelo saturado da
+> 0.0636: **3.4 % por debajo**, en pleno régimen débil, donde quien aproxima es
+> el ajuste heurístico y no la recomendación.
+
+Poner el heurístico de predeterminado movería **todos** los anclajes V2 del
+canal un 3.4 % por una corrección que solo importa por debajo de ~20°, y
+convertiría «este número es de la P.1622» en falso en todo el proyecto. La regla
+del ADR 0009 es que un número publicado se reproduce o se declara; no que se
+mejore en silencio.
+
+Lo que sí cambia es que la elección está **en la firma**, medida, y el aviso
+nombra la otra opción. Elegir `MODERATE_TO_STRONG` para un estudio de máscara es
+una línea.
+
+---
+
+## Cómo se comprueba (la defensa de las fuentes)
+
+**Tres fuentes abiertas imprimen la misma ecuación, y una la imprime mal.**
+
+| Fuente | Ecuación | Onda | Segundo exponente |
+|---|---|---|---|
+| **Ntanos et al. 2021**, *Photonics* 8(12):544 | (12) | plana | `5/6` |
+| **Gruneisen et al. 2021**, *PRApplied* 16, 014067 (arXiv:2006.07745) | (A8), (A9) | plana y esférica | `5/6` |
+| **Kaushal & Kaddoum**, arXiv:1506.04836 | (17) | plana | `7/6` |
+
+Las tres citan a Andrews & Phillips, que es el **hueco 1** del ADR 0009 y no se
+pudo abrir. Así que esto es V2 contra fuente secundaria, y decirlo es parte del
+resultado.
+
+Dos contra uno no es una razón, así que lo decide el límite: con el `7/6` que
+imprime Kaushal & Kaddoum, el término de pequeña escala cae como `σ_R^(-4/5)` y
+el índice «saturado» **decae a 0.031** con `σ_R² = 10 000`, donde el canal está
+en su momento más violento. Un modelo de parpadeo que devuelve menos parpadeo
+cuanto más turbulento el aire no es una diferencia de redondeo.
+
+**El anclaje numérico, y por qué vale más de lo que parece.** Gruneisen et al.
+imprimen «the maximum theoretical value for `σ_I² slant-path` is approximately
+1.24». El modelo da **1.2432**, en `σ_R² = 10.31`. Ese máximo no es un
+coeficiente que alguien tecleó: está donde el término de gran escala ya murió y
+el de pequeña escala aún no se ha asentado, así que reproducirlo a tres cifras
+ejercita **los dos cortes, los dos exponentes y la potencia de la varianza en
+los dos denominadores** a la vez. Dos de esos cinco estaban mal en el primer
+borrador de este módulo y ese aserto es lo que lo dijo:
+
+- `σ_R^(12/5)` es la potencia de la **desviación típica**, así que en términos de
+  la varianza es `s^(6/5)`. Escribir `s^(12/5)` deja todas las salidas finitas y
+  positivas, y da un máximo de **0.71** en vez de 1.24.
+- El `7/6` de Kaushal & Kaddoum da 0.60 y decae.
+
+**Lo derivado, no ajustado.** La asíntota `0.51 / 0.69^(5/6) = 0.6948 Np²` sale
+de los coeficientes, no de una medición; equivale a `σ_I² = 1.0033`, que es la
+saturación a la unidad que describe la literatura de régimen fuerte. Y el límite
+débil no tiene tolerancia elegida: los dos denominadores son `1 + c s^(6/5)`, así
+que la desviación está acotada por `(7/6) max(c) s^(6/5)`, que a `s = 0.01` son
+el 0.5 %.
+
+**Entre fuentes, sobre la varianza de Rytov que alimenta al modelo.** La Ec. (13)
+de Ntanos et al. y la (A4) de Gruneisen et al. imprimen `2.25`; la (4a) de
+P.1622, `2.253`. Están a `1.3e-3`, dentro de lo que permiten tres cifras. Si las
+dos ecuaciones significaran cantidades distintas, componerlas sería absurdo.
+
+---
+
+## Lo que esto mide (el resultado de la etapa 1.2)
+
+### El óptimo interior de la máscara se mueve de 8° a 4.5°
+
+Mismo día, misma órbita, misma tabla de pasos, mismo protocolo; lo único que
+cambia es el régimen.
+
+| Máscara | `WEAK` | saturado | cambio |
+|---|---|---|---|
+| 2° | 408 946 | 458 862 | +12.2 % |
+| **4.5°** | 424 448 | **462 945** | +9.1 % |
+| 5° | 426 988 | 462 936 | +8.4 % |
+| **8°** | **434 938** | 457 663 | +5.2 % |
+| 10° | 432 985 | 449 514 | +3.8 % |
+| 20° | 360 978 | 364 740 | +1.0 % |
+
+El óptimo sigue siendo **interior** y baja tres grados y medio; el día gana
+**6.4 %**. El mecanismo es el mismo que crea el óptimo: una muestra baja aporta
+fuga de corrección de errores más deprisa que sucesos de un fotón certificados, y
+lo que la hace cara es su margen de desvanecimiento. Quitarle 6.1 dB a las
+muestras más bajas hace que empiecen a pagarse solas.
+
+El aumento es **monótono en lo bajo que esté la máscara**, +12.2 % a 2° contra
++1.0 % a 20°, que es la firma de que todo el efecto viene de las muestras bajas.
+
+### Y se descompone en canal y cota, que no coinciden
+
+Con `x = mean(ln T)` y `y = ln(bits del día)`, la elasticidad `E = dy/dx` de
+`TestWhyTheHigherStationGainsLess` —escrita, literalmente, para este momento—:
+
+| Estación | culmina | `dx` (canal) | `E` (cota) | `dy` (clave) |
+|---|---|---|---|---|
+| Castelldefels | 26° | **+7.90 %** | 0.473 | +3.66 % |
+| Calar Alto | 21–37° | +3.05 % | **2.91** | **+9.12 %** |
+| Teide OGS | 57–72° | +1.78 % | 0.673 | +1.20 % |
+
+Los dos órdenes son **opuestos**. El canal de Castelldefels gana dos veces y
+media más que el de Calar Alto, porque sus pasos son los más bajos del cielo; la
+clave de Calar Alto gana dos veces y media más que la de Castelldefels, porque
+Calar Alto está en el acantilado de certificación y amplifica por 2.91 mientras
+los otros dos **amortiguan** (`E < 1`: más luz trae más detecciones, y la
+corrección de errores se cobra sobre todas ellas mientras la amplificación de
+privacidad solo certifica la parte de un fotón).
+
+El número más grande que produce la etapa 1.2 en todo el día de referencia es el
+segundo paso de Calar Alto, **+17.7 % de clave**, y es casi todo cota: su canal
+solo mejora un 2.50 %, con `E = 6.60`. Citarlo sin `E` al lado sería reportar la
+demostración de seguridad como si fuera la atmósfera.
+
+### En el camino horizontal: la elección de onda valía cuatro veces menos
+
+El ADR 0021 cita «21.7 contra 15.1 dB» a 5 km como lo que vale no saber si el
+haz es plano o esférico: 6.67 dB, el número más grande de ese ADR. Con el modelo
+saturado son **8.41 contra 9.94 dB**, y **el signo se invierte**: a 5 km la
+`σ_R²` de la onda plana es 3.80 y la de la esférica 1.55, así que la saturación
+le quita mucho más a la plana, y lo que queda es el promediado de apertura, que
+favorece a la plana.
+
+Es decir: **la mayor parte de esos 6.67 dB era el modelo débil evaluado cuatro
+veces más allá de su propio límite**, no un coste real de no conocer el haz. El
+hueco de la onda gaussiana (hueco 18) no desaparece —1.53 dB siguen siendo
+1.53 dB— pero se estaba citando a cuatro veces su tamaño.
+
+Y pone número a algo que el ADR 0021 decía en prosa: las dos celdas de la
+columna «High» de la Tabla 4 de la P.1814 que la propia recomendación no debería
+haber impreso valen **12.25 dB impresos contra 7.19 saturados**, y **16.00
+contra 7.57**. Cinco y ocho decibelios y medio de desvanecimiento que no están.
+
+---
+
+## Alternativas descartadas
+
+- **Poner `MODERATE_TO_STRONG` de predeterminado.** Movería los anclajes V2 un
+  3.4 % donde el heurístico es el que aproxima. Medido arriba.
+- **Meterlo en `_assembled_loss_budget`**, como prometía el ADR 0021. Ahí la
+  varianza ya está promediada por apertura, y las Ecs. (12) y (A9) son de
+  detector puntual. Saturar allí saturaría la cantidad equivocada.
+- **Devolver `σ_I²` en vez de `ln(1 + σ_I²)`.** Las leyes de desvanecimiento
+  toman la log-varianza; el viaje de ida y vuelta por `exp`/`log1p` solo pierde
+  dígitos.
+- **Seguir a Kaushal & Kaddoum (17) tal como está impresa.** Decae a cero en
+  régimen fuerte. Ver arriba.
+- **Cambiar también el promediado de apertura a la Ec. (15) de Ntanos et al.**
+  Sería coherente con la (12), pero es un modelo distinto del de la P.1622 (una
+  `ρ_I` con su propia forma), y mezclarlo a medias sería un tercer convenio que
+  no imprime nadie. Declarado como hueco 21, con su número: 0.39 dB.
+
+---
+
+## Consecuencias
+
+### Lo que cierra
+
+- La parte de escintilación del «régimen fuerte» que el ADR 0021 dejó pendiente,
+  para la bajada y para el camino horizontal, con la misma función.
+- La fila de la tabla del ADR 0009 que decía «escintilación en régimen fuerte |
+  Ntanos et al. 2021 | (12), (13)» y no correspondía a ningún código.
+- Da número a dos afirmaciones que estaban en prosa: lo que sobreestiman las dos
+  celdas de la Tabla 4 de P.1814, y lo que vale la elección de onda a 5 km.
+
+### Lo que no cierra
+
+- **El promediado de apertura en régimen saturado** (hueco 21). 0.39 dB a 10°.
+- **La onda gaussiana** (hueco 18), ahora con su tamaño real: 1.53 dB a 5 km.
+- **Escala interna y externa.** El modelo supone Kolmogorov sin escala externa
+  finita, lo que lo hace una **cota superior** del valor saturado.
+- **La distribución sigue siendo log-normal.** La Ec. (17) de Ntanos et al. usa
+  log-normal y dice que vale para régimen débil y moderado. En régimen fuerte la
+  irradiancia es gamma-gamma, y las colas —que es lo que un outage al 1 % lee—
+  no son las mismas. La varianza que este ADR corrige es la correcta; la forma
+  de la distribución con que se convierte en decibelios, no necesariamente.
+- **Nada de esto es V2 de punta a punta.** Las cifras de clave de arriba son V4:
+  salida propia de QuOSS sobre supuestos declarados.

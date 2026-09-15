@@ -436,9 +436,25 @@ be opened, written down so nobody has to rediscover it.
   its two-figure coefficient allows); the spherical one has no second source.
   ADR 0009 gap 17.
 - **No Gaussian beam wave, no retroreflector, no horizontal beam wander.** The
-  first is in Andrews & Phillips; the second has no source; the third is printed
-  by Kaushal & Kaddoum without an equation number. ADR 0009 gaps 18 and 19, and
-  [ADR 0021](../../docs/adr/0021-horizontal-path.md).
+  first is in Andrews & Phillips; the third is printed by Kaushal & Kaddoum
+  without an equation number. The second was researched on 2026-09-15 and stays
+  open for a reason worth writing down: the **sign** of the double-pass effect
+  is settled and is the unhelpful one — a monostatic retro-reflector link is
+  *more* scintillated than the one-way path, not less, because the outgoing and
+  returning beams cross correlated air (Mahon et al., *Appl. Opt.* 51(25):6147
+  (2012), measured on a 1.1 km horizontal link; abstract only, the record is
+  paywalled) — while the **theory** is Andrews, Phillips & Miller, *Appl. Opt.*
+  36(3):698 (1997), which is gap 1 under another title. ADR 0009 gaps 18 and 19,
+  and [ADR 0021](../../docs/adr/0021-horizontal-path.md).
+- **The moderate-to-strong scintillation model has three open sources and no
+  open primary.** Ntanos et al. 2021 equation (12), Gruneisen et al. 2021
+  equations (A8)/(A9) and Kaushal & Kaddoum equation (17) all print it; all three
+  cite Andrews & Phillips (gap 1). The one V2 anchor is Gruneisen et al.'s
+  printed maximum scintillation index of 1.24, reproduced as **1.2432** in
+  `tests/channel/test_turbulence.py`. Kaushal & Kaddoum's copy carries one
+  exponent wrong, and the same test says how the other two were preferred
+  without a third opinion. ADR 0009 gaps 20 and 21, and
+  [ADR 0022](../../docs/adr/0022-the-strong-regime.md).
 - **SatQuMA as an independent V3 oracle for finite-key** (github.com/cnqo-qcomms/SatQuMA,
   **MIT licence**, pure Python, implements Lim et al. 2014 with its own numbered
   equations in arXiv:2109.01686). Not yet frozen into `data/`. It fails condition

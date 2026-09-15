@@ -171,6 +171,7 @@ import numpy as np
 import pytest
 
 from quoss.channel.atmosphere import integrated_cn2_m13
+from quoss.channel.turbulence import ScintillationRegime
 from quoss.core.errors import DegradationLog
 from quoss.engine.pipeline import Simulation, StationRun, simulate
 from quoss.qkd.base import LinkConditions, binary_entropy
@@ -1238,6 +1239,160 @@ class TestWhyTheHigherStationGainsLess:
         assert elasticities[0] == pytest.approx(12.18, abs=0.01)
         assert margins[-1] == pytest.approx(0.1682, abs=5e-5)
         assert elasticities[-1] == pytest.approx(0.826, abs=0.001)
+
+
+@pytest.mark.reference
+class TestWhatTheSaturatedModelIsWorth:
+    """**Stage 1.2, decomposed.** The interest `TestWhyTheHigherStationGainsLess` said to collect.
+
+    That class ends by predicting this one: "Stage 1.2 changes the scintillation
+    model. When it lands, some passes will cross the cliff. Without this
+    decomposition the only observable is the day total, and a day total that
+    moves by a factor of two is equally consistent with *the turbulence model
+    changed a lot* and *the turbulence model changed by 0.02 dB and the bound
+    amplified it*." Stage 1.2 has landed, so here are the two factors.
+
+    The same `dx` and `E` as before, with the intervention swapped
+    --------------------------------------------------------------
+    `x = mean(ln T)` and `y = ln(key bits)`, exactly as
+    `oracle.mean_log_transmittance` defines them. The intervention is no longer
+    moving the station up a mountain; it is evaluating the channel with
+    :attr:`~quoss.channel.turbulence.ScintillationRegime.MODERATE_TO_STRONG`
+    instead of ``WEAK``, at the station's real altitude and the 10 degree mask.
+    Everything else — orbit, geometry, pass table, protocol, security — is held.
+
+    ==============  ==========  ==========  ==========  ==========
+    station         culminates  `dx` (T)    `E`         `dy` (key)
+    ==============  ==========  ==========  ==========  ==========
+    Castelldefels    26 deg      +7.90 %     0.473       +3.66 %
+    Calar Alto       21-37 deg   +3.05 %     2.91        +9.12 %
+    Teide OGS        57-72 deg   +1.78 %     0.673       +1.20 %
+    ==============  ==========  ==========  ==========  ==========
+
+    What the split says, and it is not what the day totals say
+    ----------------------------------------------------------
+    Read the last column alone and the story is "Calar Alto benefits most from
+    the new scintillation model". That is false as a statement about the
+    channel: **Castelldefels' channel gains two and a half times more** than
+    Calar Alto's, 7.90 % against 3.05 %, because its passes are the lowest in
+    the sky and saturation only touches low-elevation samples.
+
+    The key ranking is the other way round because of `E`. Calar Alto sits on
+    the certification cliff — it certifies about 1 % and 4.5 % of its two
+    passes' asymptotic key — so one per cent of transmittance buys it 2.91 % of
+    key. Castelldefels and the Teide are off the cliff and their `E` is *below*
+    one: there, a brighter channel buys proportionally **less** key, because the
+    finite-key bound's leakage term grows with the detections the extra light
+    brings.
+
+    So the honest sentence is: the scintillation model is worth 1.8 % to 7.9 %
+    of channel, everywhere, and between 1.2 % and 9.1 % of key depending on how
+    close the station's passes sit to the cliff. Those are two different
+    statements about two different things, and only the first one is about
+    turbulence.
+    """
+
+    SATURATED = ScintillationRegime.MODERATE_TO_STRONG
+
+    @staticmethod
+    def _factors(name: str, pass_index: int | None = None) -> tuple[float, float, float]:
+        """Return `(dx, E, dy)` for swapping the regime, at the station's own altitude."""
+        altitude_m = STATIONS[name][2]
+        weak = hand_link(name, station_height_m=altitude_m)
+        saturated = hand_link(
+            name,
+            station_height_m=altitude_m,
+            regime=TestWhatTheSaturatedModelIsWorth.SATURATED,
+        )
+        d_x = mean_log_transmittance(saturated, pass_index) - mean_log_transmittance(
+            weak, pass_index
+        )
+        if pass_index is None:
+            weak_bits = float(np.asarray(weak.finite.key_bits).sum())
+            saturated_bits = float(np.asarray(saturated.finite.key_bits).sum())
+        else:
+            weak_bits = float(np.asarray(weak.finite.key_bits)[pass_index])
+            saturated_bits = float(np.asarray(saturated.finite.key_bits)[pass_index])
+        d_y = float(np.log(saturated_bits / weak_bits))
+        return d_x, d_y / d_x, d_y
+
+    def test_the_channel_gain_is_largest_at_the_station_with_the_lowest_passes(self) -> None:
+        """`dx`: +7.90 % at Castelldefels, +3.05 % at Calar Alto, +1.78 % at the Teide.
+
+        Ordered by how low the passes are, not by altitude and not by key. This
+        is the half of the effect that is turbulence, and it is monotone in the
+        thing that drives it.
+        """
+        gains = {name: np.expm1(self._factors(name)[0]) for name in STATIONS}
+        assert gains["castelldefels"] == pytest.approx(0.0790, abs=5e-4)
+        assert gains["calar_alto"] == pytest.approx(0.0305, abs=5e-4)
+        assert gains["tenerife_ogs"] == pytest.approx(0.0178, abs=5e-4)
+        assert gains["castelldefels"] > gains["calar_alto"] > gains["tenerife_ogs"]
+
+    def test_the_key_gain_is_largest_at_the_station_on_the_cliff(self) -> None:
+        """`dy`: +9.12 % at Calar Alto against +3.66 % and +1.20 %. The opposite order."""
+        gains = {name: np.expm1(self._factors(name)[2]) for name in STATIONS}
+        assert gains["calar_alto"] == pytest.approx(0.0912, abs=1e-3)
+        assert gains["castelldefels"] == pytest.approx(0.0366, abs=1e-3)
+        assert gains["tenerife_ogs"] == pytest.approx(0.0120, abs=1e-3)
+        assert gains["calar_alto"] > gains["castelldefels"] > gains["tenerife_ogs"]
+
+    def test_the_two_orderings_disagree_and_the_elasticity_is_why(self) -> None:
+        """The whole point of the decomposition, as one assertion.
+
+        Castelldefels' channel gains 2.6 times more than Calar Alto's and its
+        key gains 2.5 times less. Both statements are true, they are not in
+        tension, and the ratio between them is the ratio of the two
+        elasticities, 2.91 / 0.473 = 6.15.
+        """
+        low_x, low_e, low_y = self._factors("castelldefels")
+        cliff_x, cliff_e, cliff_y = self._factors("calar_alto")
+        assert low_x / cliff_x == pytest.approx(2.53, abs=0.05)
+        assert cliff_y / low_y == pytest.approx(2.43, abs=0.05)
+        assert cliff_e / low_e == pytest.approx(6.15, abs=0.2)
+        assert (cliff_e / low_e) / (low_x / cliff_x) == pytest.approx(cliff_y / low_y, rel=1e-9)
+
+    def test_off_the_cliff_a_brighter_channel_buys_less_than_proportionally(self) -> None:
+        """`E < 1` at two of the three stations, which a rate-based intuition forbids.
+
+        If key were a rate, `E` would be 1 by definition: one per cent more
+        light, one per cent more key. It is 0.473 and 0.673 here, because error
+        correction is charged on every detection the extra light brings while
+        privacy amplification certifies only the single-photon part of them. The
+        finite-key bound is not a rate, and this is the cheapest measurement in
+        the project that says so.
+        """
+        assert self._factors("castelldefels")[1] == pytest.approx(0.473, abs=0.02)
+        assert self._factors("tenerife_ogs")[1] == pytest.approx(0.673, abs=0.02)
+        assert self._factors("calar_alto")[1] == pytest.approx(2.91, abs=0.05)
+
+    def test_the_worst_pass_of_the_day_amplifies_by_six_and_a_half(self) -> None:
+        """Calar Alto's second pass: +2.50 % of channel becomes +17.7 % of key.
+
+        The single largest number stage 1.2 produces anywhere in the reference
+        day, and it is almost entirely the bound. Quoting it without `E` beside
+        it would be reporting the security proof as if it were the atmosphere.
+        """
+        d_x, elasticity, d_y = self._factors("calar_alto", 2)
+        assert float(np.expm1(d_x)) == pytest.approx(0.0250, abs=5e-4)
+        assert elasticity == pytest.approx(6.60, abs=0.1)
+        assert float(np.expm1(d_y)) == pytest.approx(0.177, abs=3e-3)
+
+    def test_no_pass_crosses_from_zero_to_some(self) -> None:
+        """Nothing was resurrected, at this mask: the effect is on passes that already certified.
+
+        Worth asserting because it is the first thing the decomposition would
+        break on — `ln(key)` is undefined at zero, so a pass crossing would make
+        `E` meaningless rather than large, and the tables above would silently
+        be measuring a different set of passes in each column.
+        """
+        for name in STATIONS:
+            altitude_m = STATIONS[name][2]
+            weak = np.asarray(hand_link(name, station_height_m=altitude_m).finite.key_bits)
+            saturated = np.asarray(
+                hand_link(name, station_height_m=altitude_m, regime=self.SATURATED).finite.key_bits
+            )
+            assert ((weak > 0.0) == (saturated > 0.0)).all(), name
 
 
 class TestTheEnsembleIsTheSameDraw:

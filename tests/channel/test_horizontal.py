@@ -47,11 +47,14 @@ from quoss.channel.horizontal import (
     KAUSHAL_SPHERICAL_WAVE_COEFFICIENT,
     PLANE_WAVE_RYTOV_COEFFICIENT,
     PathWave,
+    ScintillationRegime,
+    equivalent_bench_cn2_m23,
     horizontal_aperture_averaging_factor,
     horizontal_log_irradiance_variance,
     horizontal_loss_budget,
     horizontal_point_log_irradiance_variance,
     plane_wave_rytov_variance,
+    weak_theory_path_limit_m,
 )
 from quoss.channel.link_budget import (
     NTANOS_FILTER_BANDWIDTH_M,
@@ -67,6 +70,7 @@ from quoss.channel.turbulence import (
     NEPER_SQ_TO_DB_SQ,
     WEAK_FLUCTUATION_VARIANCE_LIMIT,
     log_irradiance_variance,
+    saturated_log_irradiance_variance,
 )
 from quoss.core.errors import DegradationLog, DomainError, Severity
 from quoss.core.units import deg_to_rad
@@ -414,7 +418,16 @@ class TestNoSignatureTakesAnElevation:
                     assert forbidden not in parameter, (name, parameter)
 
     def test_the_module_never_touches_an_elevation_or_the_profile(self) -> None:
-        """By source: no name mentions an elevation, and only two constants come from `turbulence`."""
+        """By source: no name mentions an elevation, and `turbulence` lends only path-free things.
+
+        The allowed list grew when stage 1.2 arrived, and what it is allowed to
+        grow *with* is the point: two unit constants, the plane/spherical enum,
+        the regime enum and the saturation model. None of the five knows about an
+        elevation, a zenith angle or the Hufnagel-Valley profile, so none of them
+        can smuggle a slant path into a horizontal one. An import of
+        ``log_irradiance_variance`` or ``cn2_path_moment`` would fail here, which
+        is what this test is for.
+        """
         tree = ast.parse(inspect.getsource(horizontal))
         for node in ast.walk(tree):
             if isinstance(node, ast.Name):
@@ -423,6 +436,9 @@ class TestNoSignatureTakesAnElevation:
                 assert {alias.name for alias in node.names} == {
                     "NEPER_SQ_TO_DB_SQ",
                     "WEAK_FLUCTUATION_VARIANCE_LIMIT",
+                    "PathWave",
+                    "ScintillationRegime",
+                    "saturated_log_irradiance_variance",
                 }
             if isinstance(node, ast.ImportFrom) and node.module == "quoss.channel.atmosphere":
                 pytest.fail("the horizontal module must not import the vertical profile")
@@ -617,6 +633,336 @@ def ge1_key(
     )
     key = Bb84DecoyProtocol.ntanos_2021().key_rate(conditions, degradations=log)
     return budget, key
+
+
+class TestTheHeadlineLensComparisonIsABracket:
+    """The 2.5 cm to 10 cm comparison, with the regime of every row on the page.
+
+    What was wrong with the way it was quoted
+    ------------------------------------------
+    ADR 0021 reported "56.8 to 636 kbit/s, a factor 11.2" for going from a
+    2.5 cm receiving lens to a 10 cm one, and reported it as a number. Both rows
+    were computed with ``PathWave.PLANE``, and both rows are at **3.16 Rayleigh
+    ranges** of the 2.5 cm transmitter, where a plane wave is the wrong side of
+    the idealisation — which the module's own
+    ``horizontal.plane-wave-beyond-the-rayleigh-range`` warning said at the
+    time, into a log nobody read.
+
+    Note what the transmitter is doing here, because it is easy to misread the
+    comparison as changing it: ``ge1_key`` holds the **transmitter** at 2.5 cm
+    in both rows and varies the **receiving** lens. The Rayleigh range is a
+    property of the transmitter alone, ``z_R = pi (D_T/2)^2 / lambda``, so it is
+    316.7 m in both rows and ``L / z_R = 3.158`` in both. The two rows are the
+    same regime, and it is not the regime they were computed in.
+
+    What the honest version is
+    --------------------------
+    ============  =========  ==========  ============  ==============
+    lens          `L/z_R`    plane       spherical     citable
+    ============  =========  ==========  ============  ==============
+    2.5 cm        3.158      56.8        **70.2**      spherical
+    10 cm         3.158      636.2       **589.9**     spherical
+    factor        —          11.20       **8.41**      8.41
+    ============  =========  ==========  ============  ==============
+
+    At 3.16 Rayleigh ranges the beam has spread to 3.3 times its waist, so the
+    spherical column is the defensible one and the plane column is the other
+    edge of the bracket. The true answer is the Gaussian beam wave, which is ADR
+    0009 gap 18 and has no open source here, so what this module can say is: the
+    lens is worth **a factor between 8.4 and 11.2**, and the 10 cm link makes
+    **590 to 636 kbit/s**. An interval, not a number.
+
+    Note also that the bracket is not ordered the way the point variances are.
+    A spherical wave scintillates 2.46 times less at a point, but its irradiance
+    correlation is wider, so a 10 cm lens averages it less well (Kaushal &
+    Kaddoum's 0.214 against 1.07). At 2.5 cm the plane wave is the pessimistic
+    edge and at 10 cm it is the optimistic one — which is exactly why a bracket
+    has to be computed and cannot be reasoned about from the 2.46.
+    """
+
+    RAYLEIGH_RATIO = 3.158
+
+    def test_the_rayleigh_range_is_the_transmitters_and_the_same_in_both_rows(self) -> None:
+        """316.7 m for the 2.5 cm transmitter, so both rows sit at 3.16 z_R."""
+        rayleigh_m = (
+            rayleigh_range_km(wavelength_m=WAVELENGTH_M, transmit_aperture_m=0.025) * 1000.0
+        )
+        assert rayleigh_m == pytest.approx(316.7, abs=0.1)
+        assert 1000.0 / rayleigh_m == pytest.approx(self.RAYLEIGH_RATIO, abs=0.001)
+
+    def test_the_warning_fired_on_both_plane_rows_and_on_neither_spherical_one(self) -> None:
+        """The module said so at the time, with the ratio in the details."""
+        for receive_m in (0.025, 0.1):
+            for wave, expected in ((PathWave.PLANE, 1), (PathWave.SPHERICAL, 0)):
+                log = DegradationLog()
+                horizontal_loss_budget(
+                    1000.0,
+                    wave=wave,
+                    cn2_m23=1e-14,
+                    degradations=log,
+                    **dict(GE1_BASE, transmit_aperture_m=0.025, receive_aperture_m=receive_m),
+                )
+                codes = [entry.code for entry in log if entry.code.startswith("horizontal.")]
+                assert len(codes) == expected, (receive_m, wave)
+                if expected:
+                    assert codes == ["horizontal.plane-wave-beyond-the-rayleigh-range"]
+                    (entry,) = [e for e in log if e.code.startswith("horizontal.")]
+                    assert entry.details["path_to_rayleigh_range_ratio"] == pytest.approx(
+                        self.RAYLEIGH_RATIO, abs=0.001
+                    )
+
+    def test_the_lens_is_worth_a_factor_between_eight_and_eleven(self) -> None:
+        """Both edges, and the statement that only the interval is citable."""
+        rates = {
+            (lens, wave): float(ge1_key(1000.0, lens, 1e-14, wave)[1].secure_bit_s)
+            for lens in (0.025, 0.1)
+            for wave in PathWave
+        }
+        assert rates[0.025, PathWave.PLANE] == pytest.approx(56_800.0, rel=1e-3)
+        assert rates[0.025, PathWave.SPHERICAL] == pytest.approx(70_200.0, rel=1e-3)
+        assert rates[0.1, PathWave.PLANE] == pytest.approx(636_200.0, rel=1e-3)
+        assert rates[0.1, PathWave.SPHERICAL] == pytest.approx(589_900.0, rel=1e-3)
+        plane = rates[0.1, PathWave.PLANE] / rates[0.025, PathWave.PLANE]
+        spherical = rates[0.1, PathWave.SPHERICAL] / rates[0.025, PathWave.SPHERICAL]
+        assert plane == pytest.approx(11.20, abs=0.02)
+        assert spherical == pytest.approx(8.41, abs=0.02)
+
+    def test_the_bracket_is_not_ordered_by_the_point_variance(self) -> None:
+        """Plane is the worse edge at 2.5 cm and the better edge at 10 cm.
+
+        The crossing is the whole reason the bracket has to be computed: a
+        reader who knows only that a spherical wave scintillates 2.46 times less
+        would predict the spherical column to be the optimistic one at both
+        lenses, and would be wrong at one of them.
+        """
+        rates = {
+            (lens, wave): float(ge1_key(1000.0, lens, 1e-14, wave)[1].secure_bit_s)
+            for lens in (0.025, 0.1)
+            for wave in PathWave
+        }
+        assert rates[0.025, PathWave.SPHERICAL] > rates[0.025, PathWave.PLANE]
+        assert rates[0.1, PathWave.SPHERICAL] < rates[0.1, PathWave.PLANE]
+        averaging = {
+            wave: float(
+                horizontal_aperture_averaging_factor(
+                    1000.0, aperture_diameter_m=0.1, wavelength_m=WAVELENGTH_M, wave=wave
+                )
+            )
+            for wave in PathWave
+        }
+        assert averaging[PathWave.SPHERICAL] > averaging[PathWave.PLANE]
+        assert point_variance(1000.0, 1e-14, PathWave.SPHERICAL) < point_variance(1000.0, 1e-14)
+
+
+class TestTheOperatingLimitsAreConstraintsAndNotNotes:
+    """GE-1's two hard bounds, as functions with tests rather than sentences in an ADR."""
+
+    def test_the_weak_theory_limit_is_the_crossing_it_claims(self) -> None:
+        """V1 against the definition: the closed form and a root-find agree, 2413 m.
+
+        The closed form inverts ``sigma_R^2 = 1.2285 C_n^2 k^(7/6) L^(11/6)``
+        analytically; this checks it against the function it inverts, which is
+        the only check that can catch a wrong exponent in the inverse.
+        """
+        limit_m = weak_theory_path_limit_m(cn2_m23=1e-14, wavelength_m=WAVELENGTH_M)
+        assert limit_m == pytest.approx(2413.4, abs=0.1)
+        assert float(
+            plane_wave_rytov_variance(limit_m, cn2_m23=1e-14, wavelength_m=WAVELENGTH_M)
+        ) == pytest.approx(WEAK_FLUCTUATION_VARIANCE_LIMIT, rel=1e-12)
+
+    def test_it_is_the_length_at_which_the_budget_starts_warning(self) -> None:
+        """The constraint and the warning are the same boundary, checked from both sides.
+
+        A limit that did not coincide with the code's own warning would be a
+        second opinion, which is worse than no opinion: the number a design
+        review quotes has to be the number the module enforces.
+        """
+        limit_m = weak_theory_path_limit_m(cn2_m23=1e-14, wavelength_m=WAVELENGTH_M)
+        for length_m, warned in ((limit_m * 0.999, False), (limit_m * 1.001, True)):
+            log = DegradationLog()
+            horizontal_loss_budget(
+                length_m,
+                wave=PathWave.SPHERICAL,
+                cn2_m23=1e-14,
+                degradations=log,
+                **dict(GE1_BASE, transmit_aperture_m=0.025),
+            )
+            codes = [e.code for e in log if e.code.endswith("weak-fluctuation-limit-exceeded")]
+            assert bool(codes) is warned, length_m
+
+    def test_quieter_air_buys_a_longer_path_only_as_the_six_elevenths(self) -> None:
+        """A hundredfold drop in ``C_n^2`` buys a factor 12.3, not a factor 100.
+
+        The design consequence, and the reason "pick a better site" is not an
+        answer for a long horizontal link: the exponent that makes scintillation
+        grow fast with distance is the same one that makes the usable distance
+        grow slowly with site quality.
+        """
+        near = weak_theory_path_limit_m(cn2_m23=1e-14, wavelength_m=WAVELENGTH_M)
+        far = weak_theory_path_limit_m(cn2_m23=1e-16, wavelength_m=WAVELENGTH_M)
+        assert far / near == pytest.approx(100.0 ** (6.0 / 11.0), rel=1e-12)
+        assert far / near == pytest.approx(12.33, abs=0.01)
+
+    def test_the_bench_equivalence_is_an_identity_and_not_an_estimate(self) -> None:
+        """8.87e-10 over 2 m has exactly the Rytov variance of 1e-14 over 1 km."""
+        required = equivalent_bench_cn2_m23(bench_length_m=2.0, path_length_m=1000.0, cn2_m23=1e-14)
+        assert required == pytest.approx(8.874e-10, rel=1e-3)
+        assert float(
+            plane_wave_rytov_variance(2.0, cn2_m23=required, wavelength_m=WAVELENGTH_M)
+        ) == pytest.approx(
+            float(plane_wave_rytov_variance(1000.0, cn2_m23=1e-14, wavelength_m=WAVELENGTH_M)),
+            rel=1e-12,
+        )
+
+    def test_folding_the_bench_is_the_only_cheap_lever(self) -> None:
+        """Five times the bench length is 19.1 times less ``C_n^2`` needed.
+
+        The number GE-0b's design turns on. Nothing else in the expression is
+        available: ``C_n^2(path)`` is the experiment being stood in for and the
+        exponent is the physics, so the length of the folded path is the whole
+        design space.
+        """
+        two = equivalent_bench_cn2_m23(bench_length_m=2.0, path_length_m=1000.0, cn2_m23=1e-14)
+        ten = equivalent_bench_cn2_m23(bench_length_m=10.0, path_length_m=1000.0, cn2_m23=1e-14)
+        assert two / ten == pytest.approx(5.0 ** (11.0 / 6.0), rel=1e-12)
+        assert two / ten == pytest.approx(19.12, abs=0.02)
+
+    @pytest.mark.parametrize("cn2", [0.0, -1e-14, np.nan, np.inf])
+    def test_a_path_limit_needs_turbulence_to_exist(self, cn2: float) -> None:
+        with pytest.raises(DomainError, match="cn2_m23"):
+            weak_theory_path_limit_m(cn2_m23=cn2, wavelength_m=WAVELENGTH_M)
+
+    def test_neither_limit_broadcasts(self) -> None:
+        """A limit is one number, and an array of them would be a table nobody asked for."""
+        with pytest.raises(DomainError, match="take scalars"):
+            equivalent_bench_cn2_m23(
+                bench_length_m=2.0,
+                path_length_m=1000.0,
+                cn2_m23=np.array([1e-14, 1e-15]),  # type: ignore[arg-type]
+            )
+
+
+class TestTheSaturatedRegimeOnAHorizontalPath:
+    """Stage 1.2 inherited here, and the two GE-1 figures it changes.
+
+    The saturation model lives in :mod:`quoss.channel.turbulence` and is reached
+    from both budgets through their own ``regime`` argument
+    (``ScintillationRegime``). What it changes on a horizontal path is
+    everything past ``weak_theory_path_limit_m`` — which for GE-1's design case
+    is everything past 2.41 km.
+    """
+
+    SATURATED = ScintillationRegime.MODERATE_TO_STRONG
+
+    @staticmethod
+    def _scintillation_db(path_m: float, wave: PathWave, regime: ScintillationRegime) -> float:
+        budget = horizontal_loss_budget(
+            path_m,
+            wave=wave,
+            cn2_m23=1e-14,
+            degradations=DegradationLog(),
+            regime=regime,
+            **dict(GE1_BASE, transmit_aperture_m=0.025, receive_aperture_m=0.05),
+        )
+        return float(budget.scintillation_db)
+
+    def test_the_default_is_weak_everywhere_it_is_offered(self) -> None:
+        """Three signatures, one default, and it is the recommendation."""
+        for function in (
+            horizontal_point_log_irradiance_variance,
+            horizontal_log_irradiance_variance,
+            horizontal_loss_budget,
+        ):
+            assert (
+                inspect.signature(function).parameters["regime"].default is ScintillationRegime.WEAK
+            )
+
+    def test_nothing_changes_below_the_weak_theory_limit(self) -> None:
+        """At 1 km the two regimes agree to 0.16 dB, which is the model being the identity.
+
+        The bound is not a tolerance: at ``sigma_R^2 = 0.199`` the saturated
+        log-variance is 0.884 of the Rytov one, and a fade allowance goes as
+        roughly ``sqrt(variance)``, so 6 % of 1.1 dB is what it has to be.
+        """
+        for wave in PathWave:
+            weak = self._scintillation_db(1000.0, wave, ScintillationRegime.WEAK)
+            saturated = self._scintillation_db(1000.0, wave, self.SATURATED)
+            assert 0.0 < weak - saturated < 0.16, wave
+
+    def test_the_wave_choice_at_five_kilometres_was_mostly_the_weak_model(self) -> None:
+        """21.73 against 15.06 dB becomes 8.41 against 9.94, and the sign flips.
+
+        ADR 0021 quotes the 6.67 dB spread as what the plane-against-spherical
+        choice is worth, and it is the largest single number in that ADR. Under
+        the saturated model the spread is 1.53 dB and the *other way round*: at
+        5 km the plane wave's Rytov variance is 3.80 Np^2 and the spherical
+        one's is 1.55, so saturation removes far more from the plane wave, and
+        what is left is the aperture averaging, which favours the plane wave.
+
+        So most of that 6.67 dB was the weak model being evaluated four times
+        past its own limit, not a real cost of not knowing the beam. It does not
+        make the Gaussian-beam gap (ADR 0009 gap 18) go away — 1.53 dB is still
+        1.53 dB — but it does mean the gap was being quoted at four times its
+        size.
+        """
+        weak = {
+            wave: self._scintillation_db(5000.0, wave, ScintillationRegime.WEAK)
+            for wave in PathWave
+        }
+        saturated = {
+            wave: self._scintillation_db(5000.0, wave, self.SATURATED) for wave in PathWave
+        }
+        assert weak[PathWave.PLANE] == pytest.approx(21.73, abs=0.01)
+        assert weak[PathWave.SPHERICAL] == pytest.approx(15.06, abs=0.01)
+        assert saturated[PathWave.PLANE] == pytest.approx(8.41, abs=0.01)
+        assert saturated[PathWave.SPHERICAL] == pytest.approx(9.94, abs=0.01)
+        assert weak[PathWave.PLANE] - weak[PathWave.SPHERICAL] == pytest.approx(6.67, abs=0.02)
+        assert saturated[PathWave.SPHERICAL] - saturated[PathWave.PLANE] == pytest.approx(
+            1.53, abs=0.02
+        )
+
+    def test_the_two_cells_p1814_should_not_have_printed_are_five_decibels_out(self) -> None:
+        """Its "High" column, measured against the saturated model instead of asserted.
+
+        ``TestPublishedItuP1814Table4`` reproduces 12.25 and 16.00 dB from
+        equation (8) and says in prose that the recommendation should not have
+        printed them. This puts a number on "should not": the saturated model
+        gives 7.19 and 7.57 dB for the same two cells, so the printed values are
+        5.06 and 8.43 dB of fade that is not there. V4 against V2 — the
+        published number is the one being doubted, so this cannot be a V2 check,
+        and saying which is which is the point.
+        """
+        for wavelength_m, printed_db, saturated_db in (
+            (1.55e-6, 12.25, 7.19),
+            (0.98e-6, 16.00, 7.57),
+        ):
+            rytov = float(
+                plane_wave_rytov_variance(1000.0, cn2_m23=1e-13, wavelength_m=wavelength_m)
+            )
+            variance = float(saturated_log_irradiance_variance(rytov, wave=PathWave.PLANE))
+            depth_db = 2.0 * float(np.sqrt(variance * NEPER_SQ_TO_DB_SQ))
+            assert depth_db == pytest.approx(saturated_db, abs=0.01)
+            assert printed_db - depth_db > 5.0
+
+    def test_the_saturated_branch_says_which_model_ran(self) -> None:
+        """A different code from the weak branch's, carrying both values and the ratio."""
+        log = DegradationLog()
+        horizontal_loss_budget(
+            5000.0,
+            wave=PathWave.PLANE,
+            cn2_m23=1e-14,
+            degradations=log,
+            regime=self.SATURATED,
+            **dict(GE1_BASE, transmit_aperture_m=0.025),
+        )
+        codes = [entry.code for entry in log if entry.code.startswith("horizontal.")]
+        assert "horizontal.scintillation-saturated" in codes
+        assert "horizontal.weak-fluctuation-limit-exceeded" not in codes
+        (entry,) = [e for e in log if e.code == "horizontal.scintillation-saturated"]
+        assert entry.severity is Severity.WARNING
+        assert entry.details["weak_variance_np2"] == pytest.approx(3.802, abs=1e-3)
+        assert entry.details["peak_variance_np2"] == pytest.approx(0.7707, abs=1e-3)
+        assert entry.details["wave"] == "plane"
 
 
 class TestSizingTheGroundExperiments:

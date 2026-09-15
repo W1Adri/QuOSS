@@ -155,7 +155,6 @@ Mitigation Techniques", arXiv:1506.04836 (2015), §II equations (8)-(11) and
 
 from __future__ import annotations
 
-from enum import StrEnum
 from typing import Final
 
 import numpy as np
@@ -172,7 +171,13 @@ from quoss.channel.link_budget import (
     _validated_transmittance,
 )
 from quoss.channel.pointing import beam_to_jitter_ratio
-from quoss.channel.turbulence import NEPER_SQ_TO_DB_SQ, WEAK_FLUCTUATION_VARIANCE_LIMIT
+from quoss.channel.turbulence import (
+    NEPER_SQ_TO_DB_SQ,
+    WEAK_FLUCTUATION_VARIANCE_LIMIT,
+    PathWave,
+    ScintillationRegime,
+    saturated_log_irradiance_variance,
+)
 from quoss.core.errors import DegradationLog, DomainError
 from quoss.core.types import FloatArray
 from quoss.core.units import km_to_m
@@ -186,11 +191,14 @@ __all__ = [
     "KAUSHAL_SPHERICAL_WAVE_COEFFICIENT",
     "PLANE_WAVE_RYTOV_COEFFICIENT",
     "PathWave",
+    "ScintillationRegime",
+    "equivalent_bench_cn2_m23",
     "horizontal_aperture_averaging_factor",
     "horizontal_log_irradiance_variance",
     "horizontal_loss_budget",
     "horizontal_point_log_irradiance_variance",
     "plane_wave_rytov_variance",
+    "weak_theory_path_limit_m",
 ]
 
 ITU_P1814_SCINTILLATION_COEFFICIENT_DB2: Final[float] = 23.17
@@ -226,24 +234,10 @@ KAUSHAL_SPHERICAL_STRONG_TURBULENCE_COEFFICIENT: Final[float] = 2.73
 """Kaushal & Kaddoum equation (11): ``sigma_I^2 = 1 + 2.73 / sigma_R^(4/5)``, ``sigma_R^2 >> 1``."""
 
 
-class PathWave(StrEnum):
-    """Which idealisation of the beam the scintillation formulas use.
-
-    Required everywhere, with no default, because it is a factor 2.46 in the
-    variance and the right answer depends on the transmitter: there is no value
-    that quietly means "I did not think about it".
-
-    How to choose. :func:`quoss.channel.beam.rayleigh_range_km` gives ``z_R``,
-    the distance over which the beam stays roughly the size of its transmitter.
-    A path much **shorter** than ``z_R`` carries a collimated beam: ``PLANE``. A
-    path much **longer** than ``z_R`` carries a beam that has spread from what
-    looks like a point: ``SPHERICAL``. A 5 cm transmitter at 1550 nm has
-    ``z_R = 1.27 km``, so a 200 m link is plane and a 10 km link is spherical;
-    a 1 km link is neither, which :func:`horizontal_loss_budget` says.
-    """
-
-    PLANE = "plane"
-    SPHERICAL = "spherical"
+# ``PathWave`` now lives in :mod:`quoss.channel.turbulence`, because the saturation
+# model of :func:`~quoss.channel.turbulence.saturated_log_irradiance_variance` is
+# shared with the slant path and needs it too. It is re-exported here, and stays in
+# ``__all__``, so every existing import keeps working.
 
 
 def _validated_path_length_m(path_length_m: FloatArray | float) -> FloatArray:
@@ -346,6 +340,61 @@ def plane_wave_rytov_variance(
     return variance
 
 
+def _saturated_and_logged(
+    own_rytov: FloatArray,
+    *,
+    plane_rytov: FloatArray,
+    wave: PathWave,
+    path_length_m: FloatArray | float,
+    cn2_m23: FloatArray | float,
+    degradations: DegradationLog,
+) -> FloatArray:
+    """Return the saturated point variance, and say so in the log where it matters.
+
+    Split out of :func:`horizontal_point_log_irradiance_variance` so the two
+    regimes read as two branches of the same length rather than one branch with
+    a tail.
+
+    The regime test is on the **plane-wave** Rytov variance even when the
+    spherical wave was asked for, for the same reason the weak branch does it:
+    ``sigma_R^2`` is the conventional measure of how strong the path is, a
+    property of the air and the distance, not of which idealisation of the beam
+    the caller chose.
+    """
+    saturated: FloatArray = saturated_log_irradiance_variance(own_rytov, wave=wave)
+    if not plane_rytov.size or float(np.max(plane_rytov)) <= WEAK_FLUCTUATION_VARIANCE_LIMIT:
+        return saturated
+    index = np.unravel_index(int(np.argmax(plane_rytov)), plane_rytov.shape)
+    peak = float(plane_rytov[index])
+    weak = float(np.broadcast_to(own_rytov, plane_rytov.shape)[index])
+    returned = float(np.broadcast_to(saturated, plane_rytov.shape)[index])
+    path = np.broadcast_to(np.asarray(path_length_m, dtype=np.float64), plane_rytov.shape)
+    cn2 = np.broadcast_to(np.asarray(cn2_m23, dtype=np.float64), plane_rytov.shape)
+    degradations.warn(
+        "horizontal.scintillation-saturated",
+        (
+            f"The plane-wave Rytov variance reaches {peak:.3g} Np^2 over "
+            f"{float(path[index]):.4g} m at C_n^2 = {float(cn2[index]):.3g} m^(-2/3), above the "
+            f"{WEAK_FLUCTUATION_VARIANCE_LIMIT} Np^2 where the first-order theory of ITU-R "
+            "P.1814 equation (8) holds, so the value returned is the saturated "
+            f"{returned:.3g} Np^2 of "
+            f"{'Ntanos et al. equation (12)' if wave is PathWave.PLANE else 'Gruneisen et al. equation (A9)'}"
+            f" rather than that theory's "
+            f"{weak:.3g} Np^2 — a factor {returned / weak:.3f}. Gruneisen et al. is a heuristic "
+            "fit assuming Kolmogorov turbulence with no outer scale, and the aperture averaging "
+            "applied after it is still ITU-R P.1622's, on the log-variance: see ADR 0022. "
+            "ScintillationRegime.WEAK returns the unsaturated value."
+        ),
+        where="quoss.channel.horizontal.horizontal_point_log_irradiance_variance",
+        peak_rytov_variance_np2=peak,
+        weak_variance_np2=weak,
+        peak_variance_np2=returned,
+        limit_np2=WEAK_FLUCTUATION_VARIANCE_LIMIT,
+        wave=wave.value,
+    )
+    return saturated
+
+
 def horizontal_point_log_irradiance_variance(
     path_length_m: FloatArray | float,
     *,
@@ -353,6 +402,7 @@ def horizontal_point_log_irradiance_variance(
     wavelength_m: float,
     wave: PathWave,
     degradations: DegradationLog,
+    regime: ScintillationRegime = ScintillationRegime.WEAK,
 ) -> FloatArray:
     """Return the log-irradiance variance a point detector sees, Np^2, for either wave.
 
@@ -381,6 +431,19 @@ def horizontal_point_log_irradiance_variance(
     degradations
         Log that receives the weak-turbulence warning.
 
+    regime
+        :class:`~quoss.channel.turbulence.ScintillationRegime`. ``WEAK`` (the
+        default) returns the first-order value itself and records
+        ``horizontal.weak-fluctuation-limit-exceeded`` above
+        :data:`~quoss.channel.turbulence.WEAK_FLUCTUATION_VARIANCE_LIMIT`;
+        ``MODERATE_TO_STRONG`` returns the saturated value of
+        :func:`~quoss.channel.turbulence.saturated_log_irradiance_variance`
+        instead. The default is ``WEAK`` because every V2 check in this project
+        compares against a printed ITU number, and the saturated model is 3.4 %
+        below ITU-R P.1622 Table 2 even at that table's own weak point — a
+        difference worth seeing rather than absorbing. [ADR 0022](../../../docs/adr/0022-the-strong-regime.md)
+        says what each buys.
+
     Returns
     -------
     FloatArray
@@ -406,14 +469,26 @@ def horizontal_point_log_irradiance_variance(
     (0.407, 0)
     """
     selected = PathWave(wave)
+    selected_regime = ScintillationRegime(regime)
     rytov = plane_wave_rytov_variance(path_length_m, cn2_m23=cn2_m23, wavelength_m=wavelength_m)
     if selected is PathWave.PLANE:
-        variance = rytov
+        own_rytov = rytov
         strong_coefficient = KAUSHAL_PLANE_STRONG_TURBULENCE_COEFFICIENT
     else:
-        variance = rytov * (KAUSHAL_SPHERICAL_WAVE_COEFFICIENT / PLANE_WAVE_RYTOV_COEFFICIENT)
+        own_rytov = rytov * (KAUSHAL_SPHERICAL_WAVE_COEFFICIENT / PLANE_WAVE_RYTOV_COEFFICIENT)
         strong_coefficient = KAUSHAL_SPHERICAL_STRONG_TURBULENCE_COEFFICIENT
 
+    if selected_regime is ScintillationRegime.MODERATE_TO_STRONG:
+        return _saturated_and_logged(
+            own_rytov,
+            plane_rytov=rytov,
+            wave=selected,
+            path_length_m=path_length_m,
+            cn2_m23=cn2_m23,
+            degradations=degradations,
+        )
+
+    variance = own_rytov
     if rytov.size and float(np.max(rytov)) > WEAK_FLUCTUATION_VARIANCE_LIMIT:
         index = np.unravel_index(int(np.argmax(rytov)), rytov.shape)
         peak = float(rytov[index])
@@ -448,6 +523,180 @@ def horizontal_point_log_irradiance_variance(
         )
     result: FloatArray = np.asarray(variance, dtype=np.float64)
     return result
+
+
+def weak_theory_path_limit_m(
+    *,
+    cn2_m23: float,
+    wavelength_m: float,
+) -> float:
+    """Return the path length at which the plane-wave Rytov variance reaches 1 Np^2, m.
+
+    **What it is, and why it is a design constraint rather than a note.** Every
+    closed form in this module is first-order perturbation theory, valid while
+    the plane-wave Rytov variance stays below
+    :data:`~quoss.channel.turbulence.WEAK_FLUCTUATION_VARIANCE_LIMIT`. That
+    condition is not a property of the equipment: it is a property of the air
+    and the distance, so for a given site it is a **maximum path length**. A
+    horizontal experiment longer than this one cannot be dimensioned with
+    ``ScintillationRegime.WEAK`` at all, whatever lens is bought.
+
+    It is exposed as a function, and not left as a sentence in an ADR, for the
+    reason ADR 0009 gives for every other quoted number: a sentence cannot be
+    called, cannot be re-derived when a coefficient changes, and was in fact
+    wrong in fifteen places once.
+
+    **Where the closed form comes from.** ``sigma_R^2 = 1.2285 C_n^2 k^(7/6)
+    L^(11/6)`` is monotone in ``L``, so setting it to 1 and solving gives::
+
+        L* = (1 / (1.2285 C_n^2 k^(7/6)))^(6/11)
+
+    The ``6/11`` is the inverse of the ``11/6`` in the variance, and it is why
+    this limit is so insensitive to the site: a hundred times more turbulence
+    only shortens the usable path by a factor ``100^(6/11) = 12.3``.
+
+    **What it does not say.** Past ``L*`` the path is not unusable, it is
+    unusable *with the weak model*.
+    :attr:`~quoss.channel.turbulence.ScintillationRegime.MODERATE_TO_STRONG`
+    continues past it, on a heuristic rather than an ITU recommendation. So this
+    is the boundary of what this project can cite, not the boundary of what a
+    link can do.
+
+    Parameters
+    ----------
+    cn2_m23
+        ``C_n^2`` along the path, m^(-2/3), strictly positive. Scalar: a limit
+        is one number, and a path with a varying ``C_n^2`` has no single one.
+    wavelength_m
+        Optical wavelength, m.
+
+    Returns
+    -------
+    float
+        The path length in metres at which ``sigma_R^2 = 1``.
+
+    Raises
+    ------
+    DomainError
+        If ``C_n^2`` is not finite and strictly positive, or the wavelength
+        fails its guard.
+
+    Examples
+    --------
+    GE-1's design case — ITU-R P.1814's "moderate" turbulence at 1550 nm:
+
+    >>> round(weak_theory_path_limit_m(cn2_m23=1e-14, wavelength_m=1.55e-06))
+    2413
+
+    Two orders of magnitude quieter air buys only a factor 12.3, which is the
+    ``6/11`` at work and the reason a horizontal QKD link is a kilometre-scale
+    experiment and not a hundred-kilometre one:
+
+    >>> round(weak_theory_path_limit_m(cn2_m23=1e-16, wavelength_m=1.55e-06))
+    29753
+
+    And the wavelength matters much less than the air: 980 nm instead of 1550 nm
+    shortens it by a quarter, against the factor 12.3 two decades of ``C_n^2``
+    are worth.
+
+    >>> round(weak_theory_path_limit_m(cn2_m23=1e-14, wavelength_m=9.8e-07))
+    1803
+    """
+    cn2 = float(cn2_m23)
+    if not np.isfinite(cn2) or cn2 <= 0.0:
+        raise DomainError(
+            "cn2_m23 must be finite and strictly positive to have a path limit: in perfectly "
+            f"still air the Rytov variance is zero at every distance. Got {cn2}."
+        )
+    k = _wavenumber(wavelength_m)
+    coefficient = PLANE_WAVE_RYTOV_COEFFICIENT * cn2 * k ** (7.0 / 6.0)
+    limit_m: float = float(WEAK_FLUCTUATION_VARIANCE_LIMIT / coefficient) ** (6.0 / 11.0)
+    return limit_m
+
+
+def equivalent_bench_cn2_m23(
+    *,
+    bench_length_m: float,
+    path_length_m: float,
+    cn2_m23: float,
+) -> float:
+    """Return the ``C_n^2`` a bench needs to scintillate like a longer outdoor path, m^(-2/3).
+
+    **The question this answers.** GE-0b is a bench standing in for GE-1. A
+    bench is two metres long and the link is one kilometre, so the emulator has
+    to make two metres of air behave like a kilometre of it. Since the Rytov
+    variance goes as ``L^(11/6)`` and is linear in ``C_n^2``, matching it needs::
+
+        C_n^2(bench) = C_n^2(path) * (L_path / L_bench)^(11/6)
+
+    **Why the answer is enormous, and why that is the point.** ``(1000/2)^(11/6)
+    = 8.87e4``. Matching P.1814's "moderate" 1e-14 over 1 km on two metres needs
+    ``8.9e-10`` — five orders of magnitude above the strongest turbulence anyone
+    measures outdoors, and nine above a quiet night. A number that large is not
+    a specification an emulator meets; it is the reason a bench cannot simply be
+    handed a ``C_n^2``.
+
+    **What matching this number would still not buy** (ADR 0009 gap 20). Rytov
+    variance is only one of the parameters of a turbulent path, and the one a
+    single phase screen is worst at reproducing. Scintillation is the *phase*
+    distortion a screen imposes turned into *amplitude* by propagation, so it
+    needs distance after the screen: a screen at the transmitter of a 2 m bench
+    has 2 m in which to develop the irradiance fluctuations that a kilometre of
+    distributed air develops continuously. Laboratory practice is therefore to
+    match the dimensionless numbers — the Fried ratio ``D/r_0`` and the Rytov
+    number — with several screens and relay optics between them, not to match a
+    ``C_n^2``. This function returns the ``C_n^2`` because that is the input
+    this module takes; it is a *necessary* condition on an emulator and not a
+    sufficient one.
+
+    Parameters
+    ----------
+    bench_length_m
+        Physical length of the bench path, m, strictly positive.
+    path_length_m
+        Length of the outdoor path being stood in for, m, strictly positive.
+    cn2_m23
+        ``C_n^2`` of that outdoor path, m^(-2/3), non-negative.
+
+    Returns
+    -------
+    float
+        The bench ``C_n^2`` in m^(-2/3) that gives the same Rytov variance.
+
+    Raises
+    ------
+    DomainError
+        If either length is not finite and strictly positive, or ``C_n^2`` is
+        negative or not finite.
+
+    Examples
+    --------
+    Two metres standing in for GE-1's kilometre of moderate air:
+
+    >>> f"{equivalent_bench_cn2_m23(bench_length_m=2.0, path_length_m=1000.0, cn2_m23=1e-14):.2e}"
+    '8.87e-10'
+
+    Ten metres of folded path — four passes across a 2.5 m bench — costs a
+    factor 19.1 less, which is the strongest argument there is for folding:
+
+    >>> f"{equivalent_bench_cn2_m23(bench_length_m=10.0, path_length_m=1000.0, cn2_m23=1e-14):.2e}"
+    '4.64e-11'
+
+    It is an identity by construction, and the test says so rather than trusting
+    the exponent: the two paths have the same Rytov variance to machine
+    precision.
+    """
+    bench = _validated_path_length_m(bench_length_m)
+    path = _validated_path_length_m(path_length_m)
+    cn2 = _validated_cn2(cn2_m23)
+    if bench.shape != () or path.shape != () or cn2.shape != ():
+        raise DomainError(
+            "weak_theory_path_limit_m and equivalent_bench_cn2_m23 take scalars: an "
+            "experiment has one bench and one path, and broadcasting them would produce a "
+            "table nobody asked for."
+        )
+    required: float = float(cn2) * (float(path) / float(bench)) ** (11.0 / 6.0)
+    return required
 
 
 def horizontal_aperture_averaging_factor(
@@ -550,6 +799,7 @@ def horizontal_log_irradiance_variance(
     wavelength_m: float,
     wave: PathWave,
     degradations: DegradationLog,
+    regime: ScintillationRegime = ScintillationRegime.WEAK,
 ) -> FloatArray:
     """Return the log-irradiance variance a receiving lens sees, Np^2.
 
@@ -572,6 +822,19 @@ def horizontal_log_irradiance_variance(
         :class:`PathWave`, required.
     degradations
         Log that receives the weak-turbulence warning.
+
+    regime
+        :class:`~quoss.channel.turbulence.ScintillationRegime`. ``WEAK`` (the
+        default) returns the first-order value itself and records
+        ``horizontal.weak-fluctuation-limit-exceeded`` above
+        :data:`~quoss.channel.turbulence.WEAK_FLUCTUATION_VARIANCE_LIMIT`;
+        ``MODERATE_TO_STRONG`` returns the saturated value of
+        :func:`~quoss.channel.turbulence.saturated_log_irradiance_variance`
+        instead. The default is ``WEAK`` because every V2 check in this project
+        compares against a printed ITU number, and the saturated model is 3.4 %
+        below ITU-R P.1622 Table 2 even at that table's own weak point — a
+        difference worth seeing rather than absorbing. [ADR 0022](../../../docs/adr/0022-the-strong-regime.md)
+        says what each buys.
 
     Returns
     -------
@@ -601,6 +864,7 @@ def horizontal_log_irradiance_variance(
         wavelength_m=wavelength_m,
         wave=wave,
         degradations=degradations,
+        regime=regime,
     )
     factor = horizontal_aperture_averaging_factor(
         path_length_m, aperture_diameter_m=aperture_diameter_m, wavelength_m=wavelength_m, wave=wave
@@ -680,6 +944,7 @@ def horizontal_loss_budget(
     static_loss_db: float = 0.0,
     transmit_truncation_ratio: float = GAUSSIAN_TRUNCATION_RATIO_OF_THE_BEAM_MODULE,
     fade_combination: FadeCombination = FadeCombination.EXACT,
+    regime: ScintillationRegime = ScintillationRegime.WEAK,
 ) -> LossBudget:
     """Assemble the loss budget of a horizontal path, at one or many path lengths.
 
@@ -739,6 +1004,19 @@ def horizontal_loss_budget(
         ``alpha``, as in :func:`quoss.channel.link_budget.downlink_loss_budget`.
     fade_combination
         :attr:`FadeCombination.EXACT` (default) or :attr:`FadeCombination.ADDITIVE`.
+
+    regime
+        :class:`~quoss.channel.turbulence.ScintillationRegime`. ``WEAK`` (the
+        default) returns the first-order value itself and records
+        ``horizontal.weak-fluctuation-limit-exceeded`` above
+        :data:`~quoss.channel.turbulence.WEAK_FLUCTUATION_VARIANCE_LIMIT`;
+        ``MODERATE_TO_STRONG`` returns the saturated value of
+        :func:`~quoss.channel.turbulence.saturated_log_irradiance_variance`
+        instead. The default is ``WEAK`` because every V2 check in this project
+        compares against a printed ITU number, and the saturated model is 3.4 %
+        below ITU-R P.1622 Table 2 even at that table's own weak point — a
+        difference worth seeing rather than absorbing. [ADR 0022](../../../docs/adr/0022-the-strong-regime.md)
+        says what each buys.
 
     Returns
     -------
@@ -803,6 +1081,7 @@ def horizontal_loss_budget(
         wavelength_m=wavelength,
         wave=selected,
         degradations=degradations,
+        regime=regime,
     )
     return _assembled_loss_budget(
         geometric=geometric,

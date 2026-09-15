@@ -292,7 +292,7 @@ from quoss.channel.background import (
 from quoss.channel.beam import geometric_transmittance
 from quoss.channel.detector import afterpulsed_counts_per_gate, dark_counts_per_gate
 from quoss.channel.pointing import beam_to_jitter_ratio
-from quoss.channel.turbulence import downlink_log_irradiance_variance
+from quoss.channel.turbulence import ScintillationRegime, downlink_log_irradiance_variance
 from quoss.core.errors import DegradationLog, DomainError
 from quoss.core.types import FloatArray
 from quoss.core.units import rad_to_deg, transmittance_to_loss_db
@@ -1452,6 +1452,7 @@ def downlink_loss_budget(
     station_height_m: float = 0.0,
     rms_wind_speed_m_s: float = 21.0,
     ground_cn2_m23: float = ITU_GROUND_CN2_M23,
+    regime: ScintillationRegime = ScintillationRegime.WEAK,
 ) -> LossBudget:
     """Assemble the satellite-to-ground loss budget at every sample of a pass.
 
@@ -1518,6 +1519,19 @@ def downlink_loss_budget(
         R.m.s. wind speed along the path, m/s.
     ground_cn2_m23
         ``C_n^2`` at ground level, m^(-2/3).
+
+    regime
+        :class:`~quoss.channel.turbulence.ScintillationRegime`. ``WEAK`` (the
+        default) returns the first-order value itself and records
+        ``turbulence.weak-fluctuation-limit-exceeded`` above
+        :data:`~quoss.channel.turbulence.WEAK_FLUCTUATION_VARIANCE_LIMIT`;
+        ``MODERATE_TO_STRONG`` returns the saturated value of
+        :func:`~quoss.channel.turbulence.saturated_log_irradiance_variance`
+        instead. The default is ``WEAK`` because every V2 check in this project
+        compares against a printed ITU number, and the saturated model is 3.4 %
+        below ITU-R P.1622 Table 2 even at that table's own weak point — a
+        difference worth seeing rather than absorbing. [ADR 0022](../../../docs/adr/0022-the-strong-regime.md)
+        says what each buys.
 
     Returns
     -------
@@ -1641,6 +1655,7 @@ def downlink_loss_budget(
         station_height_m=station_height_m,
         rms_wind_speed_m_s=rms_wind_speed_m_s,
         ground_cn2_m23=ground_cn2_m23,
+        regime=regime,
     )
 
     return _assembled_loss_budget(
@@ -1674,9 +1689,17 @@ def _assembled_loss_budget(
     two fade laws, the combination rule, the truncation, the chain and the total.
     Shared by :func:`downlink_loss_budget` and
     :func:`quoss.channel.horizontal.horizontal_loss_budget` so that the two
-    budgets cannot drift apart in how they add their terms — which is also
-    where a strong-turbulence model, when one is added, will have to go.
-    Inputs are validated by the callers.
+    budgets cannot drift apart in how they add their terms.
+
+    The strong-turbulence model of stage 1.2 is **not** here, although this
+    docstring used to promise it would be. It is in
+    :func:`quoss.channel.turbulence.saturated_log_irradiance_variance`, applied
+    to the *point* variance before aperture averaging, because Gruneisen et al.
+    equations (A8) and (A9) are point-receiver results: by the time a variance
+    reaches this function it has already been multiplied by an averaging factor,
+    and saturating it here would saturate the wrong quantity. What the two
+    budgets share is therefore the model, not the call site — both reach it
+    through their own ``regime`` argument. Inputs are validated by the callers.
     """
     pointing_db = pointing_fade_db(gamma, outage_probability=outage)
     scintillation_db = scintillation_fade_db(variance, outage_probability=outage)
