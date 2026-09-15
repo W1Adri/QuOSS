@@ -804,10 +804,12 @@ def plot_sky_track(result: SimulationResult, station: str, *, ax: Axes | None = 
     axes.set_theta_direction(-1)
     axes.set_rlim(0.0, _RIGHT_ANGLE_DEG)
     # The radius is the zenith angle and the label is the elevation, hence the
-    # reversed list. The r = 0 ring is asked for but never drawn: matplotlib's polar
-    # RadialLocator drops the tick that falls on the origin, so the zenith carries no
-    # "90°" label. That is left as it is rather than worked around — a label at the
-    # very centre of the plot would sit on top of every track that culminates near it.
+    # reversed list. All four rings are asked for; matplotlib's polar RadialLocator
+    # may drop the one that falls on the origin (r = 0, the zenith), and whether it
+    # does has differed between versions. Either outcome is fine and neither is
+    # worked around — a "90°" label at the very centre would sit on top of every
+    # track that culminates near it — so the test asserts the invariant that holds
+    # in both, that a ring at r is labelled `90 - r`, rather than the list of rings.
     axes.set_yticks([0.0, 30.0, 60.0, 90.0], ["90°", "60°", "30°", "0°"])
     axes.grid(True)
 

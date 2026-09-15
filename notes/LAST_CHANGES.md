@@ -5426,142 +5426,90 @@ estación, con y sin Monte Carlo), en los cuatro formatos, leyendo cada fichero.
 
 ---
 
-## 32. `validation/` no podía producir su propia tabla, y ese era el punto entero
+## 32. Dos tests que informaban de su entorno en vez de del código
 
-> **Nota de orden:** esta entrada sale de una rama hermana de la del puente de
-> `tests/e2e/`. Al integrar, la que entre segunda se renumera.
+> **Nota de orden:** esta entrada y la de `tests/e2e/` llevan las dos el número 32
+> porque salen de dos ramas hermanas de la misma auditoría. Al integrar, la que
+> entre segunda pasa a 33.
 
-### Qué es este paquete, para quien llegue nuevo
+Dos arreglos pequeños y de la misma familia: un test falla —o no falla— por algo
+que no es el código que prueba. Ninguno de los dos toca física.
 
-`src/quoss/validation/` existe para que la palabra «validado» signifique algo
-comprobable. Un **caso de validación** es un número impreso en una fuente puesto
-al lado del mismo número recalculado por este proyecto, con cuatro cosas que
-hacen que la comparación signifique algo: un **localizador** (la ecuación o la
-página, para que el lector abra el documento en el sitio correcto), una
-**tolerancia** con su origen escrito al lado, un **test** (el nodo de pytest que
-mide lo mismo) y un **estado**.
+### El primero: una figura asertada por las etiquetas que eligió matplotlib
 
-Y el estado no se escribe: se **deriva**. `ValidationCase` recalcula el suyo en
-`__post_init__` y levanta `DomainError` si no coincide con el que le pasaron. Es
-la defensa contra lo que el propio módulo llama una insignia que sobrevive al
-acuerdo que describía: si un refactor mueve un número, un `REPRODUCED` escrito a
-mano seguiría diciendo «reproducido» y uno derivado dice `NOT_REPRODUCED` la
-primera vez que alguien llama a `run_all`.
-
-### El defecto: la tabla no se podía producir
-
-`CASE_MODULES` —la tupla de módulos que `run_all()` recorre— listaba
-`quoss.validation.ntanos2021`. **Ese módulo nunca se escribió.** Así que
-`run_all()`, el único punto de entrada del paquete, levantaba
-`ModuleNotFoundError` en **todas** sus llamadas, desde la primera.
-
-No era solo un docstring optimista, que es como lo describía el diagnóstico de
-partida. Era esto:
+`tests/viz/test_plots.py::TestSkyTrack::test_one_track_per_pass_at_the_zenith_angle`
+comprobaba la escala radial del gráfico de traza celeste así:
 
 ```python
->>> from quoss.validation.base import run_all
->>> run_all()
-ModuleNotFoundError: No module named 'quoss.validation.ntanos2021'
+assert [(tick.get_loc(), tick.label1.get_text()) for tick in ax.yaxis.get_major_ticks()] == [
+    (30.0, "60°"), (60.0, "30°"), (90.0, "0°"),
+]
 ```
 
-**El paquete escrito para impedir que «validado» fuera una etiqueta no podía
-emitir una sola fila.** Y nada lo detectaba: no había `tests/validation/`, así
-que `base.py` estaba al **59 %** de cobertura y era lo único que bajaba el global
-del proyecto del 100 %.
+**Qué hace ese gráfico, para quien llegue nuevo.** Es un gráfico polar del cielo
+visto desde la estación: el ángulo es el acimut (por dónde) y el **radio es el
+ángulo cenital** (cuánto le falta al satélite para estar justo encima). Las
+etiquetas de los anillos, en cambio, son la **elevación** — lo habitual en
+astronomía—, así que radio y etiqueta corren al revés: un anillo a `r = 30°` del
+centro está a `60°` sobre el horizonte. La relación es `etiqueta = 90 − r`.
 
-Eran cuatro afirmaciones sin cumplir, no una:
+**Por qué esa asserción estaba mal escrita.** El gráfico pide **cuatro** anillos
+(0, 30, 60, 90); cuántos se dibujan lo decide matplotlib, no el código: su
+`RadialLocator` polar descarta el tick que cae exactamente en el origen —aquí
+`r = 0`, el cenit— y **si lo hace ha cambiado entre versiones**. Una lista fija
+de etiquetas convierte una actualización de matplotlib en un fallo rojo con la
+figura perfectamente correcta: el test informa de su dependencia y no del código.
 
-| Qué afirmaba | Qué pasaba |
-|---|---|
-| `__init__` lista `ntanos2021` entre los módulos | No existe |
-| `CASE_MODULES` lo recorre | `run_all()` siempre levanta |
-| `REGENERATE_COMMAND` = `python -m quoss.validation --write …` | No había `__main__.py` |
-| Nueve casos nombran `tests/validation/test_{satquma,micius}.py` | Los dos ficheros no existían |
+**Lo que aserta ahora** es la propiedad que tiene que valer en cualquier versión
+porque sin ella la figura se lee mal: cada anillo dibujado está en un radio del
+conjunto pedido y lleva la etiqueta `90 − r`, y hay **al menos dos** anillos
+(con uno solo no hay escala contra la que interpolar). Comprobado por mutación:
+invertir la lista de etiquetas en `plots.py` —el error real que esto protege,
+porque nadie lo ve a ojo en un polar— hace fallar el test.
 
-La última es la más instructiva, porque es la promesa que el propio diseño
-considera esencial —«una fila es trazable a una assertion que alguien puede
-correr»— y la rompía en **nueve de veintidós filas**.
+El comentario de `plots.py` también afirmaba como hecho que el anillo `r = 0`
+«nunca se dibuja». Es el comportamiento de **una** versión, no una propiedad, y
+ahora lo dice así.
 
-### Lo que se decidió, con su número
+### El segundo: un `importorskip` colocado donde no se ejecuta
 
-1. **`ntanos2021` sale de `CASE_MODULES` y el hueco se declara.** Es la misma
-   regla del ADR 0009 aplicada a un módulo en vez de a una cita: **una tabla con
-   un hueco declarado dice más que una tabla que no se puede producir**. Y el
-   hueco no es menor, así que se dice en voz alta en tres sitios (el `__init__`,
-   el README y un test): *la fuente sobre la que está construido el enlace de
-   referencia entero —receptor, transmisor, protocolo y radiancia de Ntanos et
-   al. 2021— **no tiene ninguna fila en la tabla**.* Lo que hoy se reporte como
-   validado contra ese paper traza a las assertions de `tests/channel/` y
-   `tests/qkd/`, no a `docs/validation.md`.
-2. **Los seis desacuerdos de ese módulo se guardan, no se borran.**
-   `EXPECTED_DISAGREEMENTS` tenía siete claves y **seis no las producía ningún
-   módulo**: eran afirmaciones que ningún test podía comprobar en ninguna de las
-   dos direcciones. Pasan a `PENDING_DISAGREEMENTS`, y hay dos tests que fuerzan
-   que las dos tablas **particionen** — ninguna clave compartida, y ninguna
-   clave pendiente producida por un módulo que existe— para que el día que se
-   escriba `ntanos2021.py` el traslado no pueda quedarse a medias.
-3. **`__main__.py`, para que el comando que el fichero generado cita exista.**
-   `docs/validation.md` lleva `REGENERATE_COMMAND` en su primera línea como la
-   única forma de reescribirlo. Un fichero generado que nombra un comando que
-   nadie puede ejecutar es peor que uno sin cabecera: quien lo intenta no puede
-   distinguir si el fichero está caducado, mal, o bien.
-   **La decisión de diseño que tiene dentro:** sale con **cero aunque la tabla
-   contenga un `not reproduced`**. Una tabla con un desacuerdo es una tabla
-   *correcta* —derivar el estado en vez de declararlo existe precisamente para
-   que el desacuerdo se publique—, así que un generador que se negara a escribir
-   el documento empujaría a quien lo encontrase a hacer desaparecer el
-   desacuerdo. Lo que sí falla ante un desacuerdo no declarado es
-   `tests/validation/test_base.py`, contra `EXPECTED_DISAGREEMENTS`.
-4. **Los dos ficheros de test que los casos ya nombraban, escritos.** No se
-   reescribieron los nodos de pytest para que apuntaran a otro sitio: los casos
-   ya decían qué había que asertar, y lo que faltaba era asertarlo. Y hay un test
-   nuevo, `test_every_case_names_a_test_file_that_exists`, que recorre las 22
-   filas y comprueba que la mitad de fichero de cada nodo resuelve — el defecto
-   no puede volver en silencio.
+`quoss` instala sin `quoss[export]` a propósito: Parquet necesita `pyarrow`, que
+son 40 MB y no es una dependencia de física. Sin ese extra,
+`tests/io/test_export.py` daba **7 errores** — no saltados, errores.
 
-### Las cifras que la tabla da hoy
+`test_parquet_reads_back` **ya tenía** su `pytest.importorskip("pyarrow.parquet")`.
+No servía de nada: el *fixture* de la clase ya había llamado a `export_result` con
+`"parquet"` entre los formatos, que sin `pyarrow` levanta `ConfigurationError`, y
+un fixture que falla es un **error** de todos los tests de la clase — incluidos
+los seis que solo leen CSV, npz y JSON y no tienen nada que ver con Parquet.
 
-**22 casos de tres fuentes: 14 reproducidos, 1 compatible, 1 no reproducido y 6
-huecos.** Las dos que merecen leerse:
+**La lección, que generaliza:** una guarda de dependencia tiene que estar **aguas
+arriba** de lo que la necesita, no al lado. Aquí eso significa partir el fixture:
+`exported` exporta `CORE_FORMATS = ("json", "csv", "npz")`, cuyos escritores no
+necesitan más que numpy y la biblioteca estándar; `exported_with_parquet` añade
+Parquet y hace `importorskip` antes de exportar nada.
 
-- **El único `not_reproduced` de todo el proyecto** es de Micius: Liao et al.
-  2017 imprimen «The diffraction loss is estimated to be 22 dB at 1200 km» en el
-  mismo párrafo que un transmisor de 300 mm y un receptor de 1 m, y esas dos
-  aperturas a 848.6 nm dan **9.95 dB**. No falla la ley de pérdidas: el haz que
-  el propio párrafo describe —«~10 µrad», «about 10 m» a 1200 km— es **2.8 veces
-  más ancho** de lo que una apertura de 300 mm puede difractar. Los 22 dB son del
-  haz real y la apertura impresa no los determina.
-- **El único `compatible`** es el presupuesto de Ntanos et al.: sus 20 dB contra
-  los 19.094 dB que dan sus propios parámetros, cerrado por una extinción que el
-  paper no declara y que solo puede añadir pérdida. Es la forma más débil de
-  compatibilidad —un término acotado por un solo lado— y la tabla dice cuáles
-  filas se apoyan en ella.
+Medido: sin `pyarrow`, de **32 pasan y 7 errores** a **38 pasan y 2 saltados**.
+Con `pyarrow`, `src/quoss/io/export.py` sigue al **100 %** de líneas y ramas —los
+caminos de Parquet los cubren los dos tests que ahora dependen del fixture nuevo—
+y hay un test más que antes, porque la lista de ficheros y sus SHA-256 se
+comprueban dos veces: la de los formatos del núcleo y la de los ocho ficheros.
 
-Y una medida nueva, del lado de Micius, que la nota del caso afirmaba sin cifra:
-**«~1 kbit/s» es una cifra significativa**, y leerlo como 0.5 a 1.5 kbit/s mueve
-la pérdida implícita de **46.02 a 41.25 dB** — una ventana de 4.8 dB, más ancha
-que la mitad del rango publicado del propio presupuesto. El acuerdo es real y es
-un acuerdo entre dos intervalos.
+### Lo que esto **no** era
 
-### Lo que queda fuera
-
-- **`docs/validation.md` no se commitea todavía.** El comando que lo escribe
-  funciona; lo que falta es decidir si se publica una tabla sin la fuente
-  principal, y el test que compare el fichero con el texto generado. Es el punto
-  4 de la etapa 8.
-- **`ntanos2021.py` sigue sin escribirse**, y con él la etapa 8 sigue abierta.
+El diagnóstico de partida decía que `TestSkyTrack` **fallaba** en el árbol. En
+`matplotlib 3.11.1` no falla: pasa. Lo que estaba mal no era el resultado sino la
+forma de la asserción, y por eso se arregla igual — un test que hoy pasa por la
+versión que hay instalada es el mismo defecto un día antes de manifestarse.
 
 ### Verificación
 
-`tests/validation/`: **104 elementos** (95 tests más doctests), **100 % de líneas
-y ramas** en los seis módulos del paquete. Con eso el proyecto entero pasa a
-**100 % de cobertura global con ramas** (7 866 sentencias, 1 956 ramas, ninguna
-sin cubrir) — `validation/base.py` al 59 % era lo único que faltaba. Suite
-completa: **3 324 tests** (eran 3 229). `ruff check`, `ruff format --check` y
-`mypy` limpios.
+Suite completa: **3 230 tests** (uno más que los 3 229 de la línea base de esta
+rama). `ruff check`, `ruff format --check` y `mypy` limpios. Cobertura con ramas:
+`io/export.py` y los cuatro módulos de `viz/` al **100 %**. Sin `pyarrow` en el
+entorno, `tests/io/test_export.py` da 38 pasan y 2 saltados y ningún error.
 
 ### Ficheros
 
-`src/quoss/validation/{__init__,base}.py`, `src/quoss/validation/__main__.py`
-(nuevo), `tests/validation/{__init__,cases,test_base,test_satquma,test_micius,test_main}.py`
-(nuevos), `notes/ROADMAP.md`.
+`tests/viz/test_plots.py`, `tests/io/test_export.py`, `src/quoss/viz/plots.py`
+(solo un comentario).
