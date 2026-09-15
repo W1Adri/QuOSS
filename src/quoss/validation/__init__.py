@@ -25,17 +25,38 @@ Modules
 base
     The case, its four statuses, the rule that derives the status, the list of
     known disagreements, and the Markdown renderer for ``docs/validation.md``.
+__main__
+    ``python -m quoss.validation`` — prints the table, or writes it to a file
+    with ``--write``.
 channel
     ITU-R P.1621-2 and P.1622, and the Farid & Hranilovic 2007 pointing model
     against Ntanos et al. 2021.
-ntanos2021
-    Ntanos et al. 2021, the reference link's source, and the two protocol papers
-    the link is evaluated with (Ma et al. 2005, Lim et al. 2014).
 satquma
     Sidhu et al. 2021 (SatQuMA): what is like-for-like with this project's
     finite-key stack and what is not.
 micius
     Liao et al. 2017: the only measured satellite QKD data in the table.
+
+What is **not** here yet, and it is the row that matters most
+--------------------------------------------------------------
+``ntanos2021`` — Ntanos et al. 2021, the reference link's own source, together
+with the two protocol papers the link is evaluated with (Ma et al. 2005, Lim
+et al. 2014). It is stage 8.1 of ``notes/ROADMAP.md`` and it is **not written**.
+
+This paragraph replaces one that listed it among the modules as though it
+existed. That was not only a docstring being optimistic: the name was in
+:data:`~quoss.validation.base.CASE_MODULES`, so :func:`~quoss.validation.base.run_all`
+— the one entry point of the package — raised ``ModuleNotFoundError`` on every
+call. **The table that existed to stop "validated" from being a badge could not
+be produced at all.** The six disagreements that module will carry are kept, and
+kept reachable, in :data:`~quoss.validation.base.PENDING_DISAGREEMENTS`.
+
+So what ``run_all()`` returns today is 22 cases from three sources, and the
+honest reading of it is: the channel recommendations and the two external
+systems are covered; **the paper this project's reference link is built on is
+not in the table yet**. Anything reported as validated against Ntanos et al.
+traces to the assertions in ``tests/channel/`` and ``tests/qkd/``, not to a row
+here.
 
 No re-exports, deliberately — see :mod:`quoss.core` for the reasoning. Import
 from the module that defines the name.

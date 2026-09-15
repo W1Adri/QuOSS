@@ -753,11 +753,34 @@ Con esto ya puedes escribir el paper. **La web todavía no existe, y no pasa nad
 ## Etapa 8 — `validation/`: credibilidad
 
 Barato y es el mayor multiplicador de confianza que hay. Se ejecuta en CI.
+El ADR de la etapa es el **0018** (reservado, ver «Numeración de ADRs»).
 
-1. `validation/ntanos2021.py` — reproducir los números publicados
-2. `validation/satquma.py` — comparación con el toolkit de referencia
-3. `validation/micius.py` — datos de misión real
-4. `docs/validation.md` — autogenerado: qué se reproduce y con qué desviación
+0. ✅ `validation/base.py` — la forma de una afirmación de validación: el caso,
+   sus cuatro estados (`reproduced` / `compatible` / `not_reproduced` / `gap`), y
+   la regla que **deriva** el estado en vez de aceptarlo escrito a mano. Un estado
+   que sus propios números no producen es un `DomainError`, no una fila. Más
+   `validation/channel.py` (ITU-R P.1621-2 y P.1622, y el modelo de apuntado de
+   Farid & Hranilovic) y `validation/__main__.py`
+1. ⬜ `validation/ntanos2021.py` — reproducir los números publicados. **Lo que
+   falta, y es la fila que más importa:** es la fuente del enlace de referencia
+   entero (receptor, transmisor, protocolo, radiancia). Los seis desacuerdos que
+   traerá están guardados en `base.PENDING_DISAGREEMENTS`, ya medidos y asertados
+   en `tests/channel/` y `tests/qkd/`; lo que no existe es su fila en la tabla
+2. ✅ `validation/satquma.py` — comparación con el toolkit de referencia. Dos
+   identidades reproducidas (la convención de ruido y el coste fijo de la cota) y
+   **dos huecos declarados**: todas sus longitudes de clave están solo en figuras,
+   y su cota es Chernoff donde la nuestra es Hoeffding
+3. ✅ `validation/micius.py` — datos de misión real. La única fuente **medida** de
+   la tabla, y el único `not_reproduced` que hay: sus 22 dB de difracción a
+   1200 km no salen de la apertura de 300 mm que el propio párrafo imprime (9.95 dB)
+4. ⬜ `docs/validation.md` — autogenerado por
+   `uv run python -m quoss.validation --write docs/validation.md`, que **ya
+   funciona**; falta decidir si se commitea la tabla incompleta o se espera al
+   punto 1, y el test que compara el fichero con el texto generado
+
+**Estado al 2026-09-14:** 22 casos de tres fuentes — 14 reproducidos, 1
+compatible, 1 no reproducido, 6 huecos. `tests/validation/` existe y cubre el
+paquete al **100 %** de líneas y ramas.
 
 ---
 
