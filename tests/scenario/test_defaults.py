@@ -198,6 +198,10 @@ class TestReferenceCastelldefels:
             zenith_transmittance=1.0,
             pointing_jitter_rad=NTANOS_POINTING_JITTER_RAD,
             receiver_efficiency=chain,
+            # Written out, because `reference.conditions_at` does NOT pass it: the
+            # fixture leaves the turbulence at 0 m while the scenario starts it at
+            # the station's 30 m. That single argument is the 457 bits between
+            # 432 985 and 433 442 (ADR 0016, tests/e2e/test_reference_scenarios.py).
             station_height_m=30.0,
             degradations=log_b,
         )

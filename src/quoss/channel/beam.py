@@ -614,7 +614,9 @@ def uplink_beam_wander_angle_rad(
         Diameter of the transmitting aperture, m — the ground terminal's, since
         this is an uplink.
     station_height_m
-        Height of the ground station above ground level, m.
+        Altitude of the ground station above mean sea level, m; see
+        :mod:`quoss.channel.atmosphere` on what the recommendation's
+        "above ground level" means.
     rms_wind_speed_m_s
         The r.m.s. wind speed, m/s.
     ground_cn2_m23
@@ -702,7 +704,9 @@ def uplink_beam_wander_displacement_m(
     transmit_aperture_m
         Diameter of the transmitting (ground) aperture, m.
     station_height_m
-        Height of the ground station above ground level, m.
+        Altitude of the ground station above mean sea level, m; see
+        :mod:`quoss.channel.atmosphere` on what the recommendation's
+        "above ground level" means.
     rms_wind_speed_m_s
         The r.m.s. wind speed, m/s.
     ground_cn2_m23
@@ -791,7 +795,9 @@ def uplink_wander_to_divergence_ratio(
         Log that receives a warning if the wander reaches the divergence
         half-angle.
     station_height_m
-        Height of the ground station above ground level, m.
+        Altitude of the ground station above mean sea level, m; see
+        :mod:`quoss.channel.atmosphere` on what the recommendation's
+        "above ground level" means.
     rms_wind_speed_m_s
         The r.m.s. wind speed, m/s.
     ground_cn2_m23

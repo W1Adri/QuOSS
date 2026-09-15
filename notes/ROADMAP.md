@@ -663,18 +663,31 @@ Lo que el motor recibe de aquí no lleva ni un grado.
 
 ---
 
-## Etapa 5 — `engine/`: el orquestador
+## Etapa 5 — `engine/`: el orquestador ✅
 
-Lo que hoy está enterrado en un handler HTTP. Sin dependencias web.
+Lo que hoy está enterrado en un handler HTTP. Sin dependencias web. Decisiones en
+el [ADR 0016](../docs/adr/0016-the-engine-adds-nothing-and-one-altitude.md).
 
-1. `engine/pipeline.py` — escenario → órbita → geometría → canal → QKD → sistema → resultado
-2. `engine/cache.py` — caché de resultados por hash de escenario
-3. `engine/parallel.py` — paralelismo por passes / estaciones / realizaciones MC
-4. `engine/sweep.py` — barridos de parámetros como ciudadano de primera (las figuras del paper *son* barridos)
-5. `engine/profiling.py` — tiempos por etapa dentro del propio resultado
+1. ✅ `engine/pipeline.py` — escenario → órbita → geometría → canal → QKD → sistema → resultado
+2. ✅ `engine/cache.py` — caché de resultados por hash de escenario
+3. ✅ `engine/parallel.py` — paralelismo por passes / estaciones / realizaciones MC
+4. ✅ `engine/sweep.py` — barridos de parámetros como ciudadano de primera (las figuras del paper *son* barridos)
+5. ✅ `engine/profiling.py` — tiempos por etapa dentro del propio resultado
 
 **Hecho cuando:** `run(scenario) → result` funciona en una línea de Python y un
 escenario de referencia reproduce números publicados (V2), no los de SimulCTTC.
+
+**Lo que faltaba y se cerró el 2026-09-14:** la afirmación central del paquete —«el
+motor no calcula nada que no calcularía una persona llamando a las funciones a
+mano»— citaba `tests/e2e/test_reference_scenarios.py`, **que no existía**. Ahora
+existe: 30 tests que comparan el resultado del motor con la cadena de
+`tests/e2e/oracle.py` por igualdad **exacta** de coma flotante, etapa por etapa,
+incluidas las tres opcionales (Monte Carlo, multi-estación, relé). De paso cerró
+la discrepancia de **457 bits** entre las 432 985 bits del día de referencia que
+cita la etapa 3 y las **433 442** que devuelve `run()`: es la altitud de la
+estación entrando —o no— en la integral de turbulencia, y las dos cifras se
+reproducen a la última cifra desde la misma cadena con un solo argumento
+distinto. El número que se reporta es el del motor.
 
 ---
 
@@ -805,6 +818,26 @@ física**: pinta lo que devuelve el motor.
 3. `benchmarks/` — puerta de regresión de rendimiento en CI
 4. `kernels/numba_backend.py` / `kernels/rust/` — **solo ahora**, y solo lo que diga el profiler
 5. `docs/adr/*.md` — decisiones no obvias, a medida que se toman
+
+---
+
+## Numeración de ADRs, y los dos reservados
+
+Un ADR por decisión no obvia, numerado al escribirse y nunca renumerado. A
+2026-09-14 hay **dieciséis**, del 0001 al 0016, y dos números **reservados** por
+código que ya los cita:
+
+| Nº | Etapa | Estado |
+|---|---|---|
+| 0001–0015 | 0–4, 6 | escritos |
+| **0016** | 5 (`engine/`) | escrito el 2026-09-14, [aquí](../docs/adr/0016-the-engine-adds-nothing-and-one-altitude.md) |
+| **0017** | 7 (`viz/`) | **reservado**. `src/quoss/viz/plots.py` lo cita como `0017-publication-figures.md` para la decisión de los dos paneles contra el doble eje |
+| **0018** | 8 (`validation/`) | **reservado**. `src/quoss/validation/__init__.py` lo cita como `0018-validation-is-a-table-not-a-badge.md` para la regla de que un estado de validación se **deriva** de los números y no se escribe a mano |
+
+Las dos citas dicen en el propio código que el fichero está pendiente, porque
+citar un fichero que no existe es la misma clase de afirmación sin cumplir que el
+ADR 0016 corrige. Quien escriba la etapa 7 o la 8 usa **ese** número, no el
+siguiente libre.
 
 ---
 

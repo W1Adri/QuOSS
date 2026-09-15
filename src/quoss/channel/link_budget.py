@@ -1439,7 +1439,8 @@ def downlink_loss_budget(
         :attr:`FadeCombination.EXACT` (default) or
         :attr:`FadeCombination.ADDITIVE`.
     station_height_m
-        Station height above ground level, m, for the turbulence profile.
+        Station altitude above mean sea level, m, where the turbulence
+        profile starts; see :mod:`quoss.channel.atmosphere`.
     rms_wind_speed_m_s
         R.m.s. wind speed along the path, m/s.
     ground_cn2_m23

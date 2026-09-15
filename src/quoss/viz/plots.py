@@ -54,7 +54,8 @@ ranged, so the figure shows a relationship that is a property of the axis
 limits, not of the data. Two panels sharing the time axis show the same
 alignment in time — which is the point, the rate lives only inside the shaded
 pass windows — without that artefact. ``docs/adr/0017-publication-figures.md``
-records the decision.
+will record the decision; 0017 is reserved for stage 7 and not written yet
+(see ``notes/ROADMAP.md``).
 
 What it deliberately leaves out
 -------------------------------

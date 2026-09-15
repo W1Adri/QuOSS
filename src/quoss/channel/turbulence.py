@@ -203,7 +203,9 @@ def cn2_path_moment(
     power
         Exponent applied to the height above the station.
     station_height_m
-        Height of the ground station above ground level, m.
+        Altitude of the ground station above mean sea level, m; see
+        :mod:`quoss.channel.atmosphere` on what the recommendation's
+        "above ground level" means.
     rms_wind_speed_m_s
         The r.m.s. wind speed, m/s.
     ground_cn2_m23
@@ -296,7 +298,9 @@ def log_irradiance_variance(
         Log that receives a warning if the variance leaves the range where
         weak-fluctuation theory holds.
     station_height_m
-        Height of the ground station above ground level, m.
+        Altitude of the ground station above mean sea level, m; see
+        :mod:`quoss.channel.atmosphere` on what the recommendation's
+        "above ground level" means.
     rms_wind_speed_m_s
         The r.m.s. wind speed, m/s.
     ground_cn2_m23
@@ -441,7 +445,9 @@ def aperture_averaging_factor(
     wavelength_m
         Optical wavelength, m.
     station_height_m
-        Height of the ground station above ground level, m.
+        Altitude of the ground station above mean sea level, m; see
+        :mod:`quoss.channel.atmosphere` on what the recommendation's
+        "above ground level" means.
     rms_wind_speed_m_s
         The r.m.s. wind speed, m/s.
     ground_cn2_m23
@@ -526,7 +532,9 @@ def downlink_log_irradiance_variance(
     degradations
         Log that receives a warning if weak-fluctuation theory is out of range.
     station_height_m
-        Height of the ground station above ground level, m.
+        Altitude of the ground station above mean sea level, m; see
+        :mod:`quoss.channel.atmosphere` on what the recommendation's
+        "above ground level" means.
     rms_wind_speed_m_s
         The r.m.s. wind speed, m/s.
     ground_cn2_m23
@@ -613,7 +621,9 @@ def uplink_log_irradiance_variance(
     degradations
         Log that receives a warning if weak-fluctuation theory is out of range.
     station_height_m
-        Height of the ground station above ground level, m.
+        Altitude of the ground station above mean sea level, m; see
+        :mod:`quoss.channel.atmosphere` on what the recommendation's
+        "above ground level" means.
     rms_wind_speed_m_s
         The r.m.s. wind speed, m/s.
     ground_cn2_m23
@@ -663,7 +673,9 @@ def fried_parameter_m(
     wavelength_m
         Optical wavelength, m.
     station_height_m
-        Height of the ground station above ground level, m.
+        Altitude of the ground station above mean sea level, m; see
+        :mod:`quoss.channel.atmosphere` on what the recommendation's
+        "above ground level" means.
     rms_wind_speed_m_s
         The r.m.s. wind speed, m/s.
     ground_cn2_m23
@@ -738,7 +750,9 @@ def isoplanatic_angle_rad(
     wavelength_m
         Optical wavelength, m.
     station_height_m
-        Height of the ground station above ground level, m.
+        Altitude of the ground station above mean sea level, m; see
+        :mod:`quoss.channel.atmosphere` on what the recommendation's
+        "above ground level" means.
     rms_wind_speed_m_s
         The r.m.s. wind speed, m/s.
     ground_cn2_m23

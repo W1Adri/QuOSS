@@ -1,7 +1,39 @@
 # QuOSS — Últimos cambios y cosas a considerar
 
 > Bitácora viva. Se actualiza al cerrar cada etapa del [`ROADMAP.md`](ROADMAP.md).
-> Última actualización: **2026-09-13** — **los dos primeros módulos de la Etapa 3**,
+> Última actualización: **2026-09-14** — **`tests/e2e/test_reference_scenarios.py`**
+> (§32) y el [ADR 0016](../docs/adr/0016-the-engine-adds-nothing-and-one-altitude.md).
+> El motor afirmaba desde su primera línea que ese fichero probaba **bit a bit** que
+> no añade ni pierde nada frente a una cadena cableada a mano; **el fichero no
+> existía**. Ahora existe, son 30 tests con igualdad **exacta** de coma flotante, y
+> lo primero que cerró es la discrepancia que tapaba.
+>
+> **La cifra que resume la entrada:** el día de referencia tenía **dos** valores de
+> clave finita en el árbol a la vez, **432 985 bits** (etapa 3) y **433 442 bits**
+> (`run()`). Son **457 bits, el 0.106 %**, y son **un término**:
+> `StationSpec.altitude_m` es a la vez dónde está la estación y dónde empieza la
+> integral de turbulencia; el *fixture* de la etapa 3 la pasa a la geometría y deja
+> la turbulencia en 0 m, el motor cablea el campo. Las dos cifras se reproducen **a
+> la última cifra** desde la misma cadena con un solo argumento distinto, los dos
+> enlaces ven **los mismos pases**, y de los nueve términos del presupuesto solo se
+> mueve el de centelleo, **0.0185 dB** como mucho. **La que va al paper es la del
+> motor**: en un escenario `altitude_m` es un campo y no puede significar dos cosas.
+>
+> **Y lo que hace que ese 0.1 % no sea un redondeo:** el mismo término vale
+> **+35.7 %** en Calar Alto (2 168 m) y **+4.5 %** en la OGS del Teide (2 400 m),
+> y **duplica** el segundo pase de Calar Alto (9 817 → 19 724 bits), porque el
+> término de superficie del perfil HV tiene 100 m de altura de escala y a 2 168 m
+> hay un orden de magnitud menos de turbulencia encima. Las estaciones del enlace
+> que viene están en montañas, no al nivel del mar.
+>
+> **La ambigüedad que había debajo, cerrada con el documento abierto:** el proyecto
+> documentaba `station_height_m` como «above ground level» en dieciséis sitios
+> mientras le metía la altura sobre el elipsoide. La ITU-R P.1621-2 usa los dos
+> nombres para el mismo símbolo y se desempata sola: la frase que sigue a su
+> Ec. (13) da el rango de validez como «earth station altitude between 0 km and
+> 5 km **above sea level**», y 0-5 km es un rango de sitios, no de mástiles.
+>
+> Entrada anterior: **los dos primeros módulos de la Etapa 3**,
 > `system/passes.py` (§26) y `system/key_volume.py` (§27), con el
 > [ADR 0011](../docs/adr/0011-the-block-is-the-pass.md). Entre los dos cierran la
 > decisión que el ADR 0010 dejó aplazada: **el bloque es el pase**, y con eso la

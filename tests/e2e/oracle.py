@@ -342,3 +342,42 @@ def station_set(*names: str) -> StationSet:
         longitude_rad=np.deg2rad(np.array([STATIONS[n][1] for n in names])),
         altitude_km=np.array([STATIONS[n][2] / 1000.0 for n in names]),
     )
+
+
+def mean_log_transmittance(link: HandLink, pass_index: int | None = None) -> float:
+    """Return the mean of `ln T` over a link's samples, or over one pass of it.
+
+    Why the logarithm, and why the mean of it
+    -----------------------------------------
+    `T` is the transmittance: the fraction of the photons leaving the satellite
+    that reach the detector. It is a number like 1.7e-4, and it changes by
+    orders of magnitude along one pass, because the satellite goes from 10
+    degrees above the horizon to overhead and back.
+
+    Two things follow. First, the *mean of T* over a pass is dominated by the
+    few seconds near culmination and says almost nothing about the rest, so it
+    is the wrong summary. Second, what the altitude term does to the channel is
+    **multiplicative** — it removes a fixed fraction of the turbulence integral,
+    not a fixed number of photons — and the natural summary of a multiplicative
+    change is a difference of logarithms: `ln T_up - ln T_sea` is the same
+    number whether the link is bright or faint.
+
+    That difference is also what makes the decomposition in
+    `TestWhyTheHigherStationGainsLess` an identity rather than an analogy. With
+    `x = mean(ln T)` and `y = ln(key bits)`, the elasticity `E = dy / dx` is
+    defined so that `dy = E * dx` exactly, by construction. The content is not
+    the algebra, it is that `dx` and `E` turn out to be two separable physical
+    things: `dx` is the atmosphere and `E` is the finite-key bound.
+
+    Worked example
+    --------------
+    Calar Alto, the reference day, all four passes' samples pooled:
+    `mean(ln T)` is -8.665297 at sea level and -8.598190 from 2 168 m. The
+    difference is +0.067107, i.e. the altitude multiplies the transmittance by
+    `exp(0.067107) = 1.0694`, a **6.94 %** brighter channel on average.
+    """
+    transmittance = np.asarray(link.loss.transmittance, dtype=np.float64)
+    if pass_index is None:
+        return float(np.log(transmittance).mean())
+    selected = np.asarray(link.samples.pass_index) == pass_index
+    return float(np.log(transmittance[selected]).mean())
