@@ -101,6 +101,8 @@ Todas comprobadas abriendo el documento y extrayendo el texto.
 | Varianza de log-irradiancia; asimetría uplink/downlink | **ITU-R P.1622** (04/2003) | (4a)–(4c), (5) |
 | Promediado de apertura | ITU-R P.1622 | (6), (7), (8) |
 | Beam wander | ITU-R P.1622 | (11a), (11b) |
+| Escintilación en camino horizontal (onda plana); profundidades de desvanecimiento; extinción específica | **ITU-R P.1814** (2007) | (3), (8), Tabla 4 |
+| Onda esférica; promediado de apertura en camino horizontal; asíntotas de régimen fuerte | **Kaushal & Kaddoum**, arXiv:1506.04836 (fuente secundaria, ver hueco 17) | (8)–(11), (20), (21) |
 | Rytov en camino inclinado; escintilación en régimen fuerte | **Ntanos et al. 2021**, *Photonics* 8(12):544 | (12), (13) |
 | Perfil HV modificado con la altitud de la estación | Ntanos et al. 2021 | (11) |
 | Potencia y cuentas de fondo | Ntanos et al. 2021 | (19), (20) |
@@ -360,6 +362,27 @@ Esta lista es la parte que hace que la de arriba signifique algo.
     arriba, no están decididas por nada impreso. `tests/qkd/test_finite_key.py`
     **asierta el desacuerdo**, para que dejar de tenerlo obligue a reescribir
     esto. Ver [ADR 0010](0010-decoy-and-finite-key.md).
+
+17. **El camino horizontal tiene una fuente primaria para la onda plana y una
+    secundaria para el resto.** ITU-R P.1814 da la onda plana y su Tabla 4, y
+    nada más de turbulencia. La onda esférica y el promediado de apertura vienen
+    de Kaushal & Kaddoum (arXiv:1506.04836), un *survey* de acceso abierto con
+    ecuaciones numeradas —prioridad (b)— que cita a Churnside 1991 y Andrews
+    1992, que no se pudieron abrir. Leído en el PDF de arXiv; los números de
+    ecuación son los de ese PDF. **Lo que lo compensa en parte:** el promediado de
+    onda plana coincide al **0.67 %** con las Ecs. (6)–(7) de P.1622 tumbadas
+    sobre un camino horizontal (el 1.8 del resultado es exacto). **Lo que no:** el
+    promediado de onda esférica, `0.214`, no tiene segunda fuente.
+18. **No hay onda gaussiana.** Un haz real no es ni plano ni esférico, y cerca de
+    su rango de Rayleigh ninguna de las dos formas cerradas es la correcta. Las
+    fórmulas de onda gaussiana están en Andrews & Phillips (hueco 1).
+    `horizontal_loss_budget` avisa cuando la onda declarada está del lado
+    equivocado del rango de Rayleigh, con el factor 2.46 que separa las dos.
+19. **Ni retrorreflector ni *beam wander* horizontal.** Un enlace de ida y vuelta
+    cruza el mismo aire dos veces con pasos correlacionados (retrodispersión
+    reforzada); tratarlo como un camino de `2L` es una aproximación sin fuente.
+    Kaushal & Kaddoum escriben `σ_BW² = 1.44 C_n^2 L² W_0^(-1/3)` para el *beam
+    wander*, sin número de ecuación; no se implementa.
 
 ### El caveat de Ntanos et al. 2021, que es la fuente V2 de punta a punta
 

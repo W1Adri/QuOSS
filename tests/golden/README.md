@@ -86,6 +86,31 @@ pattern to copy: it does not assert a flat "close enough", it separates the
 UT1 approximation from polar motion and holds each to a bound computed from the
 size of the effect.
 
+**A literal is a golden across machines, and it needs a bound of its own.**
+Floating point is deterministic within a platform, not across them: IEEE 754
+requires correct rounding of `+ - * / sqrt` and not of `exp`, `log`, `pow` or
+`erf`. So four rules, all measured in
+`tests/e2e/test_reference_scenarios.py` (module docstring):
+
+1. **Route against route, in one process:** `==`. The same call returns the
+   same doubles.
+2. **A hand-written literal against a computation that passes through an
+   elementary function:** a tolerance derived from the number of such calls,
+   the cancellations upstream, the sensitivity of the result and the length of
+   any sum — never `==`, and never a round `rel=1e-9`. On the reference day
+   that is 8.15e-13 relative; the second machine that found the problem was 9
+   ULP away.
+3. **An integer that is `floor` of such a computation:** `==` only with a test
+   showing the unfloored value is further from an integer than the derived
+   error (0.039 bits against 6e-7 on the reference day).
+4. **A doctest:** print at most twelve significant digits of anything that went
+   through an elementary function. `10 ** 4.5` lies 0.29 ULP from the double one
+   machine returns, so a library within 0.71 ULP may print a different
+   seventeenth digit.
+
+CI runs the suite on macOS arm64 and on numpy 2.0 as well, because a golden
+verified on one machine is a photograph of that machine.
+
 ## Gaps, stated rather than filled
 
 Reference values that would be worth having and are **not** in `data/` yet:
@@ -401,6 +426,19 @@ be opened, written down so nobody has to rediscover it.
   it forces this paragraph to be rewritten. See
   [ADR 0009](../../docs/adr/0009-citation-policy.md) gap 16 and
   [ADR 0010](../../docs/adr/0010-decoy-and-finite-key.md).
+- **The horizontal path (`channel/horizontal.py`) has one primary source and one
+  secondary one.** ITU-R P.1814 gives the plane-wave variance and a table of six
+  fade depths, reproduced to their two decimals; nothing else about turbulence.
+  The spherical wave and aperture averaging come from Kaushal & Kaddoum,
+  arXiv:1506.04836, a survey quoting Churnside 1991 and Andrews 1992, which were
+  not opened. The plane-wave averaging factor is cross-checked against ITU-R
+  P.1622 equations (6)–(7) laid along a horizontal path (0.67 %, inside the 4.5 %
+  its two-figure coefficient allows); the spherical one has no second source.
+  ADR 0009 gap 17.
+- **No Gaussian beam wave, no retroreflector, no horizontal beam wander.** The
+  first is in Andrews & Phillips; the second has no source; the third is printed
+  by Kaushal & Kaddoum without an equation number. ADR 0009 gaps 18 and 19, and
+  [ADR 0021](../../docs/adr/0021-horizontal-path.md).
 - **SatQuMA as an independent V3 oracle for finite-key** (github.com/cnqo-qcomms/SatQuMA,
   **MIT licence**, pure Python, implements Lim et al. 2014 with its own numbered
   equations in arXiv:2109.01686). Not yet frozen into `data/`. It fails condition

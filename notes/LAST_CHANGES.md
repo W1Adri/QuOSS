@@ -1,7 +1,17 @@
 # QuOSS — Últimos cambios y cosas a considerar
 
 > Bitácora viva. Se actualiza al cerrar cada etapa del [`ROADMAP.md`](ROADMAP.md).
-> Última actualización: **2026-09-14** — **`tests/e2e/test_reference_scenarios.py`**
+> Última actualización: **2026-09-15** — §35 y §36. **§35:** dos literales del
+> puente e2e fallaban por 9 ULP en una máquina que no era la suya; ahora se
+> comparan contra una cota derivada de 8.15e-13, y al buscar la misma clase de
+> defecto en la suite salieron cinco doctests más. Arreglando el camino
+> horizontal apareció un defecto peor en el camino compartido: `combined_fade_db`
+> devolvía **1.602 dB** donde la respuesta es **0.101** con apuntado despreciable.
+> **§36:** `channel/horizontal.py` — presupuesto y QBER de un banco y de un enlace
+> de unos kilómetros, con la Tabla 4 de ITU-R P.1814 como V2, y para GE-1 a 1 km
+> una lente de 10 cm da **11 veces** la clave de una de 2.5 cm.
+>
+> Entrada anterior (2026-09-14): **`tests/e2e/test_reference_scenarios.py`**
 > (§32) y el [ADR 0016](../docs/adr/0016-the-engine-adds-nothing-and-one-altitude.md).
 > El motor afirmaba desde su primera línea que ese fichero probaba **bit a bit** que
 > no añade ni pierde nada frente a una cadena cableada a mano; **el fichero no
@@ -5751,3 +5761,227 @@ cuatro series y las cuatro columnas con la cadena a mano por **igualdad exacta**
 `tests/orbits/test_geometry.py`, `tests/system/test_passes.py`,
 `tests/engine/test_pipeline.py`, `tests/e2e/{oracle,test_reference_scenarios}.py`,
 `tests/io/test_export.py`, `tests/scenario/test_result.py`, `tests/viz/builders.py`.
+
+---
+
+## 35. Literales que solo valían en una máquina, y un desvanecimiento conjunto que mentía con apuntado despreciable
+
+Tres arreglos de la ronda anterior y un defecto nuevo del camino compartido,
+encontrado al construir el camino horizontal (§36).
+
+### T1 — Dos tests fallaban en otra máquina, y no eran un fallo del motor
+
+**Qué pasó.** En `72590a5` con numpy 2.4.4, la suite dio 2 fallos en
+`tests/e2e/test_reference_scenarios.py`: `ENGINE_ASYMPTOTIC_DAY_BITS` y el
+asintótico de la etapa 3, por **9 y 8 ULP** (1.1e-15 relativo). Un ULP, *unit in
+the last place*, es la distancia entre un double y el siguiente: en 3.78 millones
+son 4.7e-10.
+
+**Por qué no era un fallo real.** El docstring del fichero defendía la igualdad
+exacta con un argumento correcto —la misma función con los mismos argumentos
+devuelve los mismos doubles— que solo cubre **ruta contra ruta en un proceso**.
+Un literal escrito a mano es otra cosa: es un *golden* entre máquinas, y el
+estándar IEEE 754 obliga a redondear correctamente `+ − × ÷ √` pero **no** `exp`,
+`log`, `pow` ni `erf`. Dos bibliotecas conformes pueden devolver dobles vecinos.
+La prueba de que era eso: en la otra máquina las aserciones ruta contra ruta
+pasaban, y en esta no se reproduce el fallo ni con numpy 2.4.4, ni con 2.4.6, ni
+apagando los núcleos SIMD de x86. Es la plataforma.
+
+**Lo que asierta ahora.** Dos clases, separadas en el docstring:
+
+- **Ruta contra ruta:** `==`, como estaba. Es lo que sostiene «el motor no añade
+  nada».
+- **Literal contra cálculo:** `assert_matches_literal`, con una cota **derivada**:
+
+  `cota = 2 · u · ε · κ · (n + G) + (N − 1) · ε`
+
+  con `u = 1` ULP por llamada elemental (lo que documentan las `libm`), `n = 140`
+  sitios de llamada **contados del código fuente por el propio test**, `G = 740`
+  la cancelación de `1 − exp(−x)` en el término geométrico en la muestra más
+  baja, `κ = 1.064` la sensibilidad de la clave a la transmitancia **medida** por
+  diferencia finita, y `N = 1 800` muestras sumadas en otro orden.
+
+**Ejemplo con números.** Da **8.15e-13 relativo: 3.1e-6 bits, 6 618 ULP**. Los
+9 ULP observados caben setecientas veces; un bit de error no cabe ni de lejos, y
+el test lo comprueba en las dos direcciones.
+
+**Los enteros se quedan exactos, demostrado.** La clave finita es `floor` de un
+real, así que solo cambia si ese real está a menos del error de un entero.
+`test_no_finite_literal_sits_near_a_floor_boundary` rehace el valor sin redondear
+desde las columnas de la cota y mide: el pase más cercano está a **0.039 bits**
+(190 807.961) contra **5.9e-7 bits** de error posible.
+
+**Lo que la cota no modela:** la contracción FMA (un compilador que fusiona
+`a·b + c`). Si una plataforma la excede, el mensaje dice por cuántos ULP.
+
+### El barrido de la misma clase de defecto
+
+Dos barridos. Uno busca literales de ≥ 12 cifras significativas en `tests/` y
+`src/`: **78**. Otro busca, por AST, comparaciones `==` contra literales no
+diádicos —que necesitan redondeo para ser un double— y, en los doctests, salidas
+que son un float sin formatear: **118** líneas. Clasificados a mano:
+
+| Dónde | Cuántos | Veredicto |
+|---|---|---|
+| `tests/e2e/test_reference_scenarios.py` | 2 | **Mismo defecto.** Arreglados arriba |
+| `src/quoss/core/units.py`, doctests de `10 ** ±4.5` | 3 | **Mismo defecto.** El valor exacto está a 0.29 ULP del double de esta máquina: basta una `pow` a 0.71 ULP para imprimir otra cifra 17. Ahora con 12 cifras |
+| `src/quoss/core/units.py`, doctests de `10 ** -3` | 2 | Mismo defecto, marginal (haría falta 0.90 ULP). Cambiados igual |
+| Constantes contra el literal del que salen, parseo de JSON/TLE, entradas guardadas | ~100 | No es el defecto: no hay cálculo en medio |
+| `deg_to_rad`, divisiones enteras (las `0.047619…` del digest), `exp(0)` | resto | No es el defecto: aritmética que IEEE redondea correctamente |
+
+**El digest del escenario es portable:** sus floats largos son `1/21`, `16/21` y
+`4/21`, divisiones que el estándar obliga a redondear igual en todas partes.
+
+### Que no vuelva a pasar en silencio
+
+Job nuevo de CI, `portability`: la suite en **macOS arm64** (otra `libm` y los
+núcleos NEON de numpy) y en **numpy 2.0.2 con Python 3.11** (la numpy más antigua
+que acepta la scipy del lock). La segunda se verificó aquí antes de añadirla:
+**3 408 passed**. La primera no se puede verificar sin empujar la rama.
+
+### El defecto nuevo: `combined_fade_db` con apuntado despreciable
+
+**Qué es.** El margen de desvanecimiento conjunto es el cuantil de la suma de dos
+desvanecimientos: uno exponencial (apuntado, tasa `a = γ²/4.343`) y uno gaussiano
+(escintilación). Su función de distribución tiene un término cuyo exponente es la
+diferencia de dos números de tamaño `(a·s)²/2`.
+
+**Por qué fallaba.** En la bajada de referencia `γ ≈ 4.4` y no pasa nada. En un
+enlace horizontal el haz es ancho frente a su jitter, `γ` va de decenas a miles,
+y esa diferencia es cancelación catastrófica: los últimos bits del exponente son
+ruido y `exp` del ruido es un número que parece bueno.
+
+**Ejemplo con números** (antes → ahora → escintilación sola, que es la respuesta):
+
+| `γ` | `σ²` | antes | ahora |
+|---|---|---|---|
+| 1e5 | 0.5 | `RuntimeWarning: overflow` | 8.2298 dB |
+| 1e10 | 1e-4 | **1.602 dB** | 0.1012 dB |
+| 1e30 | 0.5 | **124.9 dB** | 8.2298 dB |
+
+**El arreglo es una identidad, no una aproximación:**
+`exp(−a(l−m) + a²s²/2) · Φ(z − as) = ½ · erfcx((as − z)/√2) · exp(−z²/2)`, sin
+cancelación en ningún sitio, usada donde `as ≥ z`; donde no, la forma original ya
+es segura. En la bajada de referencia no cambia nada que un doctest vea (1.668 dB
+sigue siendo 1.668). Y `γ = +∞` es ahora un valor legal: el límite «sin
+desvanecimiento de apuntado».
+
+**Y el que lo destapaba desde el otro lado:** `equivalent_beam_radius_m` dividía
+por `exp(−v²)`, que se hace cero cuando la lente es más de ~21 radios de haz. Un
+haz de 1 mm en una lente de 25 mm, un banco cualquiera. Ahora devuelve `+inf`
+pasado `v² = 700`, que es el límite de la propia Ec. (9), y el aviso lo dice.
+
+### T2 — La línea sin cubrir de la ronda anterior
+
+`engine/pipeline.py:1015`: ventana de captura declarada y cero pases.
+`TestTheDeclaredCaptureRange::test_with_no_pass_there_is_nothing_to_check_and_the_run_says_why`.
+Una ejecución de 600 s que empieza sobre el ecuador no ve ningún pase: con
+ventana declarada la etapa de adquisición no registra nada —no hay nada que
+contrastar, y `passes.none-found` ya dice por qué—; sin ventana, el INFO sale
+igual y lleva `largest_excursion_hz = None`, no `0.0`, porque cero se leería como
+una excursión medida de cero hercios.
+
+### T3 — Que un repinchado del digest se distinga de una deriva
+
+`tests/scenario/test_hash.py` lleva ahora `DIGEST_HISTORY`: cada valor que ha
+tenido el digest, con fecha, caso (1: cambia el significado y sube
+`SCHEMA_VERSION`; 2: campo opcional nuevo, no sube), y los campos que lo movieron.
+**Y un repinchado de caso 2 se demuestra, no se afirma:** el test borra de la
+forma canónica de hoy los campos que nombra, del más nuevo al más viejo, y exige
+que el SHA-256 vuelva a ser el anterior. Borrar
+`receiver.doppler_capture_range_hz` da `feafee61…`, el digest del 2026-09-13, hasta
+el último dígito. Una deriva que no nombra campo, o que nombra el equivocado, no
+lo reproduce; hay un control negativo que lo comprueba.
+
+### Verificación
+
+Suite **3 478 passed** (eran 3 408 en `72590a5` en esta máquina, que tiene
+`pyarrow`; en una sin él son 2 skipped), con cobertura de líneas y ramas al
+**100 %** en todo `src/quoss` — incluida la línea 1015 de `engine/pipeline.py`.
+`ruff check`, `ruff format --check` y `mypy` limpios. **La misma suite, con el
+código de esta entrada, en Python 3.11 + numpy 2.0.2: 3 478 passed**, que es la
+configuración del job nuevo de CI. El job de macOS arm64 no está verificado: no
+se puede sin empujar la rama.
+
+Ficheros: `.github/workflows/ci.yml`, `src/quoss/channel/{link_budget,pointing,__init__}.py`,
+`src/quoss/core/units.py`, `src/quoss/channel/horizontal.py` (nuevo, §36),
+`tests/e2e/test_reference_scenarios.py`, `tests/scenario/test_hash.py`,
+`tests/engine/test_pipeline.py`, `tests/channel/{test_link_budget,test_pointing}.py`,
+`tests/channel/test_horizontal.py` (nuevo, §36), `tests/golden/README.md`,
+`docs/adr/0009-citation-policy.md`, `docs/adr/0021-horizontal-path.md` (nuevo),
+`notes/INCONSISTENCIAS.md`.
+
+---
+
+## 36. Camino horizontal — presupuesto y QBER de un banco y de un enlace de unos kilómetros
+
+Decisión en el [ADR 0021](../docs/adr/0021-horizontal-path.md).
+
+### Qué es y por qué hacía falta
+
+Un banco con emulador (GE-0b) y un enlace horizontal (GE-1) tienen `C_n^2`
+**constante** a lo largo del camino y **no tienen elevación**. Todo el canal de
+QuOSS eran integrales inclinadas sobre el perfil HV 5/7, así que no servía para
+dimensionar lo primero que se va a montar. Y no vale el inclinado con un ángulo
+pequeño: a 0.1° la fórmula integra 11 000 km de línea y da **2.1e4 veces** la
+varianza de un kilómetro horizontal con el mismo aire de suelo.
+
+### Lo que hay
+
+`channel/horizontal.py`:
+
+- `plane_wave_rytov_variance` — ITU-R P.1814 Ec. (8): `1.2285 C_n^2 k^(7/6) L^(11/6)`
+  en Np².
+- `horizontal_point_log_irradiance_variance` — plana o esférica (Kaushal &
+  Kaddoum Ec. (9), `0.5 …`), con el aviso de régimen débil.
+- `horizontal_aperture_averaging_factor` — Kaushal & Kaddoum (20)/(21).
+- `horizontal_log_irradiance_variance` — lo anterior multiplicado.
+- `horizontal_loss_budget` — el mismo `LossBudget` que la bajada, por la misma
+  función de ensamblado.
+
+**La receta de cuatro llamadas** para ir de «longitud, `C_n^2`, diámetros» a QBER
+y clave es `tests/channel/test_horizontal.py::ge1_key`: `horizontal_loss_budget` →
+`downlink_noise_budget` (que no tiene geometría dentro; en un banco, radiancia
+cero) → `LinkConditions` → `Bb84DecoyProtocol.key_rate`.
+
+### Cómo se comprueba
+
+- **V2:** las seis celdas ópticas de la Tabla 4 de P.1814 (1 km; 0.98 y 1.55 µm;
+  `C_n^2` = 1e-16, 1e-14, 1e-13) a sus dos decimales.
+- **Entre fuentes:** P.1622 (4a) tumbada da 1.2289 contra 1.2285 (3.7e-4, cota
+  4.4e-4); Kaushal & Kaddoum imprime 1.23 (1.3e-3, cota 4.1e-3); P.1622 (6)–(7)
+  tumbadas dan un promediado a 0.67 % de Churnside (cota 4.5 %), y confirman la
+  lectura en micrómetros de su 1.1e7.
+
+### Régimen débil, y el cruce con 1.2
+
+Por encima de una varianza de Rytov de 1, aviso con la asíntota de régimen fuerte
+de Kaushal & Kaddoum (10)/(11) como **medida** del error. **La propia Tabla 4 de
+P.1814 cae fuera:** su columna «High» es 1.99 Np² a 1550 nm y 3.39 a 980 nm, y
+en la primera la teoría débil da **2.04 veces** lo que da la asíntota. Con
+`C_n^2 = 1e-14`, el límite se cruza a **2.41 km**.
+
+**Para 1.2:** los desvanecimientos se ensamblan en `link_budget._assembled_loss_budget`,
+que llaman la bajada y el horizontal. Un modelo de saturación puesto ahí lo
+heredan los dos; uno puesto en `turbulence.py`, solo la bajada, y habría que
+decirlo.
+
+### Lo que sale para GE-1 (V4, sobre supuestos declarados en el test)
+
+Transmisor de 2.5 cm, 5 µrad de jitter, 0.2 dB/km, receptor Ntanos et al., noche,
+BB84 decoy asintótico a la transmitancia del 1 % de outage:
+
+- **A 1 km con turbulencia moderada, la apertura es la palanca:** de 2.5 a 10 cm,
+  el término geométrico cae de 7.78 a 0.24 dB, la escintilación de 3.80 a
+  1.12 dB, y la clave pasa de **56.8 a 636 kbit/s**.
+- **El QBER no es lo que limita:** donde el enlace da más de 2 kbit/s, el QBER
+  está por debajo del 1.2 % contra un suelo de 1 %.
+- **A 5 km la elección de onda vale más que muchas decisiones de hardware:** 21.7
+  contra 15.1 dB de escintilación con lente de 5 cm. Y ahí ya no hay teoría débil.
+- **Un emulador de 2 m** necesita `C_n^2 = 8.9e-10` para igualar un kilómetro
+  moderado: la varianza crece con la longitud a la 11/6.
+
+### Lo que no hay (huecos 17–19 del ADR 0009)
+
+Onda gaussiana; retrorreflector de doble paso; *beam wander* horizontal;
+emuladores no Kolmogorov; escala interna y externa.
