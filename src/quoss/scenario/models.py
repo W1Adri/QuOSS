@@ -697,6 +697,52 @@ class ReceiverSpec(SpecModel):
         gt=0.0, description="Receiver field of view, full angle, microradians."
     )
     filter_bandwidth_nm: float = Field(gt=0.0, description="Optical band-pass filter width, nm.")
+    doppler_capture_range_hz: float | None = Field(
+        default=None,
+        gt=0.0,
+        description="Optional. Total width of the receiver's Doppler acceptance window, Hz — "
+        "the full span it can search, NOT the +/- half-range. A window of +/-5 GHz is "
+        "1e10 here. None (the default) means no transceiver has been chosen yet, and the "
+        "run's Doppler figures are then reported against nothing.",
+    )
+
+    @property
+    def doppler_capture_half_range_hz(self) -> float | None:
+        """Half of :attr:`doppler_capture_range_hz`, i.e. the window written as ``+/- X``.
+
+        Both readings exist by name, for the reason
+        :class:`~quoss.engine.pipeline.Acquisition` gives at length about the
+        two Doppler columns: a quantity that is "the other one, times two" gets
+        multiplied by two in some call sites and not in others. Neither of these
+        is the one somebody has to remember to halve.
+
+        Returns
+        -------
+        float or None
+            ``doppler_capture_range_hz / 2``, or ``None`` when no window is
+            declared.
+
+        Examples
+        --------
+        A transceiver quoted as "+/-5 GHz of capture" is a 10 GHz window:
+
+        >>> rx = ReceiverSpec(
+        ...     detector_efficiency=0.85,
+        ...     optical_loss_db=5.65,
+        ...     dark_count_rate_cps=300.0,
+        ...     dead_time_ns=30.0,
+        ...     gate_ns=1.0,
+        ...     timing_jitter_fwhm_ps=50.0,
+        ...     field_of_view_urad=100.0,
+        ...     filter_bandwidth_nm=0.2,
+        ...     doppler_capture_range_hz=1e10,
+        ... )
+        >>> rx.doppler_capture_half_range_hz
+        5000000000.0
+        """
+        if self.doppler_capture_range_hz is None:
+            return None
+        return self.doppler_capture_range_hz / 2.0
 
     @property
     def gate_s(self) -> float:

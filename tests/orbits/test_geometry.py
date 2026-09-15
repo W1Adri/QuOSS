@@ -16,6 +16,7 @@ import numpy as np
 import pytest
 
 from quoss.core.constants import (
+    EARTH_ROTATION_RAD_S,
     EGM96_MU_KM3_S2,
     SPEED_OF_LIGHT_M_S,
     WGS84_RADIUS_EQUATORIAL_KM,
@@ -23,7 +24,12 @@ from quoss.core.constants import (
 from quoss.core.errors import DomainError
 from quoss.core.types import TimeGrid
 from quoss.orbits.frames import Frame, geodetic_to_itrf, gmst_rad, itrf_to_teme_state
-from quoss.orbits.geometry import LookAngles, doppler_shift_hz, look_angles
+from quoss.orbits.geometry import (
+    LookAngles,
+    doppler_rate_hz_s,
+    doppler_shift_hz,
+    look_angles,
+)
 from quoss.orbits.kepler import ClassicalElements
 from quoss.orbits.propagator import PropagationMethod, Trajectory, propagate
 
@@ -346,6 +352,262 @@ class TestDopplerShift:
     def test_rejects_non_finite_range_rate(self) -> None:
         with pytest.raises(DomainError):
             doppler_shift_hz(np.array([float("nan")]), 1.934e14)
+
+
+class TestDopplerRate:
+    """How fast the shift sweeps: a different requirement from how far it moves.
+
+    A coherent receiver has a **capture range** (how far off it can still find
+    the carrier) and a **tracking rate** (how fast a loop can follow it once
+    locked). A pass can sit inside the first and leave the second behind, and
+    when it does the symptom is a lock that holds all pass and drops near the
+    horizon — the shape of the TBIRD end-of-pass Doppler problem.
+    """
+
+    @pytest.mark.physics
+    def test_a_constant_range_rate_is_not_sweeping(self) -> None:
+        rate = doppler_rate_hz_s(np.full(7, 4.0), t_s=np.arange(7.0), carrier_frequency_hz=1.934e14)
+        assert np.allclose(rate, 0.0, atol=0.0)
+
+    @pytest.mark.physics
+    def test_against_the_closed_form_on_a_quadratic_range(self) -> None:
+        """V1 against the exact derivative, which a quadratic makes available.
+
+        For ``R(t) = R0 + b t^2 / 2`` the range-rate is ``b t`` and the Doppler
+        rate is exactly ``-f0 b / c``, a constant, so a second-order central
+        difference of a linear range-rate is exact up to float rounding. That
+        isolates the discretisation from the formula: if this fails, the factor
+        or the sign is wrong, not the grid.
+        """
+        b = 0.37  # km/s^2
+        t = np.linspace(0.0, 30.0, 61)
+        rate = doppler_rate_hz_s(b * t, t_s=t, carrier_frequency_hz=1.934e14)
+        exact = -1.934e14 * (b * 1e3) / SPEED_OF_LIGHT_M_S
+        assert np.allclose(rate, exact, rtol=1e-12)
+
+    @pytest.mark.physics
+    def test_the_sign_is_the_shift_falling_and_not_the_range_growing(self) -> None:
+        """The sign trips people up, so it is asserted against a physical picture.
+
+        A satellite going from approaching to receding has a range-rate rising
+        through zero and a Doppler shift falling through zero — blueshift to
+        redshift. So a positive range acceleration is a **negative** Doppler
+        rate, opposite to the intuition that "getting further, faster" should
+        raise something.
+        """
+        t = np.arange(5.0)
+        rate = doppler_rate_hz_s(np.arange(-2.0, 3.0), t_s=t, carrier_frequency_hz=1.934e14)
+        shift = doppler_shift_hz(np.arange(-2.0, 3.0), 1.934e14)
+        assert np.all(rate < 0.0)
+        assert shift[0] > 0.0 > shift[-1]
+
+    @pytest.mark.physics
+    def test_it_is_the_derivative_of_the_shift_it_is_named_after(self) -> None:
+        """Integrating the rate back over the window recovers the change in shift."""
+        t = np.linspace(0.0, 120.0, 241)
+        range_rate = 5.0 * np.cos(2.0 * np.pi * t / 400.0)
+        shift = doppler_shift_hz(range_rate, 1.934e14)
+        rate = doppler_rate_hz_s(range_rate, t_s=t, carrier_frequency_hz=1.934e14)
+        recovered = float(np.trapezoid(rate, t))
+        assert recovered == pytest.approx(float(shift[-1] - shift[0]), rel=1e-6)
+
+    def test_it_differentiates_the_sample_axis_of_a_satellite_stack(self) -> None:
+        """``LookAngles`` fields are ``(satellite, sample)``; the rate is per satellite."""
+        t = np.arange(6.0)
+        stack = np.vstack([t, 2.0 * t, -t])
+        rate = doppler_rate_hz_s(stack, t_s=t, carrier_frequency_hz=1.934e14)
+        assert rate.shape == stack.shape
+        assert np.allclose(rate[1], 2.0 * rate[0], rtol=1e-12)
+        assert np.allclose(rate[2], -rate[0], rtol=1e-12)
+
+    def test_a_non_uniform_grid_is_handled_and_not_silently_assumed_uniform(self) -> None:
+        """`TimeGrid` permits non-uniform spacing, so the derivative has to as well.
+
+        Checked against the same linear range-rate sampled unevenly: a finite
+        difference that divided by a single mean step would be wrong here and
+        right on a uniform grid, which is how such a bug survives.
+        """
+        t = np.array([0.0, 0.5, 2.0, 5.0, 9.0, 14.0])
+        rate = doppler_rate_hz_s(0.4 * t, t_s=t, carrier_frequency_hz=1.934e14)
+        exact = -1.934e14 * (0.4 * 1e3) / SPEED_OF_LIGHT_M_S
+        assert np.allclose(rate, exact, rtol=1e-10)
+
+    @pytest.mark.parametrize(
+        ("t_s", "match"),
+        [
+            (np.array([0.0]), "at least two samples"),
+            (np.array([0.0, 0.0, 1.0]), "strictly increasing"),
+            (np.array([0.0, 2.0, 1.0]), "strictly increasing"),
+            (np.array([0.0, np.nan, 1.0]), "non-finite"),
+            (np.zeros((2, 2)), "one-dimensional"),
+        ],
+    )
+    def test_a_time_axis_that_is_not_one_is_refused(self, t_s: Any, match: str) -> None:
+        with pytest.raises(DomainError, match=match):
+            doppler_rate_hz_s(np.zeros(3), t_s=t_s, carrier_frequency_hz=1.934e14)
+
+    def test_a_length_mismatch_is_refused_rather_than_broadcast(self) -> None:
+        """Two axes that are meant to be the same axis, so a quiet broadcast is wrong."""
+        with pytest.raises(DomainError, match="same time axis"):
+            doppler_rate_hz_s(np.zeros(5), t_s=np.arange(4.0), carrier_frequency_hz=1.934e14)
+
+    def test_a_bad_carrier_is_refused_by_the_shift_it_delegates_to(self) -> None:
+        with pytest.raises(DomainError, match="carrier_frequency_hz"):
+            doppler_rate_hz_s(np.zeros(3), t_s=np.arange(3.0), carrier_frequency_hz=0.0)
+
+
+class TestTheHorizonRangeRateBound:
+    r"""**V1**: the fastest a pass can sweep, in closed form, with no mask in the way.
+
+    Why this test exists
+    --------------------
+    Every Doppler figure the project reports is reduced over the samples of a
+    pass, and a pass is "the part of the sky above the mask". Raise the mask and
+    every Doppler column shrinks. That is correct as a *requirement for that
+    link*, but it means the columns cannot catch a geometry error: a range-rate
+    that came out 3 % small would look exactly like a slightly tighter mask, and
+    nothing would object.
+
+    A closed form that does not know what a mask is closes that hole. If the
+    propagated geometry matches an independently derived horizon value, the
+    mask can no longer hide an error in it.
+
+    The derivation, from scratch
+    ----------------------------
+    Put the Earth's centre at ``O``, the station at ``S`` a distance ``R`` from
+    it, the satellite at ``P`` a distance ``r``. Let ``phi`` be the angle at
+    ``O`` between them — the "central angle" — and ``rho`` the distance from
+    station to satellite, which is the *range*. The law of cosines on the
+    triangle ``OSP`` gives
+
+    .. math:: \rho^2 = R^2 + r^2 - 2 R r \cos\phi
+
+    Differentiate in time. ``R`` and ``r`` are fixed (circular orbit, rigid
+    Earth), so only ``phi`` moves:
+
+    .. math:: \dot\rho = \frac{R r \sin\phi}{\rho}\,\dot\phi
+
+    For a circular orbit the satellite sweeps central angle at the constant
+    rate ``phi_dot = v / r``, with ``v = sqrt(mu / r)`` the orbital speed. So
+    ``rho_dot = R v sin(phi) / rho``.
+
+    Now specialise to the **horizon**, which is where this peaks: the satellite
+    is exactly on the station's local horizontal, so the line of sight ``SP`` is
+    perpendicular to the station's own radius ``OS``. The triangle has a right
+    angle at ``S``, which pins two things at once — ``cos(phi) = R / r``, and
+    (Pythagoras) ``rho = sqrt(r^2 - R^2)``. Then ``sin(phi) = rho / r``, and the
+    whole expression collapses:
+
+    .. math:: \dot\rho_{max} = \frac{R v}{\rho} \cdot \frac{\rho}{r} = \frac{R v}{r}
+
+    A pleasantly small answer: **the horizon range-rate is the orbital speed
+    scaled by ``R / r``**, and nothing else. For this orbit
+    ``v = 7.504286 km/s``, ``R / r = 6378.137 / 7078.137 = 0.901104``, so
+    ``6.762142 km/s``.
+
+    Why the measured value is *above* it, and by how much
+    -----------------------------------------------------
+    The closed form is not an upper bound, and pretending it were would be the
+    easy mistake here. It assumes a circular orbit over a non-rotating Earth,
+    and the reference orbit is neither:
+
+    - ``e = 0.001``, so the true speed varies by about ``+/- e * v``, roughly
+      ``+/- 0.0075 km/s``.
+    - The station itself moves. At 41.275 degrees north the ground runs east at
+      ``omega_E R cos(lat) = 0.349548 km/s``, and whatever part of that lies
+      along the line of sight adds to the closing rate.
+
+    Both are additive in the worst case, so the honest statement is a bracket:
+    the truth is above the rigid circular value and below it inflated by those
+    two fractions, ``1 + e + v_ground / v = 1.047580``. Measured over the
+    reference day: **6.791057 km/s**, which is ``1.004276`` times the closed
+    form — inside the bracket, and near its bottom because the line of sight at
+    a near-polar pass is mostly *not* aligned with the station's eastward
+    motion.
+
+    What the mask was hiding
+    ------------------------
+    With the usual 10-degree mask the largest ``|range rate|`` on this link is
+    6.622363 km/s: **2.5 % under** the horizon value. That is the number this
+    test exists to keep honest — a 2.5 % gap is small enough to be mistaken for
+    a modelling choice and large enough to hide a real error.
+    """
+
+    ORBIT_RADIUS_KM = 7078.137
+    STATION_LAT_RAD = CASTELLDEFELS_LAT_RAD
+    CLOSED_FORM_KM_S = 6.762142
+
+    @staticmethod
+    def _range_rate_over_a_day() -> tuple[np.ndarray, np.ndarray]:
+        """Return ``(range_rate_km_s, elevation_rad)`` for a whole day, no mask anywhere."""
+        grid = TimeGrid.uniform(epoch_jd=2_460_676.5, duration_s=86_400.0, step_s=1.0)
+        path = propagate(
+            _sso_700km(raan_rad=np.deg2rad(30.0), true_anomaly_rad=0.0),
+            grid,
+            method=PropagationMethod.TWO_BODY,
+        )
+        angles = look_angles(
+            path,
+            station_latitude_rad=CASTELLDEFELS_LAT_RAD,
+            station_longitude_rad=CASTELLDEFELS_LON_RAD,
+            station_altitude_km=CASTELLDEFELS_ALT_KM,
+        )
+        return (
+            np.asarray(angles.range_rate_km_s, dtype=np.float64),
+            np.asarray(angles.elevation_rad, dtype=np.float64),
+        )
+
+    @pytest.mark.physics
+    def test_the_closed_form_is_the_orbital_speed_scaled_by_the_radius_ratio(self) -> None:
+        """``rho_dot_max = R v / r``, arithmetic only, so the constant below is not a magic number."""
+        speed_km_s = float(np.sqrt(EGM96_MU_KM3_S2 / self.ORBIT_RADIUS_KM))
+        closed_form = speed_km_s * WGS84_RADIUS_EQUATORIAL_KM / self.ORBIT_RADIUS_KM
+        assert speed_km_s == pytest.approx(7.504286, abs=1e-6)
+        assert closed_form == pytest.approx(self.CLOSED_FORM_KM_S, abs=1e-6)
+
+    @pytest.mark.physics
+    def test_the_propagated_geometry_sits_in_the_bracket_the_closed_form_sets(self) -> None:
+        """Above the rigid circular value, below it inflated by eccentricity and Earth rotation.
+
+        A two-sided check, and both sides are derived rather than fitted. The
+        lower side is the idealisation itself; the upper side is that
+        idealisation times ``1 + e + v_ground / v``, the two corrections it
+        leaves out, each taken at its worst case. A tolerance chosen to admit
+        today's answer would have no power here; this one would reject a
+        range-rate 5 % too large or any value at all too small.
+        """
+        range_rate, elevation = self._range_rate_over_a_day()
+        above_horizon = np.abs(range_rate[elevation >= 0.0]).max()
+
+        speed_km_s = float(np.sqrt(EGM96_MU_KM3_S2 / self.ORBIT_RADIUS_KM))
+        ground_speed_km_s = float(
+            EARTH_ROTATION_RAD_S * WGS84_RADIUS_EQUATORIAL_KM * np.cos(self.STATION_LAT_RAD)
+        )
+        envelope = self.CLOSED_FORM_KM_S * (1.0 + 0.001 + ground_speed_km_s / speed_km_s)
+
+        assert above_horizon > self.CLOSED_FORM_KM_S
+        assert above_horizon < envelope
+        assert above_horizon == pytest.approx(6.791057, abs=1e-5)
+        assert above_horizon / self.CLOSED_FORM_KM_S == pytest.approx(1.004276, abs=1e-5)
+
+    @pytest.mark.physics
+    def test_a_ten_degree_mask_reports_two_and_a_half_per_cent_under_the_horizon(self) -> None:
+        """What the mask costs, so no Doppler column can be read as "what this orbit does".
+
+        The reduction is monotone in the mask — a tighter mask is a subset of a
+        looser one's samples, so its maximum cannot be larger — and the size of
+        the gap at the usual 10 degrees is the number worth having: 6.622363
+        against 6.791057 km/s.
+        """
+        range_rate, elevation = self._range_rate_over_a_day()
+        peaks = {
+            limit_deg: float(np.abs(range_rate[elevation >= np.deg2rad(limit_deg)]).max())
+            for limit_deg in (10.0, 5.0, 1.0, 0.0)
+        }
+        assert list(peaks.values()) == sorted(peaks.values())
+        assert peaks[10.0] == pytest.approx(6.622363, abs=1e-5)
+        assert peaks[0.0] == pytest.approx(6.791057, abs=1e-5)
+        assert peaks[10.0] / peaks[0.0] == pytest.approx(0.97516, abs=1e-5)
 
 
 # --------------------------------------------------------------------------- #

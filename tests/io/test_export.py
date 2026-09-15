@@ -65,6 +65,10 @@ def build_result(*, monte_carlo: bool = True) -> SimulationResult:
         elevation_rad=ts("elevation", "rad", [-0.1, 0.2, 0.9, 0.3, -0.05]),
         azimuth_rad=ts("azimuth", "rad", [0.0, 1.0, 2.0, 3.0, 4.0]),
         range_km=ts("range", "km", [2500.0, 1500.0, 720.0, 1400.0, 2400.0]),
+        range_rate_km_s=ts("range_rate", "km/s", [-6.0, -4.0, 0.0, 4.0, 6.0]),
+        doppler_shift_hz=ts("doppler_shift", "Hz", [3.9e9, 2.6e9, 0.0, -2.6e9, -3.9e9]),
+        doppler_rate_hz_s=ts("doppler_rate", "Hz/s", [-1.3e9, -1.3e9, -1.7e9, -1.3e9, -1.3e9]),
+        point_ahead_angle_rad=ts("point_ahead", "rad", [2.6e-5, 4.0e-5, 5.0e-5, 4.0e-5, 2.6e-5]),
         transmittance=ts("transmittance", "", [nan, 1e-4, 3e-3, 2e-4, nan]),
         loss_total_db=ts("loss_total", "dB", [nan, 40.0, 25.2, 37.0, nan]),
         noise_per_gate=ts("noise_per_gate", "", [nan, 1e-6, 2e-6, 1e-6, nan]),
@@ -78,6 +82,11 @@ def build_result(*, monte_carlo: bool = True) -> SimulationResult:
         end_s=np.array([1.5, 3.75]),
         culmination_s=np.array([1.0, 3.0]),
         culmination_elevation_rad=np.array([0.9, 0.3]),
+        peak_one_sided_doppler_hz=np.array([3.9e9, 2.6e9]),
+        doppler_excursion_hz=np.array([7.8e9, 5.2e9]),
+        peak_doppler_slew_hz_s=np.array([1.7e9, 1.3e9]),
+        max_point_ahead_angle_rad=np.array([5.0e-5, 4.0e-5]),
+        min_point_ahead_angle_rad=np.array([2.6e-5, 2.6e-5]),
         finite_bits=np.array(FINITE_BITS),
         asymptotic_bits=np.array(ASYMPTOTIC_BITS),
         truncated_start=np.array([False, False]),
@@ -258,6 +267,11 @@ class TestRealResultAllFormats:
             "end_s",
             "culmination_s",
             "culmination_elevation_rad",
+            "peak_one_sided_doppler_hz",
+            "doppler_excursion_hz",
+            "peak_doppler_slew_hz_s",
+            "max_point_ahead_angle_rad",
+            "min_point_ahead_angle_rad",
             "finite_bits",
             "asymptotic_bits",
             "truncated_start",
@@ -314,6 +328,11 @@ class TestRealResultAllFormats:
             "azimuth_rad",
             "azimuth_deg",
             "range_km",
+            "range_rate_km_s",
+            "doppler_shift_hz",
+            "doppler_rate_hz_s",
+            "point_ahead_angle_rad",
+            "point_ahead_angle_deg",
             "transmittance",
             "loss_total_db",
             "noise_per_gate",
@@ -321,7 +340,13 @@ class TestRealResultAllFormats:
         ]
         assert len(rows) == 5
         assert rows[0][0] == "0.0" and float(rows[0][1]) == EPOCH_JD
-        assert rows[0][7] == "" and rows[2][7] == "0.003"  # NaN outside the pass, repr inside
+        transmittance = header.index("transmittance")
+        # NaN outside the pass, repr inside. The acquisition series beside it are
+        # geometry, so they are finite in both rows: that asymmetry is the schema's
+        # claim that a satellite has a position even where the link has no budget.
+        assert rows[0][transmittance] == "" and rows[2][transmittance] == "0.003"
+        doppler = header.index("doppler_shift_hz")
+        assert rows[0][doppler] != "" and rows[2][doppler] != ""
         series = result.series[0]
         for i, row in enumerate(rows):
             assert float(row[2]) == series.elevation_rad.values[i]

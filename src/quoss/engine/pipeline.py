@@ -107,13 +107,18 @@ from quoss.channel.link_budget import (
 )
 from quoss.channel.pointing import beam_to_jitter_ratio
 from quoss.channel.turbulence import downlink_log_irradiance_variance
-from quoss.core.constants import SECONDS_PER_DAY
+from quoss.core.constants import SECONDS_PER_DAY, SPEED_OF_LIGHT_M_S
 from quoss.core.errors import DegradationLog, DomainError, ScenarioError
 from quoss.core.rng import RandomSource
 from quoss.core.types import FloatArray, IntArray, TimeGrid, TimeSeries
 from quoss.engine.parallel import map_workers
 from quoss.engine.profiling import StageTimer
-from quoss.orbits.geometry import LookAngles, look_angles
+from quoss.orbits.geometry import (
+    LookAngles,
+    doppler_rate_hz_s,
+    doppler_shift_hz,
+    look_angles,
+)
 from quoss.orbits.propagator import Trajectory, propagate
 from quoss.orbits.tle import propagate_tle
 from quoss.qkd.base import KeyRegime, LinkConditions
@@ -186,6 +191,92 @@ STAGES: tuple[str, ...] = (
 # Containers
 # --------------------------------------------------------------------------- #
 @dataclass(frozen=True, eq=False, slots=True)
+class Acquisition:
+    """What a terminal has to track, on the whole grid and reduced per pass.
+
+    Separate from :class:`~quoss.scenario.result.SeriesResults` because it is
+    computed before the pass table is scored and read afterwards, and separate
+    from the key stage because **none of it depends on the link budget**. A
+    satellite that certifies no key still sweeps a carrier and still has to be
+    pointed ahead; the numbers here say whether a transceiver could have
+    followed it, which is a different question from whether it was worth it.
+
+    Why it exists as a named object rather than loose arrays: they are read
+    together and they share one assumption — the carrier — which a container
+    can carry and loose arrays cannot.
+
+    The two Doppler frequencies, which are not interchangeable
+    ---------------------------------------------------------
+    A pass sweeps its carrier from high to low: the satellite comes at you, so
+    the received frequency starts *above* the transmitted one, falls through it
+    at closest approach, and ends *below*. Two different numbers describe that,
+    they differ by very nearly a factor **two**, and confusing them
+    under-specifies a transceiver by exactly that factor:
+
+    ``peak_one_sided_doppler_hz``
+        The largest ``|shift|`` reached in the pass — the **amplitude of one
+        side**, ``f0 * |r_dot|max / c``. This is the right number for "how far
+        from the nominal carrier does the signal get", and the wrong one for
+        sizing anything.
+
+    ``doppler_excursion_hz``
+        ``max(shift) - min(shift)`` over the pass: the **whole span the
+        receiver must traverse**, from the approaching extreme to the receding
+        one. This is the number a capture or search range is sized against.
+
+    On the reference day's best pass they are **4.186555 GHz** and **8.369073
+    GHz**. A transceiver specified to cover 4.19 GHz is short by a factor 2 on
+    the parameter that ended TBIRD's passes early, which is why both live here
+    under names that say which is which, rather than one living here and the
+    other being a doubling somebody has to remember.
+
+    Note the excursion is *not defined* as twice the one-sided peak, and is not
+    equal to it: the approaching and receding extremes of a real pass differ, so
+    the ratio runs **1.977 to 1.999** over the reference day rather than exactly
+    2. Both are measured; neither is derived from the other.
+
+    A capture range and a tracking rate are **two specifications**, not one
+    ---------------------------------------------------------------------
+    ``doppler_excursion_hz`` says how *wide* a window the receiver needs.
+    ``peak_doppler_slew_hz_s`` says how *fast* the signal crosses it. A
+    transceiver can satisfy either alone and fail the pass: a wide, slow
+    receiver loses lock at the horizon where the sweep is fastest, and a fast,
+    narrow one never acquires. On the reference day the four passes need
+    8.37 / 5.66 / 8.54 / 4.40 GHz of window and 37.9 / 19.2 / 41.5 /
+    16.8 MHz/s of slew, and the two orderings are not the same.
+
+    Attributes
+    ----------
+    carrier_frequency_hz : float
+        ``c / lambda`` of the scenario's transmitter. The one assumption
+        behind ``doppler_shift_hz`` and ``doppler_rate_hz_s``.
+    range_rate_km_s, doppler_shift_hz, doppler_rate_hz_s, point_ahead_angle_rad : FloatArray
+        Shape ``(n_samples,)``, the whole grid, defined everywhere.
+    peak_one_sided_doppler_hz : FloatArray
+        Shape ``(n_passes,)``. Largest ``|shift|`` in the pass, Hz. One side.
+    doppler_excursion_hz : FloatArray
+        Shape ``(n_passes,)``. ``max(shift) - min(shift)`` in the pass, Hz. The
+        full sweep, and the one a capture range is sized against.
+    peak_doppler_slew_hz_s : FloatArray
+        Shape ``(n_passes,)``. Largest ``|d(shift)/dt|``, Hz/s. A rate, not a
+        range: a separate specification from the two above.
+    max_point_ahead_angle_rad, min_point_ahead_angle_rad : FloatArray
+        Shape ``(n_passes,)``.
+    """
+
+    carrier_frequency_hz: float
+    range_rate_km_s: FloatArray
+    doppler_shift_hz: FloatArray
+    doppler_rate_hz_s: FloatArray
+    point_ahead_angle_rad: FloatArray
+    peak_one_sided_doppler_hz: FloatArray
+    doppler_excursion_hz: FloatArray
+    peak_doppler_slew_hz_s: FloatArray
+    max_point_ahead_angle_rad: FloatArray
+    min_point_ahead_angle_rad: FloatArray
+
+
+@dataclass(frozen=True, eq=False, slots=True)
 class StationRun:
     """Everything the per-station stages produced, before it is moved into a result.
 
@@ -220,6 +311,10 @@ class StationRun:
         Its per-day quantiles.
     series : SeriesResults
         The station's series as they go into the result.
+    acquisition : Acquisition
+        The Doppler pair and the point-ahead angle, on the whole grid and
+        reduced per pass. Geometry only, so a station with no pass still has
+        the series and simply has no rows of extrema.
     seconds : dict[str, float]
         Seconds spent per stage for this station.
     """
@@ -238,6 +333,7 @@ class StationRun:
     monte_carlo: MonteCarloKeyVolume | None
     monte_carlo_daily: MonteCarloDailyKeyVolume | None
     series: SeriesResults
+    acquisition: Acquisition
     seconds: dict[str, float]
 
 
@@ -681,7 +777,10 @@ def _run_station(task: _StationTask, degradations: DegradationLog) -> StationRun
                 )
 
     with timer.stage("series"):
-        series = _series(station.name, grid, angles, samples, loss, noise, conditions, protocol)
+        acquisition = _acquisition(scenario, angles, samples, grid, degradations)
+        series = _series(
+            station.name, grid, angles, samples, loss, noise, conditions, protocol, acquisition
+        )
 
     return StationRun(
         name=station.name,
@@ -698,6 +797,7 @@ def _run_station(task: _StationTask, degradations: DegradationLog) -> StationRun
         monte_carlo=monte_carlo,
         monte_carlo_daily=monte_carlo_daily,
         series=series,
+        acquisition=acquisition,
         seconds=timer.to_dict(),
     )
 
@@ -771,6 +871,179 @@ def _channel(
     return loss, noise, conditions
 
 
+def _acquisition(
+    scenario: Scenario,
+    angles: LookAngles,
+    samples: PassSamples,
+    grid: TimeGrid,
+    degradations: DegradationLog,
+) -> Acquisition:
+    """Return the Doppler pair and the point-ahead angle, on the grid and per pass.
+
+    Two things are worth reading rather than skipping.
+
+    **The series are computed over the whole grid and only then indexed.** A
+    derivative taken inside a pass would see the pass boundary as an edge and
+    return a one-sided difference there — exactly at the horizon, which is the
+    instant the whole quantity exists to describe. Differentiating the full
+    grid and slicing afterwards has no such edge.
+
+    **The carrier is derived, not configured.** ``f0 = c / lambda`` of the
+    scenario's own transmitter, so a run cannot carry a Doppler for a carrier
+    the scenario does not transmit. A system with a separate classical downlink
+    has a second carrier; it needs a second field, and inventing one here would
+    be a value nobody declared.
+    """
+    carrier_frequency_hz = float(SPEED_OF_LIGHT_M_S / scenario.transmitter.wavelength_m)
+    range_rate = np.asarray(angles.range_rate_km_s, dtype=np.float64)[0]
+    point_ahead = np.asarray(angles.point_ahead_angle_rad, dtype=np.float64)[0]
+    shift = np.asarray(doppler_shift_hz(range_rate, carrier_frequency_hz), dtype=np.float64)
+    rate = np.asarray(
+        doppler_rate_hz_s(
+            range_rate, t_s=np.asarray(grid.t_s), carrier_frequency_hz=carrier_frequency_hz
+        ),
+        dtype=np.float64,
+    )
+    rows = np.asarray(samples.sample_index)
+    empty = np.zeros(samples.table.n_passes, dtype=np.float64)
+    acquisition = Acquisition(
+        carrier_frequency_hz=carrier_frequency_hz,
+        range_rate_km_s=range_rate,
+        doppler_shift_hz=shift,
+        doppler_rate_hz_s=rate,
+        point_ahead_angle_rad=point_ahead,
+        peak_one_sided_doppler_hz=(
+            empty if samples.size == 0 else samples.segment_max(np.abs(shift[rows]))
+        ),
+        doppler_excursion_hz=(
+            empty
+            if samples.size == 0
+            else samples.segment_max(shift[rows]) - samples.segment_min(shift[rows])
+        ),
+        peak_doppler_slew_hz_s=(
+            empty if samples.size == 0 else samples.segment_max(np.abs(rate[rows]))
+        ),
+        max_point_ahead_angle_rad=(
+            empty if samples.size == 0 else samples.segment_max(point_ahead[rows])
+        ),
+        min_point_ahead_angle_rad=(
+            empty if samples.size == 0 else samples.segment_min(point_ahead[rows])
+        ),
+    )
+    _check_capture_range(scenario, acquisition, samples, shift, rows, degradations)
+    return acquisition
+
+
+def _check_capture_range(
+    scenario: Scenario,
+    acquisition: Acquisition,
+    samples: PassSamples,
+    shift: FloatArray,
+    rows: IntArray,
+    degradations: DegradationLog,
+) -> None:
+    """Compare each pass's Doppler sweep against the receiver's declared acceptance window.
+
+    What this is for
+    ----------------
+    Everything else in the acquisition stage reports what a pass *demands*.
+    Nothing until now said whether anything could *supply* it, because the
+    scenario had no field for a transceiver's acceptance window. It has one now
+    (``receiver.doppler_capture_range_hz``), and this is the check that makes
+    declaring it mean something.
+
+    The two branches, and why the null one is not silence
+    -----------------------------------------------------
+    The field is optional and defaults to ``None``, because for CLAU today it
+    is genuinely unknown — no transceiver has been bought. Inventing a
+    plausible specification to have something to compare against would be
+    exactly the "do not invent numbers" failure the project is built to avoid.
+
+    But "unknown" is not the same as "fine", and a result whose Doppler columns
+    were never checked against anything must not read like one that was. So the
+    null branch records an **INFO**: no window was declared, therefore these
+    figures stand unchecked. That is the "no silent degradation" rule applied
+    to a missing input rather than a failed model.
+
+    With a window declared, a pass that does not fit gets a **WARNING** carrying
+    the pass's own excursion, the declared window, and — the part that makes it
+    actionable — **how many seconds of the pass fall outside**. "It exceeds" and
+    "it exceeds for 4 seconds of a 600 second pass" call for different
+    engineering, and only the second one distinguishes a transceiver that is
+    wrong from one that is nearly right.
+
+    What "outside" assumes, stated because it is a choice
+    -----------------------------------------------------
+    The window is taken to be **centred on the nominal carrier**, so the signal
+    is inside it while ``|shift| <= range / 2``. That is the conservative
+    reading and the right one for acquisition: a receiver searching for a
+    carrier it has not yet found has nothing better to centre on than what the
+    transmitter nominally emits.
+
+    A receiver that pre-compensates from an ephemeris effectively re-centres the
+    window each instant, and for that one the binding comparison is the whole
+    excursion against the window instead. Both numbers are in the warning, so
+    either reading is available to whoever reads it; what is *not* available is
+    reading neither.
+
+    Worked example
+    --------------
+    The reference day's first pass sweeps 8.3697 GHz. Against a declared 8 GHz
+    window (``+/-4 GHz``), the samples with ``|shift| > 4 GHz`` are the ones at
+    the horizon: it warns, reporting 8.3697 GHz against 8 GHz and the seconds
+    outside. Against a 12 GHz window nothing is recorded, because nothing is
+    wrong.
+    """
+    window_hz = scenario.receiver.doppler_capture_range_hz
+    if window_hz is None:
+        degradations.info(
+            "engine.acquisition.no-capture-range-declared",
+            "receiver.doppler_capture_range_hz is not set, so the Doppler columns of this run "
+            "are not contrasted against any transceiver: they say what the passes demand and "
+            "nothing about whether a receiver could meet it. Set it to the total width of the "
+            "acceptance window (a +/-5 GHz transceiver is 1e10) to have the passes checked.",
+            where="quoss.engine.pipeline._acquisition",
+            carrier_frequency_hz=acquisition.carrier_frequency_hz,
+            largest_excursion_hz=(
+                None
+                if samples.size == 0
+                else float(np.asarray(acquisition.doppler_excursion_hz).max())
+            ),
+        )
+        return
+    if samples.size == 0:
+        return
+
+    half_window_hz = window_hz / 2.0
+    inside = np.abs(shift[rows]) <= half_window_hz
+    dwell_s = np.asarray(samples.dwell_s, dtype=np.float64)
+    seconds_outside = np.asarray(samples.segment_sum(np.where(inside, 0.0, dwell_s)))
+    excursion = np.asarray(acquisition.doppler_excursion_hz, dtype=np.float64)
+    duration_s = np.asarray(samples.table.duration_s, dtype=np.float64)
+
+    for index in np.flatnonzero(seconds_outside > 0.0):
+        degradations.warn(
+            "engine.acquisition.capture-range-exceeded",
+            f"pass {int(index)} sweeps {excursion[index] / 1e9:.4f} GHz of Doppler against a "
+            f"declared acceptance window of {window_hz / 1e9:.4f} GHz "
+            f"(+/-{half_window_hz / 1e9:.4f} GHz about the nominal carrier), so the signal is "
+            f"outside the window for {seconds_outside[index]:.1f} s of a "
+            f"{duration_s[index]:.1f} s pass. A receiver that pre-compensates from an ephemeris "
+            f"re-centres its window and is bound by the excursion instead; one that searches "
+            f"around the nominal carrier is bound by the half-window.",
+            where="quoss.engine.pipeline._acquisition",
+            pass_index=int(index),
+            excursion_hz=float(excursion[index]),
+            peak_one_sided_doppler_hz=float(
+                np.asarray(acquisition.peak_one_sided_doppler_hz)[index]
+            ),
+            capture_range_hz=float(window_hz),
+            capture_half_range_hz=float(half_window_hz),
+            seconds_outside=float(seconds_outside[index]),
+            pass_duration_s=float(duration_s[index]),
+        )
+
+
 def _empty_volume(
     samples: PassSamples,
     regime: KeyRegime,
@@ -810,6 +1083,7 @@ def _series(
     noise: NoiseBudget | None,
     conditions: LinkConditions | None,
     protocol: Bb84DecoyProtocol,
+    acquisition: Acquisition,
 ) -> SeriesResults:
     """Return the station's series on the whole grid; channel and rate only inside passes.
 
@@ -853,6 +1127,18 @@ def _series(
         elevation_rad=TimeSeries(grid, elevation, name="elevation", unit="rad"),
         azimuth_rad=TimeSeries(grid, azimuth, name="azimuth", unit="rad"),
         range_km=TimeSeries(grid, slant, name="range", unit="km"),
+        range_rate_km_s=TimeSeries(
+            grid, acquisition.range_rate_km_s, name="range_rate", unit="km/s"
+        ),
+        doppler_shift_hz=TimeSeries(
+            grid, acquisition.doppler_shift_hz, name="doppler_shift", unit="Hz"
+        ),
+        doppler_rate_hz_s=TimeSeries(
+            grid, acquisition.doppler_rate_hz_s, name="doppler_rate", unit="Hz/s"
+        ),
+        point_ahead_angle_rad=TimeSeries(
+            grid, acquisition.point_ahead_angle_rad, name="point_ahead", unit="rad"
+        ),
         transmittance=TimeSeries(
             grid,
             inside(None if loss is None else np.asarray(loss.transmittance)),
@@ -892,6 +1178,21 @@ def _pass_results(grid: TimeGrid, stations: Sequence[StationRun]) -> PassResults
         culmination_s=_concatenate([t.culmination_s for t in tables], np.float64),
         culmination_elevation_rad=_concatenate(
             [t.culmination_elevation_rad for t in tables], np.float64
+        ),
+        peak_one_sided_doppler_hz=_concatenate(
+            [s.acquisition.peak_one_sided_doppler_hz for s in stations], np.float64
+        ),
+        doppler_excursion_hz=_concatenate(
+            [s.acquisition.doppler_excursion_hz for s in stations], np.float64
+        ),
+        peak_doppler_slew_hz_s=_concatenate(
+            [s.acquisition.peak_doppler_slew_hz_s for s in stations], np.float64
+        ),
+        max_point_ahead_angle_rad=_concatenate(
+            [s.acquisition.max_point_ahead_angle_rad for s in stations], np.float64
+        ),
+        min_point_ahead_angle_rad=_concatenate(
+            [s.acquisition.min_point_ahead_angle_rad for s in stations], np.float64
         ),
         finite_bits=_concatenate([s.finite.key_bits for s in stations], np.float64),
         asymptotic_bits=_concatenate([s.asymptotic.key_bits for s in stations], np.float64),

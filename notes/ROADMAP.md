@@ -831,6 +831,7 @@ código que ya los cita:
 |---|---|---|
 | 0001–0015 | 0–4, 6 | escritos |
 | **0016** | 5 (`engine/`) | escrito el 2026-09-14, [aquí](../docs/adr/0016-the-engine-adds-nothing-and-one-altitude.md) |
+| **0019** | 3 + 5 (esquema de resultado) | escrito el 2026-09-14, [aquí](../docs/adr/0019-acquisition-in-the-result.md): Doppler y point-ahead en el resultado |
 | **0017** | 7 (`viz/`) | **reservado**. `src/quoss/viz/plots.py` lo cita como `0017-publication-figures.md` para la decisión de los dos paneles contra el doble eje |
 | **0018** | 8 (`validation/`) | **reservado**. `src/quoss/validation/__init__.py` lo cita como `0018-validation-is-a-table-not-a-badge.md` para la regla de que un estado de validación se **deriva** de los números y no se escribe a mano |
 

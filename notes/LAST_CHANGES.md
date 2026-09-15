@@ -5543,5 +5543,160 @@ entorno, `tests/io/test_export.py` da 38 pasan y 2 saltados y ningún error.
 
 ### Ficheros
 
-`tests/viz/test_plots.py`, `tests/io/test_export.py`, `src/quoss/viz/plots.py`
-(solo un comentario).
+`tests/e2e/test_reference_scenarios.py` (nuevo),
+`docs/adr/0016-the-engine-adds-nothing-and-one-altitude.md` (nuevo),
+`src/quoss/channel/{atmosphere,turbulence,beam,link_budget}.py`,
+`src/quoss/scenario/defaults.py`, `src/quoss/viz/plots.py`,
+`src/quoss/validation/__init__.py`, `scenarios/reference_castelldefels.yaml`,
+`tests/system/reference.py`, `tests/scenario/test_defaults.py`, `tests/viz/test_plots.py`,
+`notes/ROADMAP.md`, `notes/INCONSISTENCIAS.md`.
+
+---
+
+## 33. Doppler y point-ahead salen al resultado — dos requisitos, no uno
+
+> ADR de la entrada: [0019](../docs/adr/0019-acquisition-in-the-result.md).
+
+### Qué son estas dos magnitudes, para quien llegue nuevo
+
+**Doppler.** Un satélite en LEO se acerca y se aleja a varios km/s, y eso
+desplaza la frecuencia de la portadora que llega a la estación: acercándose la
+sube, alejándose la baja. A 1550 nm —una portadora de 1.934e14 Hz— cada km/s de
+velocidad radial desplaza **645 MHz**, y un pase real llega a **±4.3 GHz**.
+
+Un receptor coherente tiene **dos** números frente a eso, y la entrada entera
+existe porque confundirlos es fácil:
+
+- el **rango de captura**, cuánto se puede haber ido la portadora y aún así
+  encontrarla;
+- la **velocidad de seguimiento**, cuán rápido puede barrer el lazo una vez
+  enganchado.
+
+Un pase puede caber holgadamente en el primero y dejar atrás el segundo, y
+entonces el síntoma es un enganche que aguanta todo el pase y se cae cerca del
+horizonte. Es la forma del problema que tuvo TBIRD en órbita.
+
+**Point-ahead.** La luz tarda en ir y volver y el satélite se mueve mientras
+tanto, así que un terminal monostático no apunta a donde *ve* al otro extremo
+sino a donde **estará**. En LEO ese adelanto son decenas de microradianes, del
+orden del propio ancho del haz.
+
+### El defecto: se calculaban y no salían
+
+`orbits/geometry.py` ya devolvía `range_rate_km_s` y `point_ahead_angle_rad`, y
+`system/passes.py` ya troceaba la geometría por pase. **Ninguna de las dos salía
+del motor:** ni `SeriesResults` ni `PassResults` las llevaban. Quien quisiera
+saber qué le pide un pase a su transceptor tenía que rehacer la cadena a mano
+fuera del simulador.
+
+### Lo que hay ahora
+
+**Cuatro series** sobre la rejilla entera —velocidad radial, desplazamiento
+Doppler, su derivada y el ángulo de point-ahead— y **cuatro columnas por pase**:
+`peak_one_sided_doppler_hz`, `peak_doppler_slew_hz_s`, `max_point_ahead_angle_rad` y
+`min_point_ahead_angle_rad`.
+
+### Las cifras del día de referencia
+
+Castelldefels, 0.75 m, SSO a 700 km, máscara de 10°, 1550 nm:
+
+| Pase | Culminación | Captura: máx \|Δf\| | Seguimiento: máx \|dΔf/dt\| |
+|---|---|---|---|
+| 1 | 52.9° | 4.19 GHz | 37.9 MHz/s |
+| 2 | 17.7° | 2.85 GHz | 19.2 MHz/s |
+| 3 | **58.8°** | **4.27 GHz** | **41.5 MHz/s** |
+| 4 | 14.2° | 2.23 GHz | 16.8 MHz/s |
+
+Leído como requisito: un transceptor con menos de **±4.3 GHz** de captura no
+engancha el mejor pase de este enlace en su horizonte, y uno cuyo lazo no barra
+**42 MHz/s** no lo mantiene ahí.
+
+Y el point-ahead va de **24.685920 a 50.652309 µrad** — un factor dos **dentro de
+un solo pase**, que es por lo que se reporta el recorrido y no solo el pico: un
+terminal con un adelanto fijo se equivocaría en 26 µrad en un extremo.
+
+### Las decisiones, con su número
+
+1. **Dos columnas y no una.** La tentación es reportar solo el pico de |Doppler|,
+   que es el número grande; es la mitad de la especificación, y no la que falla
+   tarde. **Y lo que este día no demuestra:** aquí las dos ordenan los pases igual
+   (3 > 1 > 2 > 4), porque a las dos las gobierna cuánto se acerca el pase. Es un
+   hecho sobre estos cuatro pases, no una ley.
+2. **El extremo está en los bordes, no en la culminación**, y eso explica por qué
+   un problema de Doppler es un problema de *final* de pase: en la culminación el
+   satélite atraviesa la línea de visión y la velocidad radial pasa por cero
+   (|Δf| baja a 0.010-0.032 GHz), mientras los extremos caen en el horizonte —
+   donde el enlace es peor. El receptor trabaja más justo donde menos señal tiene.
+3. **La portadora se deriva, no se configura.** `f0 = c / λ` del transmisor del
+   escenario; **no hay** campo `carrier_frequency_hz`. Un campo aparte permitiría
+   reportar el Doppler de una portadora que el escenario no emite, y nada lo
+   vería. Consecuencia que conviene tener escrita antes de la etapa 2.2 de CLAU:
+   una bajada clásica a otra longitud de onda es una **segunda** portadora y esta
+   serie no es esa.
+4. **Se llevan la velocidad radial *y* el Doppler, redundantes a propósito.** Uno
+   es la geometría sin suposiciones; el otro es esa geometría comprometida con una
+   portadora, y es el número en el que se escribe un rango de captura. Llevar solo
+   el primero obliga a cada lector a multiplicar con su propia c y su propio
+   signo; llevar solo el segundo entierra la portadora en una columna que nadie
+   puede deshacer.
+5. **La derivada es numérica y lo que cuesta está medido.** `np.gradient` con los
+   instantes explícitos (rejilla no uniforme incluida). No analítica: la
+   aceleración radial exacta necesita el modelo de fuerzas y un `LookAngles`
+   lleva posiciones y velocidades. Coste: el mayor |dΔf/dt| por pase es
+   **41.547201 MHz/s** a 1 s y **41.549130 MHz/s** a 0.1 s, **46 ppm**. Y se
+   diferencia la **rejilla entera**, no cada pase: una derivada tomada dentro de
+   un pase vería su borde como un extremo y daría una diferencia lateral justo en
+   el horizonte, que es el instante del que trata.
+6. **Las series geométricas están definidas en todas partes y el canal no.** El
+   canal sigue siendo `NaN` fuera de un pase; estas cuatro son finitas en las
+   86 401 muestras. La asimetría es una afirmación: un satélite tiene posición
+   aunque el enlace no valga la pena puntuarlo, y una pregunta de adquisición se
+   hace sobre el trozo de cielo que la etapa de clave se niega a puntuar.
+7. **Los extremos por pase son cotas, y se dice cuánto.** `segment_max` reduce
+   sobre las muestras **dentro** del pase, y un pase empieza entre muestras. El
+   mayor |Doppler| por pase es 4.272427 GHz a 1 s y 4.273114 GHz a 0.1 s:
+   **160 ppm** de cota. Misma honestidad que `sampled_culmination_elevation_rad`.
+8. **`segment_max` y `segment_min` son reducciones con nombre.** `segment_sum`
+   era la reducción de un **rendimiento** (la clave de un pase es la integral de
+   su tasa); un **requisito** no se integra, se maximiza. Son **con signo** —el
+   máximo de una serie con signo no es el de su módulo, y el Doppler va de un azul
+   grande a un rojo grande— así que el llamante escribe `np.abs`. Y `segment_min`
+   existe en vez de `-segment_max(-x)` porque ese idioma se equivoca de signo a la
+   tercera llamada. Un pase sin muestras devuelve `±inf`, no cero.
+
+### Lo que queda fuera
+
+- **No hay campo de rango de captura en el escenario, y por tanto no hay aviso.**
+  El resultado dice lo que el pase exige y el lector lo compara con su
+  transceptor. Un `receiver.doppler_capture_range_hz` opcional que levante un
+  `WARNING` al salirse encaja con «prohibido degradar en silencio» y es el paso
+  siguiente natural; un campo del escenario es un compromiso del contrato
+  (ADR 0014) y merece su propia decisión.
+- **Segunda portadora para la bajada clásica** (decisión 3): etapa 2.2 de CLAU.
+- **El point-ahead no lleva presupuesto de error propio.** Es el ángulo que la
+  geometría pide, no el que un actuador entrega.
+
+### Verificación
+
+Suite **3 289 tests** (eran 3 262 al empezar la rama). `ruff check`,
+`ruff format --check` y `mypy` limpios. Cobertura con ramas al **100 %** en todo
+lo tocado: `orbits/geometry.py`, `system/passes.py`, `scenario/result.py`,
+`engine/pipeline.py`, `io/export.py`. Las columnas nuevas viajan solas a CSV,
+Parquet, `npz` y JSON porque `io/export.py` construye las tablas del manifiesto —
+solo hubo que actualizar las cabeceras que los tests fijan.
+
+Tests nuevos: `TestDopplerRate` (V1 contra la derivada exacta de un rango
+cuadrático, que separa la fórmula de la discretización; el signo contra la imagen
+física; la integral de la derivada contra el salto del desplazamiento; rejilla no
+uniforme; seis entradas rechazadas), `TestTheSegmentExtrema`,
+`TestTheAcquisitionStage`, y dos clases nuevas del puente e2e que comparan las
+cuatro series y las cuatro columnas con la cadena a mano por **igualdad exacta**.
+
+### Ficheros
+
+`src/quoss/orbits/geometry.py`, `src/quoss/system/passes.py`,
+`src/quoss/scenario/result.py`, `src/quoss/engine/pipeline.py`,
+`docs/adr/0019-acquisition-in-the-result.md` (nuevo),
+`tests/orbits/test_geometry.py`, `tests/system/test_passes.py`,
+`tests/engine/test_pipeline.py`, `tests/e2e/{oracle,test_reference_scenarios}.py`,
+`tests/io/test_export.py`, `tests/scenario/test_result.py`, `tests/viz/builders.py`.
