@@ -828,6 +828,19 @@ def _channel(
     through the same call and comes back unchanged, so a scenario that states a
     transmittance is bit-identical to what it produced before the model existed
     — which is what ``tests/e2e/test_reference_scenarios.py`` asserts.
+
+    **The scintillation regime is the one channel argument that changes the
+    answer without changing an input quantity**, and this line is where it
+    stops being a call-site argument. ``ChannelSpec.scintillation_regime``
+    selects ITU-R P.1622 equation (4a) itself (``WEAK``, the default) or its
+    saturated form (``MODERATE_TO_STRONG``, ADR 0022). Measured through this
+    function on the reference day: **+3.66 %** of certified key at the scenario's
+    own 10 degree mask, and the mask's interior optimum moves from 8 degrees to
+    4.5, where the day is **+6.18 %** better off. Everything stage 1.2 measured
+    was measured by calling the channel by hand, so until this argument existed
+    ``run()`` could not reproduce it; now the choice is in the scenario, and
+    therefore in the hash the result's provenance carries, so two runs that
+    disagree by 3.66 % cannot share a cache entry.
     """
     transmitter, receiver, channel = scenario.transmitter, scenario.receiver, scenario.channel
     spec = scenario.protocol
@@ -852,6 +865,7 @@ def _channel(
         station_height_m=station.station_height_m,
         rms_wind_speed_m_s=station.rms_wind_speed_m_s,
         ground_cn2_m23=station.ground_cn2_m23,
+        regime=channel.scintillation_regime,
     )
     mean_photon_number = (
         spec.signal_probability * spec.signal_intensity

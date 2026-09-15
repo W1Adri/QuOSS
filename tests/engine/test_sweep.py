@@ -26,6 +26,7 @@ from typing import Any
 
 import pytest
 
+from quoss.channel.turbulence import ScintillationRegime
 from quoss.core.errors import DegradationLog, DomainError, ScenarioError, Severity
 from quoss.core.rng import RandomSource
 from quoss.engine.cache import ResultCache
@@ -44,6 +45,7 @@ from quoss.scenario.models import MonteCarloSpec, Scenario
 from quoss.scenario.result import SimulationResult
 
 MASK_PATH = "passes.minimum_elevation_deg"
+REGIME_PATH = "channel.scintillation_regime"
 
 MASK_SWEEP_DEG = (2.0, 5.0, 8.0, 10.0, 15.0)
 MASK_SWEEP_FINITE_BITS = (409_584.0, 427_602.0, 435_462.0, 433_442.0, 407_794.0)
@@ -207,6 +209,27 @@ class TestApplyPoint:
     def test_the_message_names_the_point(self) -> None:
         with pytest.raises(ScenarioError, match=r"minimum_elevation_deg': -5.0"):
             apply_point(reference_castelldefels(), {MASK_PATH: -5.0})
+
+    def test_an_enum_field_is_swept_by_its_string_value(self) -> None:
+        """A sweep axis need not be a number, and the scintillation regime is the case.
+
+        A point is applied to the scenario's **JSON** form, so an enum arrives
+        as the string a YAML file would carry and comes back an enum member.
+        That is what lets ADR 0022's two columns be one grid rather than two
+        scripts, and the two points are two scenarios: they hash differently,
+        so they cannot share a cache entry for a 3.7 % difference in key.
+        """
+        weak = apply_point(reference_castelldefels(), {REGIME_PATH: "weak"})
+        saturated = apply_point(reference_castelldefels(), {REGIME_PATH: "moderate-to-strong"})
+        assert weak.channel.scintillation_regime is ScintillationRegime.WEAK
+        assert saturated.channel.scintillation_regime is ScintillationRegime.MODERATE_TO_STRONG
+        assert scenario_hash(weak) != scenario_hash(saturated)
+        assert scenario_hash(weak) == scenario_hash(reference_castelldefels())
+
+    def test_a_regime_no_scenario_file_could_hold_is_refused_at_the_point(self) -> None:
+        """``"strong"`` is not one of the two members, and the point says so."""
+        with pytest.raises(ScenarioError, match=r"is not a valid scenario"):
+            apply_point(reference_castelldefels(), {REGIME_PATH: "strong"})
 
 
 class TestBadPaths:

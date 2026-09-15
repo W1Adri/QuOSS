@@ -203,6 +203,12 @@ huecos rellenado con la cita más plausible.
    recomendación, documentada y fijada por un test
 2. ✅ `channel/turbulence.py` — varianza de log-irradiancia, promediado de
    apertura, r₀ y ángulo isoplanático, todo sobre momentos del perfil.
+   **Etapa 1.2 del plan de fases:** `ScintillationRegime` y
+   `saturated_log_irradiance_variance` ([ADR 0022](../docs/adr/0022-the-strong-regime.md)),
+   y desde `LAST_CHANGES` §39 la elección es **campo de escenario**
+   (`ChannelSpec.scintillation_regime`) y eje de barrido, así que `run()`
+   reproduce el resultado de diseño de la etapa —el óptimo de la máscara baja de
+   8° a 4.5°— en vez de solo un script.
    **Asimetría subida/bajada como parte del API**, no como nota: el uplink no
    recibe promediado de apertura (P.1622 §4.1.1) y su función no tiene dónde
    aceptar un diámetro. El V2 más fuerte del canal: las **ocho** varianzas
@@ -656,7 +662,10 @@ alimenta: lo que valida, convierte. ADR de la etapa:
    a la unidad de física como propiedad/método (`latitude_rad`, `wavelength_m`,
    `gate_s`, `to_elements()`, `to_protocol()`, `grid()`), hecha aquí y en ningún
    otro sitio. Dos campos sin defecto y con test: `zenith_transmittance` (ADR 0009
-   hueco 14) y `minimum_elevation_deg` (ADR 0011 §5). Una época ingenua se rechaza
+   hueco 14) y `minimum_elevation_deg` (ADR 0011 §5). **Y un campo cuyo defecto
+   sí existe y está defendido con número:** `scintillation_regime`, `WEAK`,
+   porque flipar el otro dejaría **seis de las ocho celdas** de la Tabla 2 de la
+   P.1622 fuera de medio dígito impreso (ADR 0022, anexo). Una época ingenua se rechaza
    como el defecto del reloj de pared que fue. `protocol.name` se valida contra
    el registro; `"e91"` se rechaza con la lista de lo que hay. **Desviación
    medida:** la estación lleva el viento r.m.s. (21.0 m/s) y no el de superficie,

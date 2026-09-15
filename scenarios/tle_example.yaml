@@ -56,6 +56,7 @@ channel:
   static_loss_db: 0.3           # NTANOS_POLARISATION_LOSS_DB, carried as a static term
   outage_probability: 0.01
   fade_combination: additive    # the paper's convention: sum of the two marginal quantiles
+  scintillation_regime: weak    # 'moderate-to-strong' is the saturated model of ADR 0022
 
 receiver:
   detector_efficiency: 0.85

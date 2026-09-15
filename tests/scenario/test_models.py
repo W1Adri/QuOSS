@@ -46,7 +46,7 @@ from quoss.channel.atmosphere import bufton_rms_wind_speed_m_s
 from quoss.channel.background import SkyCondition
 from quoss.channel.detector import receiver_efficiency
 from quoss.channel.link_budget import FadeCombination, downlink_loss_budget
-from quoss.channel.turbulence import log_irradiance_variance
+from quoss.channel.turbulence import ScintillationRegime, log_irradiance_variance
 from quoss.core.errors import DegradationLog, Severity
 from quoss.core.types import TimeGrid
 from quoss.core.units import deg_to_rad
@@ -268,6 +268,34 @@ class TestUnitsConvertOnceAtTheBoundary:
         assert station.altitude_km == 0.03
         assert station.station_height_m == 30.0
         assert station.rms_wind_speed_m_s == 21.0
+
+    def test_the_regime_default_is_the_physics_default_and_both_are_the_recommendation(
+        self,
+    ) -> None:
+        """The schema may not disagree with the function it feeds, and here is the check.
+
+        ``ChannelSpec.scintillation_regime`` is passed straight to
+        :func:`~quoss.channel.link_budget.downlink_loss_budget`, so two defaults
+        describe the same choice and a drift between them would be invisible:
+        every scenario would quietly get one model while every direct caller got
+        the other. Both are ``WEAK``, and the reason is ADR 0022's measured one
+        — at ITU-R P.1622 Table 2's own fully-weak point the saturated model
+        reads 3.4 % below the recommendation, so defaulting to it would move
+        every V2 anchor of the channel by that much.
+
+        What it costs to leave it at ``WEAK`` is measured too, and it is not
+        nothing: on the reference day the saturated model is worth +3.66 % of
+        certified key, and it moves the optimal elevation mask from 8 degrees
+        to 4.5 (``tests/e2e/test_reference_scenarios.py``). This default buys
+        traceability to a printed number, not the larger key.
+        """
+        schema_default = ChannelSpec.model_fields["scintillation_regime"].default
+        physics_default = inspect.signature(downlink_loss_budget).parameters["regime"].default
+        assert schema_default is physics_default is ScintillationRegime.WEAK
+        assert ChannelSpec(zenith_transmittance=1.0).scintillation_regime is schema_default
+        assert "moderate-to-strong" in str(
+            ChannelSpec.model_fields["scintillation_regime"].description
+        )
 
     def test_the_wind_default_is_the_hv57_value_not_the_bufton_conversion(self) -> None:
         """Bufton(2.3 m/s) is 21.018 m/s; HV 5/7 and the physics defaults use 21.0.

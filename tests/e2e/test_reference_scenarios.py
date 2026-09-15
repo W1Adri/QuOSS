@@ -153,6 +153,10 @@ TestTheOneTermThatIsNotACopy
     The single place the two differ, which is a shape and not a value.
 TestTheFourHundredAndFiftySevenBits
     Both numbers reproduced from one hand chain, and what the term is worth.
+TestTheScenarioChoosesTheRegime
+    Stage 1.2 wired: ``run()`` in the saturated regime, against the hand chain.
+TestTheFourHundredAndFiftySevenBitsChangeSignUnderSaturation
+    The same 30 m, worth -206 bits instead of +457, and the two factors why.
 TestTheEnsembleIsTheSameDraw
     The Monte Carlo stage: same seed, same stream, same quantiles.
 TestTheAggregationAndTheRelayAddNothing
@@ -165,6 +169,7 @@ import ast
 import importlib
 import inspect
 from collections import Counter
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -175,12 +180,20 @@ from quoss.channel.extinction import (
     VisibilityScalingLaw,
     zenith_transmittance_from_visibility,
 )
-from quoss.channel.turbulence import ScintillationRegime
+from quoss.channel.turbulence import (
+    ScintillationRegime,
+    aperture_averaging_factor,
+    downlink_log_irradiance_variance,
+    log_irradiance_variance,
+)
 from quoss.core.errors import DegradationLog
+from quoss.engine.cache import ResultCache
 from quoss.engine.pipeline import Simulation, StationRun, simulate
 from quoss.engine.pipeline import run as run_scenario
+from quoss.engine.sweep import SweepResult, SweepSpec, run_sweep
 from quoss.qkd.base import LinkConditions, binary_entropy
 from quoss.scenario.defaults import reference_castelldefels
+from quoss.scenario.hash import scenario_hash
 from quoss.scenario.models import (
     ChannelSpec,
     ExtinctionSpec,
@@ -247,6 +260,40 @@ the time.
 
 MULTI_STATION_NAMES = ("castelldefels", "calar_alto", "tenerife_ogs")
 """The three stations of `tests/system/reference_stations.py`, in its order."""
+
+MASK_SWEEP_DEG = (2.0, 4.5, 8.0, 20.0)
+"""The four masks stage 1.2 measured by hand, including both optima."""
+
+STAGE_ONE_TWO_HAND_TABLE: dict[tuple[float, ScintillationRegime], float] = {
+    (2.0, ScintillationRegime.WEAK): 408_946.0,
+    (4.5, ScintillationRegime.WEAK): 424_448.0,
+    (8.0, ScintillationRegime.WEAK): 434_938.0,
+    (20.0, ScintillationRegime.WEAK): 360_978.0,
+    (2.0, ScintillationRegime.MODERATE_TO_STRONG): 458_862.0,
+    (4.5, ScintillationRegime.MODERATE_TO_STRONG): 462_945.0,
+    (8.0, ScintillationRegime.MODERATE_TO_STRONG): 457_663.0,
+    (20.0, ScintillationRegime.MODERATE_TO_STRONG): 364_740.0,
+}
+"""ADR 0022's table, transcribed from `tests/system/test_key_volume.py`.
+
+Those are the stage-3 fixture's numbers: the same chain with the turbulence
+profile left at 0 m, which is what `tests/system/reference.py` documents at
+length. `TestTheMaskSweepInBothRegimes` reproduces every one of them from the
+`oracle` chain and shows that the whole difference from the engine's own table
+is that one argument.
+"""
+
+ENGINE_MASK_SWEEP_BITS: dict[tuple[float, ScintillationRegime], float] = {
+    (2.0, ScintillationRegime.WEAK): 409_584.0,
+    (4.5, ScintillationRegime.WEAK): 425_073.0,
+    (8.0, ScintillationRegime.WEAK): 435_462.0,
+    (20.0, ScintillationRegime.WEAK): 361_199.0,
+    (2.0, ScintillationRegime.MODERATE_TO_STRONG): 458_076.0,
+    (4.5, ScintillationRegime.MODERATE_TO_STRONG): 462_358.0,
+    (8.0, ScintillationRegime.MODERATE_TO_STRONG): 457_341.0,
+    (20.0, ScintillationRegime.MODERATE_TO_STRONG): 364_774.0,
+}
+"""The same eight cells as `run_sweep` computes them, with the station's 30 m wired."""
 
 
 def assert_identical(got: Any, expected: Any, what: str) -> None:
@@ -397,6 +444,28 @@ def station(engine: Simulation) -> StationRun:
 def by_hand() -> HandLink:
     """Wire the same link by hand, call by call, at the station's own height."""
     return hand_link("castelldefels", station_height_m=CASTELLDEFELS_HEIGHT_M)
+
+
+@pytest.fixture(scope="module")
+def mask_regime_sweep() -> SweepResult:
+    """Return the eight-cell mask-by-regime grid of `TestTheMaskSweepInBothRegimes`.
+
+    Module-scoped because it is eight full days of the reference scenario and
+    six tests read it; it is a record, so nothing mutates it.
+    """
+    return run_sweep(
+        reference_castelldefels(),
+        SweepSpec(
+            {
+                "passes.minimum_elevation_deg": list(MASK_SWEEP_DEG),
+                "channel.scintillation_regime": [
+                    ScintillationRegime.WEAK.value,
+                    ScintillationRegime.MODERATE_TO_STRONG.value,
+                ],
+            }
+        ),
+        degradations=DegradationLog(),
+    )
 
 
 class TestTheEngineAddsNothing:
@@ -1403,6 +1472,412 @@ class TestWhatTheSaturatedModelIsWorth:
             assert ((weak > 0.0) == (saturated > 0.0)).all(), name
 
 
+class TestTheScenarioChoosesTheRegime:
+    """**Stage 1.2, wired.** The regime reaches `run()`, and `run()` reproduces the hand chain.
+
+    What was missing, and why it mattered
+    -------------------------------------
+    `ScintillationRegime` and `saturated_log_irradiance_variance` landed in
+    `quoss.channel.turbulence` with ADR 0022, and
+    `TestWhatTheSaturatedModelIsWorth` above measures what they are worth. Every
+    one of those measurements was made by **calling the channel by hand**:
+    `ChannelSpec` had no field for the choice and `engine.pipeline` passed none,
+    so `run()` could only ever produce the ``WEAK`` column. A result that cannot
+    express the model it used is a result whose number is not traceable to its
+    inputs, which is what `docs/adr/0014-scenario-contract-and-provenance.md`
+    exists to prevent.
+
+    `ChannelSpec.scintillation_regime` closes it, and this class is the proof
+    that wiring a field is not the same as computing a new number: the engine's
+    saturated day has to be the hand chain's saturated day, bit for bit, the
+    same way its weak day already was.
+
+    The reference day, both ways
+    ----------------------------
+    Same orbit, same station, same 10 degree mask, same protocol; the only
+    difference is the field.
+
+    ==================  ===============  ==================  ========
+    regime              day (bits)       passes 1 and 3      change
+    ==================  ===============  ==================  ========
+    ``weak``            433 442          190 807 / 242 635   --
+    ``moderate-to-strong``  449 308      198 673 / 250 635   +3.66 %
+    ==================  ===============  ==================  ========
+
+    Two passes of the four certify nothing in either column, which is
+    ``docs/adr/0011-the-block-is-the-pass.md``'s cliff and not a change here.
+
+    And the choice is in the hash, which is the point
+    -------------------------------------------------
+    The field enters `canonical_json`, so the two runs have different scenario
+    hashes and therefore different `Provenance.scenario_hash` and different
+    cache entries. A 3.66 % difference that shared an entry would be the worst
+    kind of cache: correct, fast, and about the wrong physics.
+    """
+
+    SATURATED = ScintillationRegime.MODERATE_TO_STRONG
+    SATURATED_FINITE_BITS = (198_673.0, 0.0, 250_635.0, 0.0)
+    SATURATED_FINITE_DAY_BITS = 449_308.0
+    SATURATED_ASYMPTOTIC_DAY_BITS = 3_904_383.4674895606
+    """Compared through `assert_matches_literal`, like `ENGINE_ASYMPTOTIC_DAY_BITS`."""
+
+    @staticmethod
+    def _scenario(regime: ScintillationRegime) -> Scenario:
+        """Return the reference scenario with only the regime replaced."""
+        scenario = reference_castelldefels()
+        channel = scenario.channel
+        return scenario.model_copy(
+            update={
+                "channel": ChannelSpec(
+                    zenith_transmittance=channel.zenith_transmittance,
+                    static_loss_db=channel.static_loss_db,
+                    outage_probability=channel.outage_probability,
+                    fade_combination=channel.fade_combination,
+                    scintillation_regime=regime,
+                )
+            }
+        )
+
+    def test_the_default_is_weak_and_saying_so_changes_nothing(self) -> None:
+        """A scenario that declares ``weak`` is the scenario that says nothing.
+
+        Not only the same numbers: the same *hash*, which is the stronger claim
+        and the one that keeps every result written before this field existed
+        reachable in the cache it was written to.
+        """
+        assert ChannelSpec.model_fields["scintillation_regime"].default is (
+            ScintillationRegime.WEAK
+        )
+        declared = self._scenario(ScintillationRegime.WEAK)
+        assert scenario_hash(declared) == scenario_hash(reference_castelldefels())
+        result = run_scenario(declared)
+        assert_identical(
+            np.asarray(result.passes.finite_bits), np.asarray(ENGINE_FINITE_BITS), "weak finite"
+        )
+        assert float(np.asarray(result.daily.finite_bits)[0]) == ENGINE_FINITE_DAY_BITS
+
+    def test_the_saturated_run_is_the_hand_chain_term_by_term(self) -> None:
+        """Every loss term, not only the total, and then the key the protocol read.
+
+        `TestTheEngineAddsNothing` makes this claim for the default regime; a
+        new argument is exactly the kind of change that makes it stop being
+        true for one branch while staying true for the other, so the branch
+        gets its own copy rather than a spot check on the day total.
+        """
+        engine_run = simulate(self._scenario(self.SATURATED), degradations=DegradationLog())
+        station = engine_run.stations[0]
+        by_hand = hand_link(
+            "castelldefels", station_height_m=CASTELLDEFELS_HEIGHT_M, regime=self.SATURATED
+        )
+        assert station.loss is not None and station.conditions is not None
+        for field in (
+            "geometric_db",
+            "atmospheric_db",
+            "pointing_db",
+            "scintillation_db",
+            "fade_db",
+            "total_db",
+            "transmittance",
+            "channel_transmittance",
+            "effective_outage_probability",
+        ):
+            assert_identical(
+                getattr(station.loss, field),
+                getattr(by_hand.loss, field),
+                f"saturated loss.{field}",
+            )
+        assert_identical(
+            station.conditions.transmittance,
+            by_hand.conditions.transmittance,
+            "saturated conditions.transmittance",
+        )
+        assert_identical(
+            station.finite.key_bits, by_hand.finite.key_bits, "saturated finite.key_bits"
+        )
+        assert_identical(
+            station.asymptotic.key_bits,
+            by_hand.asymptotic.key_bits,
+            "saturated asymptotic.key_bits",
+        )
+
+    def test_the_saturated_day_the_engine_now_reports(self) -> None:
+        """449 308 bits, +3.66 % on the weak day, and the asymptotic figure with it."""
+        result = run_scenario(self._scenario(self.SATURATED))
+        assert tuple(np.asarray(result.passes.finite_bits).tolist()) == self.SATURATED_FINITE_BITS
+        assert float(np.asarray(result.daily.finite_bits)[0]) == self.SATURATED_FINITE_DAY_BITS
+        assert self.SATURATED_FINITE_DAY_BITS / ENGINE_FINITE_DAY_BITS - 1.0 == pytest.approx(
+            0.0366, abs=5e-4
+        )
+        by_hand = hand_link(
+            "castelldefels", station_height_m=CASTELLDEFELS_HEIGHT_M, regime=self.SATURATED
+        )
+        assert_matches_literal(
+            float(np.asarray(result.daily.asymptotic_bits)[0]),
+            self.SATURATED_ASYMPTOTIC_DAY_BITS,
+            relative_bound=cross_platform_relative_bound(by_hand),
+            what="saturated asymptotic day",
+        )
+
+    def test_the_two_regimes_are_two_scenarios_and_cannot_share_a_cache_entry(
+        self, tmp_path: Path
+    ) -> None:
+        """The provenance half of the wiring, and it is not a formality.
+
+        The cache is keyed on the scenario hash, so a field the hash did not see
+        would make the saturated run collide with the weak one: the second run
+        would return the first one's arrays, 3.66 % away, with a `Provenance`
+        that named the right scenario.
+        """
+        weak, saturated = self._scenario(ScintillationRegime.WEAK), self._scenario(self.SATURATED)
+        assert scenario_hash(weak) != scenario_hash(saturated)
+        cache = ResultCache(tmp_path)
+        stored = run_scenario(weak)
+        assert stored.provenance.scenario_hash == scenario_hash(weak)
+        cache.put(stored, degradations=DegradationLog())
+        assert cache.get(weak, seed=None, degradations=DegradationLog()) is not None
+        assert cache.get(saturated, seed=None, degradations=DegradationLog()) is None
+
+    @pytest.mark.parametrize(
+        ("regime", "code"),
+        [
+            (ScintillationRegime.WEAK, "turbulence.weak-fluctuation-limit-exceeded"),
+            (SATURATED, "turbulence.scintillation-saturated"),
+        ],
+    )
+    def test_whichever_is_chosen_the_run_says_so_and_names_the_other(
+        self, regime: ScintillationRegime, code: str
+    ) -> None:
+        """Neither branch is silent, and each warning names the model it did not use.
+
+        The reference day crosses 1 Np^2 of Rytov variance near the horizon
+        whichever model is selected, so both runs have something to report:
+        ``weak`` reports that it is past its own validity limit, ``saturated``
+        reports that it replaced a value and by how much. A run that chose a
+        model and said nothing would be the silent degradation this project
+        forbids.
+        """
+        warnings = [w for w in run_scenario(self._scenario(regime)).warnings if w["code"] == code]
+        assert len(warnings) == 1
+        assert "ScintillationRegime." in warnings[0]["message"]
+        assert float(warnings[0]["details"]["peak_variance_np2"]) > 0.0
+
+    def test_the_saturated_engine_run_never_reports_less_key_than_the_weak_one(self) -> None:
+        """V1, per pass and per day: the only sign the wiring is allowed to have.
+
+        Saturation can only lower a variance, a lower variance can only lower a
+        fade allowance and a lower allowance can only raise a transmittance. A
+        pass that lost key would mean the argument reached something other than
+        the scintillation model.
+        """
+        weak = run_scenario(self._scenario(ScintillationRegime.WEAK))
+        saturated = run_scenario(self._scenario(self.SATURATED))
+        assert np.all(
+            np.asarray(saturated.passes.finite_bits) >= np.asarray(weak.passes.finite_bits)
+        )
+        assert np.all(
+            np.asarray(saturated.passes.asymptotic_bits) >= np.asarray(weak.passes.asymptotic_bits)
+        )
+
+
+class TestTheFourHundredAndFiftySevenBitsChangeSignUnderSaturation:
+    """The 457 bits of `TestTheFourHundredAndFiftySevenBits`, recomputed in the other regime.
+
+    The claim being checked
+    -----------------------
+    `StationSpec.altitude_m` starts the turbulence profile 30 m up at
+    Castelldefels, and that is worth **+457 bits** (+0.106 %) on the reference
+    day under ``WEAK``: less air above the telescope, less scintillation, more
+    key. The obvious expectation is that the same 30 m is worth a little
+    *something* under the saturated model too, since it is the same air.
+
+    It is not. Under ``MODERATE_TO_STRONG`` the same 30 m is worth **-206
+    bits**: 449 514 at sea level against 449 308 at the station's own height.
+    The sign flips, and that is a fact about the two models rather than about
+    the plumbing, which is why it is measured here rather than explained away.
+
+    Why the sign flips, in the two factors that make the variance
+    -------------------------------------------------------------
+    The downlink variance is a product, ITU-R P.1622 equation (8)::
+
+        sigma^2 = A * sigma^2_point
+
+    Raising the station moves both factors, in **opposite** directions:
+
+    - ``sigma^2_point`` falls, because the first 30 m of air leave the path. At
+      10 degrees elevation, 1.5446 -> 1.4780 Np^2, **-4.31 %**.
+    - ``A``, the aperture averaging factor, **rises**: 0.072572 -> 0.075102,
+      **+3.49 %**. A is equation (7)'s suppression of flicker by a telescope
+      wider than the speckles, and it is set by the *height* of the turbulence,
+      through the ``z_0`` of equation (9). Start the profile higher and the
+      weighted turbulence sits further away, the speckles at the ground are
+      larger, and a 0.75 m telescope averages fewer of them.
+
+    Under ``WEAK`` the first factor moves the full 4.31 % and wins: the product
+    falls 0.97 % and the day gains 457 bits. Under saturation the first factor
+    is **compressed** — the saturated point variance falls only from 0.63542 to
+    0.62602, **-1.48 %**, because near saturation a change in the Rytov variance
+    mostly does not reach the output — while ``A`` rises by the same 3.49 %. The
+    product now *rises* 1.96 %, and the day loses 206 bits.
+
+    The crossing is at 27.02 degrees of elevation: above it the saturated
+    variance still falls with height, below it, it rises. The reference day
+    spends **67.7 % of its in-pass seconds below that crossing** (median
+    elevation 17.4 degrees), because a pass spends most of its duration near
+    the horizon, and those are exactly the samples whose fade allowance is
+    largest. So the day total inherits the sign of the low samples rather than
+    averaging the two signs away.
+
+    What it does not say
+    --------------------
+    It does not say a mountain is a bad place for a telescope. 30 m is 30 m; the
+    gap 21 of ADR 0009 -- aperture averaging in the saturated regime is P.1622's
+    convention applied to a variance Ntanos et al. define as a ratio of indices
+    -- is exactly the modelling choice this sign depends on, and it is declared
+    open. What it says is that the two regimes are two models, and a quantity
+    measured in one of them does not carry over to the other even in sign.
+    """
+
+    SATURATED = ScintillationRegime.MODERATE_TO_STRONG
+    SATURATED_SEA_LEVEL_DAY_BITS = 449_514.0
+    SATURATED_STATION_DAY_BITS = 449_308.0
+
+    @staticmethod
+    def _day(height_m: float, regime: ScintillationRegime) -> float:
+        return float(
+            np.asarray(
+                hand_link("castelldefels", station_height_m=height_m, regime=regime).finite.key_bits
+            ).sum()
+        )
+
+    @staticmethod
+    def _downlink_variance(
+        elevation_deg: float, height_m: float, regime: ScintillationRegime
+    ) -> float:
+        return float(
+            downlink_log_irradiance_variance(
+                float(np.deg2rad(elevation_deg)),
+                aperture_diameter_m=0.75,
+                wavelength_m=WAVELENGTH_M,
+                degradations=DegradationLog(),
+                station_height_m=height_m,
+                regime=regime,
+            )
+        )
+
+    def test_the_term_is_worth_plus_four_hundred_and_fifty_seven_bits_and_minus_two_hundred_and_six(
+        self,
+    ) -> None:
+        """The headline, both regimes, from the same hand chain with one argument changed."""
+        weak_gain = self._day(CASTELLDEFELS_HEIGHT_M, ScintillationRegime.WEAK) - self._day(
+            0.0, ScintillationRegime.WEAK
+        )
+        saturated_gain = self._day(CASTELLDEFELS_HEIGHT_M, self.SATURATED) - self._day(
+            0.0, self.SATURATED
+        )
+        assert weak_gain == 457.0
+        assert saturated_gain == -206.0
+        assert self._day(0.0, self.SATURATED) == self.SATURATED_SEA_LEVEL_DAY_BITS
+        assert self._day(CASTELLDEFELS_HEIGHT_M, self.SATURATED) == self.SATURATED_STATION_DAY_BITS
+
+    def test_the_point_variance_falls_at_both_heights_and_saturation_compresses_the_fall(
+        self,
+    ) -> None:
+        """-4.31 % of Rytov variance becomes -1.48 % once saturated. The first factor."""
+        log = DegradationLog()
+        point = {
+            (height, regime): float(
+                log_irradiance_variance(
+                    float(np.deg2rad(10.0)),
+                    wavelength_m=WAVELENGTH_M,
+                    degradations=log,
+                    station_height_m=height,
+                    regime=regime,
+                )
+            )
+            for height in (0.0, CASTELLDEFELS_HEIGHT_M)
+            for regime in (ScintillationRegime.WEAK, self.SATURATED)
+        }
+        weak_fall = (
+            point[(CASTELLDEFELS_HEIGHT_M, ScintillationRegime.WEAK)]
+            / point[(0.0, ScintillationRegime.WEAK)]
+            - 1.0
+        )
+        saturated_fall = (
+            point[(CASTELLDEFELS_HEIGHT_M, self.SATURATED)] / point[(0.0, self.SATURATED)] - 1.0
+        )
+        assert weak_fall == pytest.approx(-0.0431, abs=5e-4)
+        assert saturated_fall == pytest.approx(-0.0148, abs=5e-4)
+        assert saturated_fall > weak_fall
+
+    def test_the_aperture_averaging_factor_rises_with_the_station_in_both_regimes(self) -> None:
+        """+3.49 %, and it does not depend on the regime at all. The second factor.
+
+        `aperture_averaging_factor` takes no regime: the saturation model
+        changes the point variance and nothing else, so this factor is shared.
+        That is what makes the two effects separable and the sign flip
+        attributable.
+        """
+        factors = [
+            float(
+                aperture_averaging_factor(
+                    float(np.deg2rad(10.0)),
+                    aperture_diameter_m=0.75,
+                    wavelength_m=WAVELENGTH_M,
+                    station_height_m=height,
+                )
+            )
+            for height in (0.0, CASTELLDEFELS_HEIGHT_M)
+        ]
+        assert factors[1] / factors[0] - 1.0 == pytest.approx(0.0349, abs=5e-4)
+        assert "regime" not in inspect.signature(aperture_averaging_factor).parameters
+
+    def test_the_product_therefore_falls_under_weak_and_rises_under_saturation(self) -> None:
+        """-0.97 % against +1.96 % at 10 degrees: the sign flip, before any key is computed."""
+        weak = [
+            self._downlink_variance(10.0, height, ScintillationRegime.WEAK)
+            for height in (0.0, CASTELLDEFELS_HEIGHT_M)
+        ]
+        saturated = [
+            self._downlink_variance(10.0, height, self.SATURATED)
+            for height in (0.0, CASTELLDEFELS_HEIGHT_M)
+        ]
+        assert weak[1] / weak[0] - 1.0 == pytest.approx(-0.0097, abs=5e-4)
+        assert saturated[1] / saturated[0] - 1.0 == pytest.approx(+0.0196, abs=5e-4)
+
+    def test_the_crossing_sits_above_most_of_the_days_seconds(self) -> None:
+        """27.02 degrees, found by bisection on the difference rather than read off a table.
+
+        Two thirds of the day's in-pass seconds are below it, so the day total
+        inherits the sign of the low samples instead of averaging the two signs
+        away. The bisection is written out rather than imported from scipy
+        because what is being asserted is the *location* of a sign change, and a
+        root finder that silently returned an endpoint would assert nothing.
+        """
+
+        def difference(elevation_deg: float) -> float:
+            return self._downlink_variance(
+                elevation_deg, CASTELLDEFELS_HEIGHT_M, self.SATURATED
+            ) - self._downlink_variance(elevation_deg, 0.0, self.SATURATED)
+
+        low, high = 20.0, 40.0
+        assert difference(low) > 0.0 > difference(high)
+        for _ in range(60):
+            middle = 0.5 * (low + high)
+            if difference(middle) > 0.0:
+                low = middle
+            else:
+                high = middle
+        crossing = 0.5 * (low + high)
+        assert crossing == pytest.approx(27.02, abs=0.01)
+        link = hand_link("castelldefels", station_height_m=CASTELLDEFELS_HEIGHT_M)
+        rows = (np.asarray(link.samples.satellite_index), np.asarray(link.samples.sample_index))
+        elevation_deg = np.rad2deg(np.asarray(link.angles.elevation_rad)[rows])
+        dwell_s = np.asarray(link.samples.dwell_s)
+        below = elevation_deg < crossing
+        assert float(dwell_s[below].sum() / dwell_s.sum()) == pytest.approx(0.677, abs=5e-3)
+        assert float(np.median(elevation_deg)) == pytest.approx(17.4, abs=0.1)
+
+
 class TestWhatTheExtinctionModelIsWorth:
     """**Stage 1.1.** The term the budget used to receive, priced by the same split.
 
@@ -1600,6 +2075,185 @@ class TestWhatTheExtinctionModelIsWorth:
             "infinite-visibility finite bits",
         )
         assert float(np.asarray(result.daily.finite_bits)[0]) == ENGINE_FINITE_DAY_BITS
+
+
+class TestTheMaskSweepInBothRegimes:
+    """**Stage 1.2's design finding**, produced by `run_sweep` instead of by hand.
+
+    What is being closed
+    --------------------
+    ADR 0022's headline is that saturating the scintillation moves the elevation
+    mask's interior optimum from **8 degrees to 4.5** and the reference day's
+    certified key by **+6.4 %**. That table was built by calling the channel,
+    the pass table and the protocol by hand, one mask at a time, because
+    ``ChannelSpec`` had no field for the regime. A design finding that only a
+    hand-written script can reproduce is a finding nobody can re-run against a
+    scenario file, which is what `quoss.engine.sweep` exists to prevent
+    (its module docstring: "a figure in a paper is almost always a sweep").
+
+    Now the regime is a scenario field, so it is also a **sweep axis**: the
+    eight cells below are one `SweepSpec` over two dotted paths, ``grid`` mode,
+    and the row that produced each one carries its own scenario hash.
+
+    ============  ===============  ==================  ========
+    mask (deg)    ``weak``         saturated           change
+    ============  ===============  ==================  ========
+    2             409 584          458 076             +11.8 %
+    4.5           425 073          **462 358**         +8.8 %
+    8             **435 462**      457 341             +5.0 %
+    20            361 199          364 774             +1.0 %
+    ============  ===============  ==================  ========
+
+    Why these are not the numbers ADR 0022 prints, and what the tolerance is
+    ------------------------------------------------------------------------
+    ADR 0022 prints 408 946 / 424 448 / 434 938 / 360 978 and 458 862 / 462 945
+    / 457 663 / 364 740, up to 786 bits away. **The difference is not a
+    tolerance and it is not noise**: it is the 30 m of `StationSpec.altitude_m`
+    reaching the turbulence profile, the same discrepancy
+    `TestTheFourHundredAndFiftySevenBits` exists for. The ADR's table comes from
+    `tests/system/reference.py`, which leaves the profile at 0 m.
+
+    So nothing here is compared with a fitted tolerance. The two ends are
+    reproduced **exactly**, from one hand chain with one argument changed:
+
+    - the eight swept cells equal `oracle.hand_link` at 30 m, bit for bit;
+    - the eight published cells equal the same chain at 0 m, bit for bit;
+    - therefore every residual equals ``hand(30 m) - hand(0 m)`` exactly, cell
+      by cell, and there is nothing left over for a tolerance to absorb.
+
+    That residual changes sign between the regimes — ``+638`` bits at 2 degrees
+    under ``weak``, ``-786`` under saturation — which is not a mistake either;
+    `TestTheFourHundredAndFiftySevenBitsChangeSignUnderSaturation` measures why.
+
+    What survives the change of chain
+    ---------------------------------
+    Both optima, which is what the ADR claims: 8 degrees under ``weak``, 4.5
+    under saturation, both interior. And the gain is monotone in how low the
+    mask is, +11.8 % at 2 degrees against +1.0 % at 20, which is the signature
+    of an effect that lives entirely in the low samples.
+    """
+
+    SATURATED = ScintillationRegime.MODERATE_TO_STRONG
+    REGIME_PATH = "channel.scintillation_regime"
+    MASK_PATH = "passes.minimum_elevation_deg"
+
+    @staticmethod
+    def _hand(mask_deg: float, regime: ScintillationRegime, height_m: float) -> float:
+        """Return the day's finite key from the hand chain, at one mask, regime and height."""
+        link = hand_link(
+            "castelldefels", mask_deg=mask_deg, station_height_m=height_m, regime=regime
+        )
+        return float(np.asarray(link.finite.key_bits).sum())
+
+    def test_the_sweep_runs_both_regimes_as_one_grid(self, mask_regime_sweep: SweepResult) -> None:
+        """Eight rows, two axes, and a distinct scenario hash on every one of them."""
+        rows = mask_regime_sweep.to_records()
+        assert len(rows) == 8
+        assert tuple(mask_regime_sweep.column(self.MASK_PATH)) == (
+            2.0,
+            2.0,
+            4.5,
+            4.5,
+            8.0,
+            8.0,
+            20.0,
+            20.0,
+        )
+        assert len({row["scenario_hash"] for row in rows}) == 8
+
+    def test_every_swept_cell_is_the_hand_chain_at_the_stations_own_height(
+        self, mask_regime_sweep: SweepResult
+    ) -> None:
+        """The exact half of the claim: ``==``, through the sweep's JSON round trip.
+
+        `run_sweep` dumps the scenario, edits a dotted path and revalidates, so
+        this also checks that a regime written as a string survives that trip
+        as the same physics.
+        """
+        for row in mask_regime_sweep.to_records():
+            mask = float(row[self.MASK_PATH])
+            regime = ScintillationRegime(row[self.REGIME_PATH])
+            assert row["daily.finite_bits"] == ENGINE_MASK_SWEEP_BITS[(mask, regime)]
+            assert row["daily.finite_bits"] == self._hand(mask, regime, CASTELLDEFELS_HEIGHT_M)
+
+    def test_the_published_table_is_the_same_chain_at_sea_level(self) -> None:
+        """The other exact half: ADR 0022's eight cells, reproduced to the bit."""
+        for (mask, regime), published in STAGE_ONE_TWO_HAND_TABLE.items():
+            assert self._hand(mask, regime, 0.0) == published
+
+    def test_the_whole_residual_is_the_profile_height_and_nothing_else(
+        self, mask_regime_sweep: SweepResult
+    ) -> None:
+        """No tolerance: the difference is an identity, cell by cell.
+
+        A tolerance chosen to cover 786 bits would also cover a real 700-bit
+        change in the physics, which is the failure mode
+        ``notes/GUIA_REIMPLEMENTACION.md`` calls a tolerance that cannot fail.
+        This asserts the residual **equals** what one argument is worth.
+        """
+        residuals: dict[tuple[float, ScintillationRegime], float] = {}
+        for row in mask_regime_sweep.to_records():
+            mask = float(row[self.MASK_PATH])
+            regime = ScintillationRegime(row[self.REGIME_PATH])
+            residual = row["daily.finite_bits"] - STAGE_ONE_TWO_HAND_TABLE[(mask, regime)]
+            assert residual == self._hand(mask, regime, CASTELLDEFELS_HEIGHT_M) - self._hand(
+                mask, regime, 0.0
+            )
+            residuals[(mask, regime)] = residual
+        assert residuals.keys() == STAGE_ONE_TWO_HAND_TABLE.keys()
+        assert max(abs(residual) for residual in residuals.values()) == 786.0
+        assert (
+            max(
+                abs(residual) / STAGE_ONE_TWO_HAND_TABLE[key] for key, residual in residuals.items()
+            )
+            < 2e-3
+        )
+        assert residuals[(2.0, ScintillationRegime.WEAK)] == 638.0
+        assert residuals[(2.0, self.SATURATED)] == -786.0
+
+    def test_both_optima_survive_the_change_of_chain(self, mask_regime_sweep: SweepResult) -> None:
+        """8 degrees under ``weak``, 4.5 under saturation, both interior.
+
+        This is the sentence ADR 0022 is for, and the first time `run()`
+        produces it rather than a script. The day gains **+6.18 %** at its own
+        optimum here against the ADR's +6.4 %, and the difference is the same
+        30 m as everywhere else in this class.
+        """
+        table = {
+            (float(row[self.MASK_PATH]), ScintillationRegime(row[self.REGIME_PATH])): row[
+                "daily.finite_bits"
+            ]
+            for row in mask_regime_sweep.to_records()
+        }
+        for regime, expected_best in (
+            (ScintillationRegime.WEAK, 8.0),
+            (self.SATURATED, 4.5),
+        ):
+            column = {mask: table[(mask, regime)] for mask in MASK_SWEEP_DEG}
+            best = max(column, key=lambda mask: column[mask])
+            assert best == expected_best
+            assert column[best] > column[MASK_SWEEP_DEG[0]]
+            assert column[best] > column[MASK_SWEEP_DEG[-1]]
+        gain = table[(4.5, self.SATURATED)] / table[(8.0, ScintillationRegime.WEAK)] - 1.0
+        assert gain == pytest.approx(0.0618, abs=5e-4)
+
+    def test_the_gain_is_monotone_in_how_low_the_mask_is(
+        self, mask_regime_sweep: SweepResult
+    ) -> None:
+        """+11.8 % at 2 degrees down to +1.0 % at 20: the effect is the low samples."""
+        table = {
+            (float(row[self.MASK_PATH]), ScintillationRegime(row[self.REGIME_PATH])): row[
+                "daily.finite_bits"
+            ]
+            for row in mask_regime_sweep.to_records()
+        }
+        gains = [
+            table[(mask, self.SATURATED)] / table[(mask, ScintillationRegime.WEAK)] - 1.0
+            for mask in MASK_SWEEP_DEG
+        ]
+        assert gains == sorted(gains, reverse=True)
+        assert gains[0] == pytest.approx(0.1184, abs=5e-4)
+        assert gains[-1] == pytest.approx(0.0099, abs=5e-4)
 
 
 class TestTheEnsembleIsTheSameDraw:

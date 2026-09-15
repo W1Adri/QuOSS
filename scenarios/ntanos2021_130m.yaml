@@ -47,6 +47,7 @@ channel:
   static_loss_db: 0.0
   outage_probability: 0.01
   fade_combination: exact
+  scintillation_regime: weak    # the paper's own regime; 'moderate-to-strong' is ADR 0022
 
 receiver:
   detector_efficiency: 0.85
