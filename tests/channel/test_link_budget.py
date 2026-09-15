@@ -571,6 +571,102 @@ class TestTwoOnePerCentAllowancesAreNotOnePerCent:
             assert _emg_cdf(level, mean, sd, rate) == pytest.approx(1.0 - outage, abs=1e-12)
 
 
+class TestTheJointFadeWhenPointingIsNegligible:
+    """The regime a horizontal link lives in: a beam wide against its own jitter.
+
+    What broke, for someone arriving new. The joint fade is the quantile of an
+    exponentially modified Gaussian, and its distribution function has a term
+    whose exponent is two numbers of size ``(a s)^2 / 2`` cancelling, where
+    ``a = gamma^2 / 4.343``. On the reference downlink ``gamma`` is 4.4 and
+    nothing cancels badly. On a horizontal link ``gamma`` is tens to thousands,
+    and before `_emg_cdf` was rewritten this returned **1.602 dB** at
+    ``gamma = 1e10, sigma^2 = 1e-4`` where the right answer is **0.101 dB**,
+    **124.9 dB** against **8.23** at ``gamma = 1e30, sigma^2 = 0.5``, and raised
+    an overflow in between. None of those look wrong on a plot.
+    """
+
+    GAMMAS = (30.0, 1e3, 1e5, 1e7, 1e10, 1e30, 1e100, 1e149, np.inf)
+    VARIANCES = (1e-4, 0.0153, 0.05, 0.5, 2.0)
+
+    def test_the_joint_fade_lies_between_scintillation_alone_and_the_sum(self) -> None:
+        """Bounds that follow from the definition, so no tolerance is chosen.
+
+        Adding a non-negative fade can only raise a quantile, so the joint
+        allowance is at least the scintillation allowance; and the sum of the
+        two separate allowances is conservative (`TestFadeCombination`), so it
+        is at most that. The slack is the bisection's own resolution, 1e-12 dB,
+        stated in `combined_fade_db`'s contract as far finer than that.
+        """
+        for gamma in self.GAMMAS:
+            for variance in self.VARIANCES:
+                joint = float(
+                    combined_fade_db(
+                        beam_to_jitter_ratio_value=gamma,
+                        log_irradiance_variance_np2=variance,
+                        outage_probability=0.01,
+                    )
+                )
+                alone = float(scintillation_fade_db(variance, outage_probability=0.01))
+                pointing = float(pointing_fade_db(gamma, outage_probability=0.01))
+                assert alone - 1e-12 <= joint <= alone + pointing + 1e-12, (gamma, variance)
+
+    def test_the_cases_that_used_to_be_wrong(self) -> None:
+        for gamma, variance, wrong_db in ((1e10, 1e-4, 1.602), (1e30, 0.5, 124.9)):
+            joint = float(
+                combined_fade_db(
+                    beam_to_jitter_ratio_value=gamma,
+                    log_irradiance_variance_np2=variance,
+                    outage_probability=0.01,
+                )
+            )
+            alone = float(scintillation_fade_db(variance, outage_probability=0.01))
+            assert joint == pytest.approx(alone, abs=1e-9)
+            assert abs(joint - wrong_db) > 1.0
+
+    def test_the_level_returned_is_the_quantile_of_the_distribution(self) -> None:
+        """The V3 round trip of `test_the_bisection_converges_to_its_own_definition`, at large gamma."""
+        from quoss.channel.link_budget import _emg_cdf, _fade_distribution_parameters
+
+        gamma = np.array([1e3, 1e7, 1e30, np.inf])
+        variance = np.array([0.5, 1e-4, 0.05, 0.0153])
+        mean, sd, rate = _fade_distribution_parameters(gamma, variance)
+        for outage in (0.5, 0.01, 1e-6):
+            level = combined_fade_db(
+                beam_to_jitter_ratio_value=gamma,
+                log_irradiance_variance_np2=variance,
+                outage_probability=outage,
+            )
+            assert _emg_cdf(level, mean, sd, rate) == pytest.approx(1.0 - outage, abs=1e-12)
+
+    def test_an_infinite_ratio_is_no_pointing_fade_and_nan_is_still_refused(self) -> None:
+        """``+inf`` is what `equivalent_beam_radius_m` returns for a lens far wider than the beam."""
+        assert float(pointing_fade_db(np.inf, outage_probability=1e-6)) == 0.0
+        effective = additive_fade_outage_probability(
+            beam_to_jitter_ratio_value=np.inf,
+            log_irradiance_variance_np2=0.05,
+            outage_probability=0.01,
+        )
+        assert float(effective) == pytest.approx(0.01, abs=1e-12)
+        for bad in (np.nan, 0.0, -1.0, -np.inf):
+            with pytest.raises(DomainError, match="strictly positive and not NaN"):
+                pointing_fade_db(bad, outage_probability=0.01)
+            with pytest.raises(DomainError, match="strictly positive and not NaN"):
+                combined_fade_db(
+                    beam_to_jitter_ratio_value=bad,
+                    log_irradiance_variance_np2=0.01,
+                    outage_probability=0.01,
+                )
+
+    def test_the_reference_downlink_values_did_not_move(self) -> None:
+        """The rewrite is an identity: at gamma = 4.4 it changes nothing a doctest can see."""
+        joint = combined_fade_db(
+            beam_to_jitter_ratio_value=np.sqrt(19.42),
+            log_irradiance_variance_np2=0.01528,
+            outage_probability=0.01,
+        )
+        assert round(float(joint), 3) == 1.668
+
+
 class TestTheFadeLawsAreClosedForm:
     """**V1**: the two distributions the closed form above depends on."""
 

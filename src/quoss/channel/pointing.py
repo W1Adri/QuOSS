@@ -228,6 +228,20 @@ _MIN_OUTAGE_PROBABILITY: Final[float] = 0.0
 _MAX_OUTAGE_PROBABILITY: Final[float] = 1.0
 
 
+_EQUIVALENT_RADIUS_EXPONENT_LIMIT: Final[float] = 700.0
+"""Largest ``v^2`` for which equation (9) is evaluated; above it ``w_zeq`` is ``+inf``.
+
+Equation (9) divides by ``exp(-v^2)``, which underflows to zero past
+``v^2 = 708`` — an aperture radius about 21 times the beam radius, which is a
+1 mm beam into a 25 mm lens, an ordinary bench. At ``v^2 = 700`` the ratio
+``w_zeq / W`` is already 1e151, so ``gamma`` is beyond
+:data:`quoss.channel.link_budget._POINTING_FADE_FREE_RATIO` for any jitter that
+leaves the beam narrower than its own displacement, and the pointing fade is
+zero to 298 decimal places. Returning ``+inf`` is that limit, stated exactly,
+instead of a ``RuntimeWarning`` or a quotient of two underflows.
+"""
+
+
 def _validated_jitter_rad(jitter_rad: float) -> float:
     """Return the r.m.s. angular jitter, rejecting zero as well as negatives."""
     jitter = float(jitter_rad)
@@ -368,17 +382,29 @@ def equivalent_beam_radius_m(
                 "jitter produces, and only diverges beyond about two beam radii of offset — so "
                 "this matters if the jitter approaches the beam radius, and is harmless if it "
                 "does not. Compare jitter_rad against equivalent_beam_radius_m / range to tell "
-                "which case this is."
+                "which case this is. Past about 21 aperture radii per beam radius the equivalent "
+                "radius exceeds double precision and is returned as +inf, which is the law's own "
+                "limit: no pointing fade."
             ),
             where="quoss.channel.pointing.equivalent_beam_radius_m",
             beam_to_aperture_radius_ratio=worst,
+            equivalent_radius_is_infinite=bool(
+                np.any(
+                    (np.sqrt(np.pi) * aperture_radius_m / (np.sqrt(2.0) * radius_m)) ** 2
+                    > _EQUIVALENT_RADIUS_EXPONENT_LIMIT
+                )
+            ),
             limit=GAUSSIAN_POINTING_BEAM_TO_RADIUS_LIMIT,
             receive_aperture_m=float(receive_aperture_m),
         )
 
     v = np.sqrt(np.pi) * aperture_radius_m / (np.sqrt(2.0) * radius_m)
-    equivalent_sq = radius_m**2 * np.sqrt(np.pi) * erf(v) / (2.0 * v * np.exp(-(v**2)))
-    equivalent: FloatArray = np.sqrt(equivalent_sq)
+    representable = v * v <= _EQUIVALENT_RADIUS_EXPONENT_LIMIT
+    v_safe = np.where(representable, v, 1.0)
+    equivalent_sq = (
+        radius_m**2 * np.sqrt(np.pi) * erf(v_safe) / (2.0 * v_safe * np.exp(-(v_safe**2)))
+    )
+    equivalent: FloatArray = np.where(representable, np.sqrt(equivalent_sq), np.inf)
     return equivalent
 
 

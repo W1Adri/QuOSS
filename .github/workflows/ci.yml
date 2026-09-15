@@ -69,3 +69,52 @@ jobs:
 
       - name: pytest
         run: uv run pytest --cov --cov-report=term-missing
+
+  # A golden that has only been verified on one machine is a photograph of that
+  # machine. This job is the second machine, twice over, because the two ways a
+  # last-bit literal breaks are different and neither job above can see either:
+  #
+  # - macOS on arm64: a different libm and numpy's NEON kernels instead of the
+  #   x86 SIMD ones, so `exp`, `log` and `pow` may round the other way in the
+  #   last bit. Two tests of tests/e2e once failed by 5 ULP on a machine that was
+  #   not the one their literals were written on, and passed everywhere CI ran.
+  # - The oldest numpy the locked scipy accepts (2.0), on the oldest Python the
+  #   project supports: a different reduction order or kernel for the same call.
+  #   Verified locally before being added here: 3408 passed on 3.11 + 2.0.2.
+  #
+  # `uv run --with` overlays the pinned numpy on the locked environment for that
+  # one command, so UV_LOCKED still guarantees everything else is the lock.
+  portability:
+    name: pytest (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: macOS arm64, py3.13
+            os: macos-latest
+            python-version: "3.13"
+            numpy: ""
+          - label: numpy 2.0, py3.11
+            os: ubuntu-latest
+            python-version: "3.11"
+            numpy: "numpy==2.0.2"
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python-version }}
+
+      - name: Sync environment
+        run: uv sync --all-extras
+
+      - name: pytest (locked numpy)
+        if: matrix.numpy == ''
+        run: uv run pytest
+
+      - name: pytest (${{ matrix.numpy }})
+        if: matrix.numpy != ''
+        run: uv run --with "${{ matrix.numpy }}" pytest

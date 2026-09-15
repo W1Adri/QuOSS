@@ -719,6 +719,50 @@ class TestTheDeclaredCaptureRange:
         assert outside == sorted(outside, reverse=True)
         assert outside[0] > outside[-1] == 0.0
 
+    def test_with_no_pass_there_is_nothing_to_check_and_the_run_says_why(self) -> None:
+        """A declared window and zero passes: no acquisition entry, and one reason for it.
+
+        What happens here, for someone arriving new: a ten-minute run of the
+        reference scenario starts at the ascending node over the equator, far
+        from Castelldefels, so the satellite never rises above the 10 deg mask
+        and the pass table is empty.
+
+        **With a window declared** the acquisition stage has nothing to
+        contrast: the Doppler requirement is a property of a pass, and there is
+        none. So it records nothing — no warning, because nothing exceeds the
+        window, and not the "no window declared" INFO either, because one was.
+        That silence is honest only because the run is not silent overall:
+        ``passes.none-found`` is already in the log and says the one thing that
+        is true, that there was no pass to judge. A second entry from this stage
+        would claim a check that had nothing to check.
+
+        **With no window declared** the INFO is still recorded, pass or no pass,
+        because "unknown must not read like fine" does not depend on the sky;
+        and its ``largest_excursion_hz`` is ``None`` rather than ``0.0``,
+        because zero would read as a measured excursion of zero hertz.
+        """
+
+        def short(window_hz: float | None) -> Scenario:
+            base = self._with_window(window_hz)
+            return base.model_copy(
+                update={"time": base.time.model_copy(update={"duration_s": 600.0})}
+            )
+
+        log = DegradationLog()
+        result = run(short(8e9), degradations=log)
+        assert result.passes.n_passes == 0
+        codes = [entry.code for entry in log]
+        assert "passes.none-found" in codes
+        assert not [code for code in codes if code.startswith("engine.acquisition.")]
+
+        undeclared = DegradationLog()
+        run(short(None), degradations=undeclared)
+        (info,) = [
+            e for e in undeclared if e.code == "engine.acquisition.no-capture-range-declared"
+        ]
+        assert info.severity is Severity.INFO
+        assert info.details["largest_excursion_hz"] is None
+
     def test_the_half_range_property_is_the_other_reading_of_the_same_field(self) -> None:
         """Both conventions available by name, so neither needs remembering to convert."""
         receiver = self._with_window(1e10).receiver
