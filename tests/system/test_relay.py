@@ -147,7 +147,16 @@ class TestTheStoreIdentity:
         self, bits_a: list[float], bits_b: list[float], seed: int
     ) -> None:
         rng = np.random.default_rng(seed)
-        starts = np.sort(rng.uniform(0.0, 80_000.0, size=len(bits_a) + len(bits_b)))
+        # Disjoint by construction: every gap exceeds the 300 s window, so no two
+        # windows overlap however they are split between the two sides. Drawing
+        # starts independently on [0, 80000) does not give that — two of them can
+        # land within 300 s of each other, and the result is two passes of *one*
+        # satellite overlapping in time, which `PassTable` rejects as physically
+        # impossible. It is right to reject it; the generator was wrong to build
+        # it. Hypothesis found it at seed 275 with six windows, after the shape
+        # had been in the suite long enough to look safe.
+        gaps = rng.uniform(310.0, 6_000.0, size=len(bits_a) + len(bits_b))
+        starts = np.cumsum(gaps)
         windows = [(float(s), float(s) + 300.0) for s in starts]
         rng.shuffle(windows)
         result = schedule(windows[: len(bits_a)], bits_a, windows[len(bits_a) :], bits_b)
