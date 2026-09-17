@@ -16,7 +16,7 @@ from typing import Any
 import pytest
 
 from quoss.core.errors import ConfigurationError, DomainError
-from quoss.scenario.defaults import ntanos_2021, reference_castelldefels
+from quoss.scenario.defaults import ge1_two_terminals, ntanos_2021, reference_castelldefels
 from quoss.scenario.hash import scenario_hash
 from quoss.scenario.models import Scenario
 from quoss.scenario.result import SimulationResult
@@ -208,6 +208,18 @@ class TestTheEngineIsInjected:
         monkeypatch.setitem(sys.modules, "quoss.engine.sweep", None)
         with pytest.raises(ConfigurationError, match="sweeper="):
             figure_mask_optimum()
+
+    def test_the_default_runner_refuses_a_horizontal_scenario_by_name(self) -> None:
+        """The paper figures are downlink figures, and ``run()`` now takes either kind.
+
+        Since ADR 0024 ``quoss.engine.pipeline.run`` returns whichever result the
+        scenario's ``link`` tag names, so the default runner can be handed
+        something with no passes and no days to plot. It says so here, naming the
+        figure that *is* the horizontal one, instead of failing on the first
+        attribute a plotting routine reaches for.
+        """
+        with pytest.raises(ConfigurationError, match="horizontal_key_against_distance"):
+            figure_finite_vs_asymptotic(scenario=ge1_two_terminals())  # type: ignore[arg-type]
 
 
 class TestWithoutMatplotlib:

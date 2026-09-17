@@ -170,6 +170,7 @@ __all__ = [
     "VisibilityScalingLaw",
     "aerosol_specific_attenuation_db_per_km",
     "molecular_scattering_specific_attenuation_db_per_km",
+    "specific_attenuation_at_altitude_db_per_km",
     "visibility_scaling_exponent",
     "zenith_optical_depth_from_visibility",
     "zenith_transmittance_from_visibility",
@@ -871,9 +872,163 @@ def zenith_optical_depth_from_visibility(
         visibility_km, wavelength_m=wavelength_m, law=law, degradations=degradations
     )
     nepers_per_km = db_per_km / NEPER_TO_DB
-    thinning = np.exp(-(station - reference) / scale_height_m)
+    thinning = _aerosol_thinning(
+        altitude_m=station, visibility_altitude_m=reference, aerosol_scale_height_m=scale_height_m
+    )
     depth: FloatArray = nepers_per_km * float(m_to_km(scale_height_m)) * thinning
     return depth
+
+
+def _aerosol_thinning(
+    *, altitude_m: float, visibility_altitude_m: float, aerosol_scale_height_m: float
+) -> float:
+    """Return ``exp(-(h - h_v) / H)``: how much of the aerosol survives at ``h``.
+
+    The one line both the vertical column and the horizontal path need, in one
+    place so that the two cannot disagree about which way the exponent points.
+    Its arguments are already validated by the two callers, which is why it is
+    private: a public function taking unvalidated altitudes would be a third way
+    into the same profile.
+    """
+    return float(np.exp(-(altitude_m - visibility_altitude_m) / aerosol_scale_height_m))
+
+
+def specific_attenuation_at_altitude_db_per_km(
+    visibility_km: FloatArray | float,
+    *,
+    wavelength_m: float,
+    aerosol_scale_height_m: float,
+    altitude_m: float,
+    visibility_altitude_m: float,
+    law: VisibilityScalingLaw,
+    degradations: DegradationLog,
+) -> FloatArray:
+    """Return the aerosol specific attenuation at one altitude, dB/km.
+
+    What this is, and how it differs from the zenith one
+    ----------------------------------------------------
+    :func:`zenith_optical_depth_from_visibility` answers "how much light is lost
+    on the way **up**", which is an integral over the whole column and therefore
+    one dimensionless number. A **horizontal** path has no column to integrate:
+    it crosses air of one composition at one height, so what it needs is the
+    extinction **coefficient there** -- a loss *per kilometre*, which multiplied
+    by the path length gives the loss. That is the ``extinction_db_per_km`` of
+    :func:`quoss.channel.horizontal.horizontal_loss_budget`, and this function is
+    what computes one from a visibility instead of asserting it.
+
+    The same profile, used one step earlier
+    ---------------------------------------
+    Both functions read the same aerosol profile,
+    ``beta(h) = beta_v exp(-(h - h_v) / H)``. The vertical one integrates it from
+    the station upward and gets ``beta_v H exp(-(h_s - h_v) / H)``; this one
+    **evaluates** it at ``h`` and stops. So the scale height enters here only
+    through the exponential, and **cancels exactly when the visibility was
+    measured at the link's own height** -- which is the ordinary case for a
+    horizontal link, where the visibility sensor and the terminals stand on the
+    same ground. In that case this function returns
+    :func:`aerosol_specific_attenuation_db_per_km` unchanged, and
+    ``aerosol_scale_height_m`` (ADR 0009 gap 22, the field with no published
+    value) has no influence on the answer at all. It is still required, because
+    nothing in a visibility figure says at what height it was taken, and the
+    other reading -- a sea-level climatological visibility applied to a link on a
+    2 km plateau -- is a different number by ``exp(-2000/H)``, a factor 5.3 at
+    ``H = 1200 m``.
+
+    Parameters
+    ----------
+    visibility_km
+        Visual range at ``visibility_altitude_m``, km, strictly positive.
+        ``+inf`` allowed and gives exactly 0.0. Any shape.
+    wavelength_m
+        Optical wavelength, m.
+    aerosol_scale_height_m
+        Height over which the aerosol extinction falls by a factor ``e``, m.
+        **No default** (ADR 0009 gap 22).
+    altitude_m
+        The height the path runs at, m above the WGS-84 ellipsoid.
+    visibility_altitude_m
+        The altitude the visibility describes, m. Equal to ``altitude_m`` for a
+        locally measured visibility, in which case the two cancel exactly.
+    law
+        Which published exponent. **No default.**
+    degradations
+        Log, passed through to :func:`aerosol_specific_attenuation_db_per_km`.
+
+    Returns
+    -------
+    FloatArray
+        Specific attenuation, dB/km, shaped like ``visibility_km``.
+
+    Raises
+    ------
+    DomainError
+        If any visibility is not positive, the wavelength or scale height is not
+        finite and positive, or either altitude is not finite.
+
+    Examples
+    --------
+    23 km of visibility, measured where the link runs, at 1550 nm: the 0.192
+    dB/km that ADR 0021's worked example assumes by hand as "0.2".
+
+    >>> from quoss.core.errors import DegradationLog
+    >>> gamma = specific_attenuation_at_altitude_db_per_km(
+    ...     23.0,
+    ...     wavelength_m=1.55e-6,
+    ...     aerosol_scale_height_m=1200.0,
+    ...     altitude_m=30.0,
+    ...     visibility_altitude_m=30.0,
+    ...     law=VisibilityScalingLaw.KIM_2001,
+    ...     degradations=DegradationLog(),
+    ... )
+    >>> round(float(gamma), 4)
+    0.192
+
+    The scale height cannot matter when the two altitudes agree, and that is an
+    identity rather than an approximation:
+
+    >>> other = specific_attenuation_at_altitude_db_per_km(
+    ...     23.0,
+    ...     wavelength_m=1.55e-6,
+    ...     aerosol_scale_height_m=2000.0,
+    ...     altitude_m=30.0,
+    ...     visibility_altitude_m=30.0,
+    ...     law=VisibilityScalingLaw.KIM_2001,
+    ...     degradations=DegradationLog(),
+    ... )
+    >>> float(other) == float(gamma)
+    True
+
+    A sea-level figure read on a plateau is a different number:
+
+    >>> plateau = specific_attenuation_at_altitude_db_per_km(
+    ...     23.0,
+    ...     wavelength_m=1.55e-6,
+    ...     aerosol_scale_height_m=1200.0,
+    ...     altitude_m=2000.0,
+    ...     visibility_altitude_m=0.0,
+    ...     law=VisibilityScalingLaw.KIM_2001,
+    ...     degradations=DegradationLog(),
+    ... )
+    >>> round(float(plateau), 5)
+    0.03626
+    """
+    scale_height_m = validated_positive_length_m(
+        "aerosol_scale_height_m",
+        aerosol_scale_height_m,
+        hint="The unit is metres: a 1.2 km boundary layer is 1200.0, not 1.2.",
+    )
+    altitude = _validated_altitude_m("altitude_m", altitude_m)
+    reference = _validated_altitude_m("visibility_altitude_m", visibility_altitude_m)
+    db_per_km = aerosol_specific_attenuation_db_per_km(
+        visibility_km, wavelength_m=wavelength_m, law=law, degradations=degradations
+    )
+    thinning = _aerosol_thinning(
+        altitude_m=altitude,
+        visibility_altitude_m=reference,
+        aerosol_scale_height_m=scale_height_m,
+    )
+    result: FloatArray = db_per_km * thinning
+    return result
 
 
 def zenith_transmittance_from_visibility(

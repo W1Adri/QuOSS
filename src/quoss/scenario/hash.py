@@ -65,7 +65,7 @@ from __future__ import annotations
 import hashlib
 import json
 
-from quoss.scenario.models import Scenario
+from quoss.scenario.models import AnyScenario
 
 __all__ = ["HASH_EXCLUDED_FIELDS", "canonical_json", "scenario_hash"]
 
@@ -73,7 +73,7 @@ HASH_EXCLUDED_FIELDS: frozenset[str] = frozenset({"name", "description"})
 """Top-level fields that are labels, not physics, and stay out of the digest."""
 
 
-def canonical_json(scenario: Scenario) -> str:
+def canonical_json(scenario: AnyScenario) -> str:
     """Return the one JSON text that represents this scenario's physics.
 
     Keys sorted at every level, no whitespace, ASCII only, floats by ``repr``,
@@ -84,8 +84,8 @@ def canonical_json(scenario: Scenario) -> str:
 
     Parameters
     ----------
-    scenario : Scenario
-        A validated scenario.
+    scenario : Scenario or HorizontalScenario
+        A validated scenario of either geometry.
 
     Returns
     -------
@@ -103,19 +103,19 @@ def canonical_json(scenario: Scenario) -> str:
     >>> "reference_castelldefels" in text
     False
     """
-    payload = scenario.model_dump(mode="json", exclude=set(HASH_EXCLUDED_FIELDS))
+    payload = scenario.physics_dict()
     return json.dumps(
         payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
     )
 
 
-def scenario_hash(scenario: Scenario) -> str:
+def scenario_hash(scenario: AnyScenario) -> str:
     """Return the SHA-256 hex digest of :func:`canonical_json`.
 
     Parameters
     ----------
-    scenario : Scenario
-        A validated scenario.
+    scenario : Scenario or HorizontalScenario
+        A validated scenario of either geometry.
 
     Returns
     -------

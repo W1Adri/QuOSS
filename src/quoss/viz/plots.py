@@ -86,7 +86,7 @@ import numpy as np
 
 from quoss.core.errors import DomainError, Severity
 from quoss.core.types import FloatArray, IntArray
-from quoss.core.units import rad_to_deg
+from quoss.core.units import m_to_km, rad_to_deg
 from quoss.orbits.frames import jd_to_calendar
 from quoss.scenario.result import SeriesResults, SimulationResult
 from quoss.viz.style import (
@@ -121,6 +121,7 @@ __all__ = [
     "mark_degradations",
     "plot_daily_key",
     "plot_elevation_and_rate",
+    "plot_horizontal_key_against_distance",
     "plot_multi_station",
     "plot_pass_key_volume",
     "plot_relay",
@@ -144,6 +145,15 @@ DEGRADED_GID = "quoss-degraded"
 ZERO_KEY_GID = "quoss-zero-key"
 """``gid`` of the "0" written at the base of a bar that certifies no key."""
 
+WEAK_LIMIT_GID = "quoss-weak-limit"
+"""``gid`` of the line marking where weak-turbulence theory stops being citable."""
+
+RAYLEIGH_GID = "quoss-rayleigh-range"
+"""``gid`` of the band marking the transmitter's Rayleigh range."""
+
+WAVE_BAND_GID = "quoss-wave-band"
+"""``gid`` of the plane-to-spherical band: an interval, not an uncertainty."""
+
 _ONE_PANEL_HEIGHT_IN = 2.4
 _TWO_PANEL_HEIGHT_IN = 3.6
 _SKY_HEIGHT_IN = 3.2
@@ -155,6 +165,21 @@ _DAYS_TO_HALF = 0.5
 """A Julian day number names the civil day that starts at ``JDN - 0.5``."""
 _RIGHT_ANGLE_DEG = 90.0
 _MEDIAN = 0.5
+_BAND_ALPHA = 0.25
+"""Fill opacity of the plane-to-spherical interval."""
+_SHADE_ALPHA = 0.12
+"""Fill opacity of the two "read this region carefully" shades."""
+_WAVE_KEY = "path.wave"
+"""Sweep column naming the wave, when the rows come from a two-axis sweep."""
+_RAYLEIGH_RANGES_WHERE_THE_BAND_MISLEADS = 1.6
+"""How many Rayleigh ranges the "narrow for the wrong reason" shade covers.
+
+Not a fitted number and not a threshold in any source: it is where the 500 m row
+of ``notes/LAST_CHANGES.md`` §37 sits (1.58 z_R), the furthest sampled distance
+at which the interval is still within a few per cent while neither closed form
+describes the beam. The shade is a reading aid, so the honest thing is to say
+where it came from rather than to derive a boundary that does not exist.
+"""
 _SAVE_TIME_KEYS = ("pdf.fonttype", "ps.fonttype", "svg.fonttype", "svg.hashsalt")
 _METADATA: dict[str, dict[str, Any]] = {
     "pdf": {"CreationDate": None},
@@ -745,6 +770,280 @@ def plot_sweep(
     axes.set_xlabel(x if xlabel is None else xlabel)
     axes.set_ylabel(y if ylabel is None else ylabel)
     return fig
+
+
+def plot_horizontal_key_against_distance(
+    records: Sequence[Mapping[str, Any]],
+    *,
+    x: str = "path.path_length_m",
+    plane: str = "session.finite_bit_s",
+    spherical: str = "session.finite_bit_s",
+    ax: Axes | None = None,
+    weak_limit_m: float | None = None,
+    rayleigh_range_m: float | None = None,
+    log_y: bool = True,
+) -> Figure:
+    """Draw key against path length on a horizontal link, with the wave choice as a band.
+
+    What the band is, and why it is not an error bar
+    -------------------------------------------------
+    A horizontal path's scintillation has two closed forms and the project can
+    defend neither as *the* answer: a collimated beam inside its Rayleigh range
+    is nearly a **plane** wave, one far beyond it looks like a point source and
+    is nearly a **spherical** wave, and a real beam is neither (the Gaussian beam
+    wave, ADR 0009 gap 18, whose formulas are in a source this project could not
+    open). So the honest output is an **interval**: the two closed forms, filled
+    between.
+
+    That band is **not** an uncertainty and must not be read as one. It has no
+    distribution behind it and no probability attached; it is two models, both
+    computed exactly, bracketing a third that is not implemented. It is also not
+    ordered the same way everywhere -- at a 2.5 cm lens the plane wave is the
+    pessimistic edge and at 10 cm the optimistic one (ADR 0021), which is why
+    this function takes the two series rather than an edge and a width.
+
+    The two marks, and what each one warns about
+    ---------------------------------------------
+    **The weak-theory limit** (``weak_limit_m``, 2413 m for ``C_n^2 = 1e-14`` at
+    1550 nm from :func:`~quoss.channel.horizontal.weak_theory_path_limit_m`) is
+    where the plane-wave Rytov variance reaches 1 and first-order theory stops
+    describing the air. Past it the curves keep being drawn -- they are what the
+    weak model says, and hiding them would be worse -- but the region is shaded
+    and labelled, because every number in it overestimates the scintillation by
+    a growing factor.
+
+    **The Rayleigh range** (``rayleigh_range_m``, 316.7 m for a 2.5 cm
+    transmitter at 1550 nm) is the subtler of the two and the reason this
+    function exists rather than a call to :func:`plot_sweep`. Below it the band
+    is **narrow, and narrow for the wrong reason**: the two closed forms happen
+    to agree there (1 % at 200 m) not because either describes the beam but
+    because the geometric term dominates and the scintillation difference does
+    not reach the key. A reader who takes a narrow band as "well determined" has
+    drawn exactly the wrong conclusion, so that region is shaded too, with its
+    own label.
+
+    Parameters
+    ----------
+    records : Sequence[Mapping[str, Any]]
+        Sweep rows, as ``SweepResult.to_records()`` returns them. They must hold
+        one row per distance **per wave**; pass the plane rows and the spherical
+        rows as two separate sequences via two calls if they are in one sweep.
+        The usual shape is two filtered lists concatenated, which this function
+        splits by looking for ``path.wave``.
+    x : str
+        Key of the swept distance, in metres.
+    plane, spherical : str
+        Key of the metric on each wave. When ``records`` carries a ``path.wave``
+        column the two are the same metric name and the rows are split by it;
+        when it does not, they are two different column names in one row.
+    ax : Axes, optional
+        Cartesian axes to draw into; ``None`` creates a one-column figure.
+    weak_limit_m, rayleigh_range_m : float, optional
+        The two marks. ``None`` leaves a mark out; nothing is guessed from the
+        data, because both are properties of the air and of the transmitter and
+        neither is in the sweep rows.
+    log_y : bool
+        Logarithmic key axis, the default: the key falls by two and a half
+        orders of magnitude between 200 m and 5 km. A distance that certifies
+        **no** key is not dropped by it: it is drawn as a "0" at the bottom of
+        the axes, with :data:`ZERO_KEY_GID`, because that point -- a link with a
+        positive asymptotic rate and nothing certified -- is the most important
+        one on the figure.
+
+    Returns
+    -------
+    Figure
+        The figure ``ax`` belongs to.
+
+    Raises
+    ------
+    DomainError
+        If the rows cannot be split into two waves, if a distance appears twice
+        within one wave, or if a key value is not finite.
+    ConfigurationError
+        If ``matplotlib`` is not installed.
+    """
+    rows = list(records)
+    if not rows:
+        raise DomainError("plot_horizontal_key_against_distance needs at least one record.")
+    lower, upper, distances = _wave_bracket(rows, x=x, plane=plane, spherical=spherical)
+    dead = upper <= 0.0
+    fig, axes = _figure_and_axes(ax, height_in=_ONE_PANEL_HEIGHT_IN)
+    km: FloatArray = np.asarray(m_to_km(distances), dtype=np.float64)
+    if log_y and np.any(dead):
+        # A log axis drops a zero without saying so, and on this figure the zero
+        # is the most important point on it: past some distance the link still
+        # has a positive asymptotic rate and certifies nothing at all (ADR 0011's
+        # cliff). `plot_sweep` refuses the combination because a dropped point
+        # there is invisible; here the point is kept, drawn at the bottom of the
+        # axes and labelled "0", which is the same answer `_mark_zero_key` gives
+        # a bar chart.
+        lower = np.where(dead, np.nan, lower)
+        upper = np.where(dead, np.nan, upper)
+    axes.fill_between(
+        km,
+        lower,
+        upper,
+        color=FINITE_COLOR,
+        alpha=_BAND_ALPHA,
+        linewidth=0.0,
+        label="plane-to-spherical interval",
+        gid=WAVE_BAND_GID,
+    )
+    axes.plot(km, lower, color=FINITE_COLOR, marker="o", markersize=3.0, label=FINITE_LABEL)
+    axes.plot(
+        km,
+        upper,
+        color=FINITE_COLOR,
+        marker="o",
+        markersize=3.0,
+        linestyle="--",
+        markerfacecolor=SURFACE,
+    )
+    if log_y:
+        axes.set_yscale("log")
+    axes.set_xlabel("path length (km)")
+    axes.set_ylabel("secret key (bit/s)")
+
+    floor = float(np.nanmin(lower)) if log_y else 0.0
+    if np.any(dead):
+        # Drawn as points and not only as text, so the distances that certify
+        # nothing take part in the autoscaling and the axis does not end before
+        # them: a figure whose x range stopped at the last positive point would
+        # hide the zero as effectively as the log axis would have.
+        axes.plot(
+            km[dead],
+            np.full(int(dead.sum()), floor),
+            linestyle="none",
+            marker="x",
+            color=INK,
+            markersize=4.0,
+            gid=ZERO_KEY_GID,
+        )
+        for xi in km[dead]:
+            axes.annotate(
+                "0",
+                (float(xi), floor),
+                xytext=(0.0, 4.0),
+                textcoords="offset points",
+                ha="center",
+                va="bottom",
+                fontsize=SMALL_FONT_SIZE_PT,
+                color=INK,
+                gid=ZERO_KEY_GID,
+            )
+    if rayleigh_range_m is not None:
+        edge_km = float(m_to_km(rayleigh_range_m)) * _RAYLEIGH_RANGES_WHERE_THE_BAND_MISLEADS
+        axes.axvspan(
+            0.0,
+            edge_km,
+            color=SECONDARY_COLOR,
+            alpha=_SHADE_ALPHA,
+            linewidth=0.0,
+            gid=RAYLEIGH_GID,
+        )
+        _vertical_mark(
+            axes,
+            edge_km,
+            "inside z_R:\nband narrow for\nthe wrong reason",
+            color=MUTED,
+            gid=RAYLEIGH_GID,
+        )
+    if weak_limit_m is not None:
+        limit_km = float(m_to_km(weak_limit_m))
+        axes.axvline(
+            limit_km,
+            color=ASYMPTOTIC_COLOR,
+            linestyle=":",
+            linewidth=1.0,
+            gid=WEAK_LIMIT_GID,
+        )
+        _vertical_mark(
+            axes,
+            limit_km,
+            f"weak theory\nends ({limit_km:.3g} km)",
+            color=ASYMPTOTIC_COLOR,
+            gid=WEAK_LIMIT_GID,
+        )
+    _legend_above(axes)
+    return fig
+
+
+def _vertical_mark(ax: Any, x: float, text: str, *, color: str, gid: str) -> None:
+    """Write a label along a vertical mark, reading upwards from the axis.
+
+    Rotated rather than horizontal because the two marks of
+    :func:`plot_horizontal_key_against_distance` can land within a few hundred
+    metres of each other on a 5 km axis, and two horizontal captions at the same
+    height then overlap into an unreadable line. Placed in **axes** coordinates
+    on the y axis so the height does not depend on whether the key axis is
+    logarithmic.
+    """
+    ax.annotate(
+        text,
+        (x, 0.02),
+        xycoords=("data", "axes fraction"),
+        xytext=(3.0, 0.0),
+        textcoords="offset points",
+        rotation=90.0,
+        ha="left",
+        va="bottom",
+        fontsize=SMALL_FONT_SIZE_PT,
+        color=color,
+        gid=gid,
+        annotation_clip=True,
+        clip_on=True,
+    )
+
+
+def _wave_bracket(
+    rows: Sequence[Mapping[str, Any]], *, x: str, plane: str, spherical: str
+) -> tuple[FloatArray, FloatArray, FloatArray]:
+    """Split sweep rows into the lower and upper edge of the wave interval.
+
+    Two shapes are accepted, because both occur naturally: rows carrying a
+    ``path.wave`` column (a two-axis sweep) and rows carrying two metric columns
+    (two sweeps joined by the caller). Which edge is lower is decided **per
+    distance**, not once, because the ordering of the two waves reverses with the
+    receiving aperture (ADR 0021) and could in principle reverse along a sweep.
+    """
+    if _WAVE_KEY in rows[0]:
+        by_wave: dict[Any, dict[float, float]] = {}
+        for i, row in enumerate(rows):
+            if _WAVE_KEY not in row:
+                raise DomainError(
+                    f"record {i} has no {_WAVE_KEY!r} while record 0 does; the rows are not one "
+                    "sweep."
+                )
+            by_wave.setdefault(row[_WAVE_KEY], {})[float(row[x])] = float(row[plane])
+        if len(by_wave) != 2:
+            raise DomainError(
+                f"expected exactly two values of {_WAVE_KEY!r} to bracket, got "
+                f"{sorted(by_wave)}. The interval is between the plane and the spherical wave."
+            )
+        first, second = (by_wave[key] for key in sorted(by_wave))
+        if sorted(first) != sorted(second):
+            raise DomainError(
+                "the two waves were not swept over the same distances; the interval would join "
+                "points that are not at the same path length."
+            )
+        distances = np.asarray(sorted(first), dtype=np.float64)
+        a = np.asarray([first[float(d)] for d in distances], dtype=np.float64)
+        b = np.asarray([second[float(d)] for d in distances], dtype=np.float64)
+    else:
+        distances = _column(rows, x)
+        if np.unique(distances).size != distances.size:
+            raise DomainError(
+                f"several records share a value of {x!r} and none carries {_WAVE_KEY!r}; the "
+                "rows are neither one curve nor a two-wave sweep."
+            )
+        order = np.argsort(distances)
+        distances = distances[order]
+        a = _column(rows, plane)[order]
+        b = _column(rows, spherical)[order]
+    if not np.all(np.isfinite(a)) or not np.all(np.isfinite(b)):
+        raise DomainError("a key value in the interval is not finite.")
+    return np.minimum(a, b), np.maximum(a, b), distances
 
 
 def _column(rows: Sequence[Mapping[str, Any]], key: str) -> FloatArray:

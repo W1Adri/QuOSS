@@ -33,11 +33,13 @@ from pydantic import ValidationError
 
 from quoss.core.errors import DegradationLog, DomainError, ScenarioError, Severity
 from quoss.core.rng import RandomSource
-from quoss.engine.pipeline import STAGES, _onto_days, run, simulate
+from quoss.engine.pipeline import STAGES, _onto_days, simulate
+from quoss.engine.pipeline import run as _run
 from quoss.engine.sweep import apply_point
 from quoss.scenario.defaults import reference_castelldefels
 from quoss.scenario.io import load_scenario
 from quoss.scenario.models import (
+    AnyScenario,
     MonteCarloSpec,
     MultiStationSpec,
     RelaySpec,
@@ -45,6 +47,34 @@ from quoss.scenario.models import (
     SecuritySpec,
 )
 from quoss.scenario.result import SimulationResult
+
+
+def run(scenario: Scenario, **kwargs: Any) -> SimulationResult:
+    """:func:`quoss.engine.pipeline.run` narrowed to the downlink result.
+
+    ``run`` takes either member of the ``link`` union and returns the matching
+    result, so its static type is ``SimulationResult | HorizontalResult``. Every
+    call in this file passes a downlink scenario, and the narrow is written as an
+    assertion rather than a ``cast`` so that a scenario of the wrong kind fails
+    here, by name, instead of on the first attribute the test reaches for.
+    """
+    result = _run(scenario, **kwargs)
+    assert isinstance(result, SimulationResult), f"expected a downlink result, got {type(result)}"
+    return result
+
+
+def as_downlink(scenario: AnyScenario) -> Scenario:
+    """Narrow a loaded scenario to the downlink member, or fail the test saying so.
+
+    :func:`~quoss.scenario.io.load_scenario` returns the member the file's
+    ``link`` field names, so its static type is the union. A test that loads a
+    downlink file and then reads ``scenario.time`` is not making an assumption
+    worth hiding behind a ``cast``: it is asserting that the file is a downlink,
+    and that assertion is worth running.
+    """
+    assert isinstance(scenario, Scenario), f"expected a downlink scenario, got {type(scenario)}"
+    return scenario
+
 
 CALAR_ALTO = {"name": "calar_alto", "latitude_deg": 37.2236, "longitude_deg": -2.5464}
 OGS_TENERIFE = {"name": "ogs_tenerife", "latitude_deg": 28.3000, "longitude_deg": -16.5100}
@@ -102,7 +132,7 @@ def reference_result() -> SimulationResult:
 @pytest.fixture(scope="module")
 def tle_scenario(request: pytest.FixtureRequest) -> Scenario:
     root = Path(str(request.config.rootpath))
-    return load_scenario(root / "scenarios" / "tle_example.yaml")
+    return as_downlink(load_scenario(root / "scenarios" / "tle_example.yaml"))
 
 
 class TestWhatRunRefusesBeforeComputing:
@@ -116,7 +146,7 @@ class TestWhatRunRefusesBeforeComputing:
 
     def test_a_random_source_that_is_not_one(self) -> None:
         with pytest.raises(DomainError, match="random_source must be a RandomSource"):
-            run(with_monte_carlo(), random_source=12345, degradations=DegradationLog())  # type: ignore[arg-type]
+            run(with_monte_carlo(), random_source=12345, degradations=DegradationLog())
 
     def test_a_bad_worker_count(self) -> None:
         with pytest.raises(DomainError, match="workers must be an integer >= 1"):
@@ -420,7 +450,7 @@ class TestTheAcquisitionStage:
         """
         coarse = run(reference_castelldefels(), degradations=DegradationLog())
         fine = run(
-            apply_point(reference_castelldefels(), {"time.step_s": 0.1}),
+            as_downlink(apply_point(reference_castelldefels(), {"time.step_s": 0.1})),
             degradations=DegradationLog(),
         )
         peak_coarse = np.asarray(coarse.passes.peak_one_sided_doppler_hz)
@@ -573,7 +603,9 @@ class TestTheTwoDopplerConventions:
         """
         tight = run(reference_castelldefels(), degradations=DegradationLog())
         wide = run(
-            apply_point(reference_castelldefels(), {"passes.minimum_elevation_deg": 5.0}),
+            as_downlink(
+                apply_point(reference_castelldefels(), {"passes.minimum_elevation_deg": 5.0})
+            ),
             degradations=DegradationLog(),
         )
         tight_max = float(np.asarray(tight.passes.doppler_excursion_hz).max())

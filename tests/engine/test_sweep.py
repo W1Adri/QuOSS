@@ -21,6 +21,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -30,8 +31,10 @@ from quoss.channel.turbulence import ScintillationRegime
 from quoss.core.errors import DegradationLog, DomainError, ScenarioError, Severity
 from quoss.core.rng import RandomSource
 from quoss.engine.cache import ResultCache
-from quoss.engine.pipeline import run
+from quoss.engine.pipeline import run as _run
 from quoss.engine.sweep import (
+    DOWNLINK_METRIC_ROOTS,
+    HORIZONTAL_METRIC_ROOTS,
     METRIC_ROOTS,
     SweepResult,
     SweepSpec,
@@ -39,10 +42,38 @@ from quoss.engine.sweep import (
     metric_value,
     run_sweep,
 )
-from quoss.scenario.defaults import reference_castelldefels
+from quoss.scenario.defaults import ge1_two_terminals, reference_castelldefels
 from quoss.scenario.hash import scenario_hash
-from quoss.scenario.models import MonteCarloSpec, Scenario
-from quoss.scenario.result import SimulationResult
+from quoss.scenario.models import AnyScenario, MonteCarloSpec, Scenario
+from quoss.scenario.result import HorizontalResult, SimulationResult
+
+
+def edited(scenario: AnyScenario, point: Mapping[str, Any]) -> Scenario:
+    """:func:`~quoss.engine.sweep.apply_point` narrowed to the downlink member.
+
+    ``apply_point`` preserves the kind of the scenario it is given, but says so
+    only in prose: its static type is the union either way. Narrowing here is an
+    assertion that the point did not somehow change the geometry, which is
+    exactly the invariant worth checking.
+    """
+    result = apply_point(scenario, point)
+    assert isinstance(result, Scenario), f"expected a downlink scenario, got {type(result)}"
+    return result
+
+
+def run(scenario: Scenario, **kwargs: Any) -> SimulationResult:
+    """:func:`quoss.engine.pipeline.run` narrowed to the downlink result.
+
+    ``run`` takes either member of the ``link`` union and returns the matching
+    result, so its static type is ``SimulationResult | HorizontalResult``. Every
+    call in this file passes a downlink scenario, and the narrow is written as an
+    assertion rather than a ``cast`` so that a scenario of the wrong kind fails
+    here, by name, instead of on the first attribute the test reaches for.
+    """
+    result = _run(scenario, **kwargs)
+    assert isinstance(result, SimulationResult), f"expected a downlink result, got {type(result)}"
+    return result
+
 
 MASK_PATH = "passes.minimum_elevation_deg"
 REGIME_PATH = "channel.scintillation_regime"
@@ -178,15 +209,15 @@ class TestThePoints:
 
 class TestApplyPoint:
     def test_a_scalar_field_is_set(self) -> None:
-        scenario = apply_point(reference_castelldefels(), {MASK_PATH: 8.0})
+        scenario = edited(reference_castelldefels(), {MASK_PATH: 8.0})
         assert scenario.passes.minimum_elevation_deg == 8.0
 
     def test_an_integer_segment_indexes_a_list(self) -> None:
-        scenario = apply_point(reference_castelldefels(), {"stations.0.receive_aperture_m": 1.3})
+        scenario = edited(reference_castelldefels(), {"stations.0.receive_aperture_m": 1.3})
         assert scenario.stations[0].receive_aperture_m == 1.3
 
     def test_several_paths_are_set_in_one_point(self) -> None:
-        scenario = apply_point(reference_castelldefels(), {MASK_PATH: 12.0, "time.step_s": 5.0})
+        scenario = edited(reference_castelldefels(), {MASK_PATH: 12.0, "time.step_s": 5.0})
         assert scenario.passes.minimum_elevation_deg == 12.0
         assert scenario.time.step_s == 5.0
 
@@ -219,8 +250,8 @@ class TestApplyPoint:
         scripts, and the two points are two scenarios: they hash differently,
         so they cannot share a cache entry for a 3.7 % difference in key.
         """
-        weak = apply_point(reference_castelldefels(), {REGIME_PATH: "weak"})
-        saturated = apply_point(reference_castelldefels(), {REGIME_PATH: "moderate-to-strong"})
+        weak = edited(reference_castelldefels(), {REGIME_PATH: "weak"})
+        saturated = edited(reference_castelldefels(), {REGIME_PATH: "moderate-to-strong"})
         assert weak.channel.scintillation_regime is ScintillationRegime.WEAK
         assert saturated.channel.scintillation_regime is ScintillationRegime.MODERATE_TO_STRONG
         assert scenario_hash(weak) != scenario_hash(saturated)
@@ -258,7 +289,7 @@ class TestAPathMayEndOnAListElement:
         ``monte_carlo.quantiles.1`` ends on the list element. Both are dotted
         paths a caller will write, and they take different branches.
         """
-        scenario = apply_point(with_monte_carlo(seed=7), {"monte_carlo.quantiles.1": 0.6})
+        scenario = edited(with_monte_carlo(seed=7), {"monte_carlo.quantiles.1": 0.6})
         assert scenario.monte_carlo is not None
         assert scenario.monte_carlo.quantiles == (0.05, 0.6, 0.95)
 
@@ -298,8 +329,25 @@ class TestMetrics:
     def test_every_declared_root_is_a_real_result_section(
         self, reference_result: SimulationResult
     ) -> None:
-        for root in METRIC_ROOTS:
+        """Each geometry's roots against that geometry's result, and no overlap between them.
+
+        The two sets are checked separately because they are sets of different
+        things: a ``SimulationResult`` has no ``session`` and a
+        ``HorizontalResult`` has no ``daily``. What would be a real defect is an
+        overlap -- a name meaning one section on one result and another section
+        on the other -- so that is asserted too, and it is what lets
+        ``run_sweep`` tell a user their metric belongs to the other geometry.
+        """
+        horizontal = _run(ge1_two_terminals(), degradations=DegradationLog())
+        assert isinstance(horizontal, HorizontalResult)
+        for root in DOWNLINK_METRIC_ROOTS:
             assert hasattr(reference_result, root)
+            assert not hasattr(horizontal, root)
+        for root in HORIZONTAL_METRIC_ROOTS:
+            assert hasattr(horizontal, root)
+            assert not hasattr(reference_result, root)
+        assert set(DOWNLINK_METRIC_ROOTS) | set(HORIZONTAL_METRIC_ROOTS) == set(METRIC_ROOTS)
+        assert not set(DOWNLINK_METRIC_ROOTS) & set(HORIZONTAL_METRIC_ROOTS)
 
     @pytest.mark.parametrize("bad", ["", None, 5])
     def test_a_metric_that_is_not_a_dotted_path(
@@ -356,7 +404,7 @@ class TestMetrics:
         happened is that there was no key at all.
         """
         empty = run(
-            apply_point(reference_castelldefels(), {MASK_PATH: 85.0}),
+            edited(reference_castelldefels(), {MASK_PATH: 85.0}),
             degradations=DegradationLog(),
         )
         assert empty.passes.n_passes == 0
@@ -424,7 +472,7 @@ class TestTheMaskSweepReproducesTheKnownOptimum:
         assert mask_sweep.column(MASK_PATH)[best] == 8.0
 
     def test_a_sweep_of_one_point_agrees_with_a_plain_run(self) -> None:
-        scenario = apply_point(reference_castelldefels(), {MASK_PATH: 8.0})
+        scenario = edited(reference_castelldefels(), {MASK_PATH: 8.0})
         direct = run(scenario, degradations=DegradationLog())
         swept = run_sweep(
             reference_castelldefels(),

@@ -1,0 +1,137 @@
+# GE-1 — two ground terminals, one way, one kilometre.
+# Must equal `quoss.scenario.defaults.ge1_two_terminals()` field for field
+# (tests/scenario/test_scenario_files.py::TestFilesEqualTheirBuilders).
+#
+# THE ARCHITECTURE, AND WHY IT IS NOT A RETROREFLECTOR (docs/adr/0025-two-terminals-one-way.md)
+#   Two fixed terminals, one sending and one receiving. The cheaper-looking option — one
+#   terminal and a corner cube at the far end — is NOT modelled here and is not a matter of
+#   effort. A monostatic retroreflected link sends the light out and back through the SAME
+#   air, and the two crossings are correlated: the scintillation is ENHANCED, not averaged
+#   away. Mahon, Moore, Ferraro, Rabinovich and Suite (Appl. Opt. 51(25):6147, 2012) measured
+#   exactly that on a horizontal 1.1 km retroreflected link over four days — "substantially
+#   enhanced due to the correlations", flux variances saturating near 10 in daytime. READ IN
+#   ABSTRACT ONLY: it settles the SIGN of the effect and not its magnitude, and the theory
+#   behind it is Andrews, Phillips & Miller (Appl. Opt. 36(3):698, 1997), which is the same
+#   source ADR 0009 gap 1 says could not be opened. So: one architecture can be sized with
+#   the sources this project has, and the other cannot. That difference is larger than any
+#   cost advantage of the corner cube.
+#
+# Units are the user's (m, nm, urad, ns, ps, dB, cps, km); the schema converts once.
+
+link: horizontal   # the discriminated union of scenario/models.py. A horizontal file has no
+                   # orbit, no stations, no passes and no time grid — and CANNOT have them:
+                   # extra="forbid" refuses `passes:` here by name. The downlink member is
+                   # scenarios/reference_castelldefels.yaml. ADR 0024.
+name: ge1_1km
+description: 'GE-1: two ground terminals, one way, 1 km, 2.5 cm transmitter, 10 cm
+  receiving lens, C_n^2 = 1e-14, 23 km visibility, Ntanos et al. 2021 receiver and
+  protocol, moonless study night, 60 s measurement session.'
+schema_version: 1
+
+path:
+  path_length_m: 1000.0    # QuOSS choice, and an argued one. Below ~500 m the link sits
+                           # inside the 316.7 m Rayleigh range of the 2.5 cm transmitter,
+                           # where NEITHER closed form (plane or spherical) describes the
+                           # beam and the bracket between them narrows for the wrong reason.
+                           # Past 2413 m the weak theory stops being citable at this C_n^2
+                           # (channel.horizontal.weak_theory_path_limit_m). 1 km is the
+                           # clean middle: L/z_R = 3.16, Rytov variance 0.199.
+  cn2_m23: 1.0e-14         # ITU-R P.1814 Table 4, the "moderate" column near the ground.
+  wave: spherical          # REQUIRED, no default: plane and spherical differ by a factor
+                           # 2.46 in the POINT variance, and which applies is set by the
+                           # transmitter's Rayleigh range, not by preference (ADR 0021). At
+                           # 3.16 z_R the beam has spread to 3.3 times its waist, so the
+                           # spherical form is the citable one; `plane` is the OTHER EDGE of
+                           # a bracket, not a second opinion, and the budget logs
+                           # `horizontal.plane-wave-beyond-the-rayleigh-range` if it is used.
+                           # The true answer is the Gaussian beam wave: ADR 0009 gap 18.
+  altitude_m: 30.0         # Where the link runs. Used ONLY by the extinction model, and only
+                           # through its difference with extinction.visibility_altitude_m —
+                           # which is zero here, so the aerosol scale height below has no
+                           # influence on any number this file produces. It is still declared
+                           # because nothing in a visibility figure says what height it was
+                           # taken at (ADR 0023).
+  receive_aperture_m: 0.1  # THE LARGEST SINGLE LEVER ON THIS LINK. Going from 2.5 cm to
+                           # 10 cm is worth a factor between 8.4 and 11.2 in key rate — an
+                           # interval and not a number, because the plane and spherical waves
+                           # bracket it in OPPOSITE senses at the two diameters (ADR 0021).
+  extinction_db_per_km: null   # one of the two ways; this file uses the other one.
+  extinction:                  # ADR 0023. Evaluated at altitude_m as a SPECIFIC attenuation
+                               # (dB/km), not integrated into a vertical transmittance: a
+                               # horizontal path has no column above it to integrate.
+    visibility_km: 23.0                # ITU-R P.1817-1 §12's code table calls this "very
+                                       # clear air". At 1550 nm it is 0.192 dB/km, against
+                                       # the 0.2 that ADR 0021's worked example assumed.
+    visibility_altitude_m: 30.0        # measured where the link runs, so the altitude cancels
+    aerosol_scale_height_m: 1200.0     # REQUIRED and unpublished (ADR 0009 gap 22). It does
+                                       # not matter here — see altitude_m — and a reader who
+                                       # moves this link up a mountain will need to mean it.
+    scaling_law: kim-2001              # REQUIRED, no default: the two published exponents
+                                       # differ by 43 dB/km at 1550 nm in fog.
+  scintillation_regime: weak   # REQUIRED, no default (ADR 0022 annex). Legitimate HERE and
+                               # not in general: the plane-wave Rytov variance at 1 km with
+                               # C_n^2 = 1e-14 is 0.199, a fifth of the weak-theory limit. At
+                               # 5 km on the same air it is 3.80 and this line would be wrong;
+                               # the budget would say so, in a log.
+  static_loss_db: 0.0          # nothing unmodelled claimed. Declared, not defaulted.
+  outage_probability: 0.01     # Ntanos et al. 2021 §4.1's 1 %.
+  fade_combination: exact      # the joint quantile of the two fades, not their sum.
+
+transmitter:
+  wavelength_nm: 1550.0
+  aperture_m: 0.025            # a collimator, not a telescope: what a ground terminal uses.
+  truncation_ratio: 1.0
+  pointing_jitter_urad: 5.0    # QuOSS choice, NOT from a publication: a tripod-mounted
+                               # terminal rather than a tracking telescope. Said here so the
+                               # file states what it assumed.
+  pulse_rate_hz: 100000000.0   # NTANOS_SOURCE_PULSE_RATE_HZ
+
+receiver:                      # Ntanos et al. 2021 §4.1 verbatim; a photon does not know what
+  detector_efficiency: 0.85    # geometry brought it, so the same SNSPD chain serves both
+  optical_loss_db: 5.65        # members of the union.
+  dark_count_rate_cps: 300.0
+  detector_count: 2
+  afterpulse_probability: 0.0
+  dead_time_ns: 30.0
+  gate_ns: 1.0
+  timing_jitter_fwhm_ps: 50.0
+  field_of_view_urad: 100.0
+  filter_bandwidth_nm: 0.2
+  doppler_capture_range_hz: null   # there is no Doppler: both terminals are stationary.
+
+background:
+  sky_radiance_w_m2_um_sr: 0.00015   # Ntanos et al. §4.2.2 study night. A horizontal link
+                                     # points at the horizon and not at the sky, so this is
+                                     # an upper bound on what its field of view collects.
+  condition: null
+
+protocol:                      # Ntanos et al. §4.2.1, the 16:1:4 split written as
+  name: bb84-decoy             # probabilities.
+  signal_intensity: 0.56
+  decoy_intensity: 0.11
+  signal_probability: 0.7619047619047619
+  decoy_probability: 0.047619047619047616
+  vacuum_probability: 0.19047619047619047
+  error_correction_efficiency: 1.22
+  misalignment_error: 0.01
+  key_basis_probability: 0.5
+
+security:
+  correctness: 1.0e-10
+  secrecy: 1.0e-10
+  compose_daily: false         # there is one block, so there is nothing to compose. Running
+                               # n sessions and concatenating their keys composes the failure
+                               # probability to n*eps, and no single session's result knows n.
+
+session:
+  duration_s: 60.0             # THIS IS THE FINITE-KEY BLOCK, and it is the number in this
+                               # file that this project is least able to defend. ADR 0011 made
+                               # the block a PASS because the geometry fixes one: between two
+                               # passes nothing is sent. Here the link is stationary and
+                               # nothing stops the data, so the block is whatever the operator
+                               # declares — and writing 60 here is a PROMISE that the link was
+                               # stationary for sixty seconds. At 100 MHz that is 6e9 pulses,
+                               # three orders of magnitude above the reference day's best
+                               # pass, so the bound is nowhere near its small-block cliff;
+                               # that is a fact about the bound, not a defence of the minute.
+                               # ADR 0024.

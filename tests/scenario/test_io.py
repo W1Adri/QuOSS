@@ -32,7 +32,20 @@ from quoss.scenario.io import (
     load_scenario,
     loads_scenario,
 )
-from quoss.scenario.models import Scenario
+from quoss.scenario.models import AnyScenario, Scenario
+
+
+def as_downlink(scenario: AnyScenario) -> Scenario:
+    """Narrow a loaded scenario to the downlink member, or fail the test saying so.
+
+    :func:`~quoss.scenario.io.load_scenario` returns the member the file's
+    ``link`` field names, so its static type is the union. A test that loads a
+    downlink file and then reads ``scenario.time`` is not making an assumption
+    worth hiding behind a ``cast``: it is asserting that the file is a downlink,
+    and that assertion is worth running.
+    """
+    assert isinstance(scenario, Scenario), f"expected a downlink scenario, got {type(scenario)}"
+    return scenario
 
 
 def reference_dict() -> dict[str, Any]:
@@ -108,7 +121,9 @@ class TestRoundTrip:
     def test_the_datetime_is_written_with_z_and_read_back_aware(self) -> None:
         text = dumps_scenario(reference_castelldefels())
         assert "epoch_utc: '2025-01-01T00:00:00Z'" in text
-        assert loads_scenario(text).time.epoch_utc == dt.datetime(2025, 1, 1, tzinfo=dt.UTC)
+        assert as_downlink(loads_scenario(text)).time.epoch_utc == dt.datetime(
+            2025, 1, 1, tzinfo=dt.UTC
+        )
 
     def test_a_bare_yaml_timestamp_with_offset_loads(self) -> None:
         """PyYAML parses an unquoted ``...Z`` into an aware datetime; the schema accepts it."""
@@ -128,7 +143,7 @@ class TestRoundTrip:
     def test_enums_are_written_by_value_and_read_back_as_members(self) -> None:
         text = dumps_scenario(reference_castelldefels())
         assert "fade_combination: exact" in text
-        assert loads_scenario(text).channel.fade_combination is FadeCombination.EXACT
+        assert as_downlink(loads_scenario(text)).channel.fade_combination is FadeCombination.EXACT
 
     def test_json_output_ends_with_a_newline_and_is_indented(self) -> None:
         text = dumps_scenario(reference_castelldefels(), format="json")

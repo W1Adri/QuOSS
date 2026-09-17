@@ -30,6 +30,7 @@ import ast
 import datetime as dt
 import inspect
 import math
+from collections.abc import Callable
 from pathlib import Path
 from types import NoneType, UnionType
 from typing import Any, get_args
@@ -39,14 +40,24 @@ import pytest
 from annotated_types import Ge, Gt, Le, Lt
 from hypothesis import given, settings
 from hypothesis import strategies as st
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 import quoss.scenario.models as models_module
 from quoss.channel.atmosphere import bufton_rms_wind_speed_m_s
 from quoss.channel.background import SkyCondition
 from quoss.channel.detector import receiver_efficiency
+from quoss.channel.horizontal import (
+    horizontal_log_irradiance_variance,
+    horizontal_loss_budget,
+    horizontal_point_log_irradiance_variance,
+)
 from quoss.channel.link_budget import FadeCombination, downlink_loss_budget
-from quoss.channel.turbulence import ScintillationRegime, log_irradiance_variance
+from quoss.channel.turbulence import (
+    ScintillationRegime,
+    downlink_log_irradiance_variance,
+    log_irradiance_variance,
+    uplink_log_irradiance_variance,
+)
 from quoss.core.errors import DegradationLog, Severity
 from quoss.core.types import TimeGrid
 from quoss.core.units import deg_to_rad
@@ -56,15 +67,19 @@ from quoss.orbits.kepler import ClassicalElements
 from quoss.orbits.propagator import PropagationMethod
 from quoss.qkd.bb84 import Bb84DecoyProtocol
 from quoss.qkd.finite_key import SecurityParameters
-from quoss.scenario.defaults import reference_castelldefels
+from quoss.scenario.defaults import ge1_two_terminals, reference_castelldefels
 from quoss.scenario.models import (
     HV57_RMS_WIND_SPEED_M_S,
     SCHEMA_VERSION,
     AggregationPolicyName,
+    AnyScenario,
     BackgroundSpec,
     ChannelSpec,
     ExtinctionSpec,
+    HorizontalPathSpec,
+    HorizontalScenario,
     KeplerOrbit,
+    LinkKind,
     MonteCarloSpec,
     MultiStationSpec,
     OrbitSpec,
@@ -74,6 +89,7 @@ from quoss.scenario.models import (
     RelaySpec,
     Scenario,
     SecuritySpec,
+    SessionSpec,
     SpecModel,
     StationSpec,
     TimeSpec,
@@ -125,9 +141,10 @@ class TestTheFieldsWithoutADefault:
         assert not ChannelSpec.model_fields["zenith_transmittance"].is_required()
         assert not ChannelSpec.model_fields["extinction"].is_required()
         with pytest.raises(ValidationError, match="exactly one of zenith_transmittance"):
-            ChannelSpec()
+            ChannelSpec(scintillation_regime="weak")
         with pytest.raises(ValidationError, match="exactly one of zenith_transmittance"):
             ChannelSpec(
+                scintillation_regime="weak",
                 zenith_transmittance=0.9,
                 extinction=ExtinctionSpec(
                     visibility_km=23.0,
@@ -182,10 +199,10 @@ class TestExtinctionIsResolvedNotRead:
             "scaling_law": "kim-2001",
         }
         fields.update(overrides)
-        return ChannelSpec(extinction=ExtinctionSpec(**fields))
+        return ChannelSpec(scintillation_regime="weak", extinction=ExtinctionSpec(**fields))
 
     def test_a_declared_number_comes_back_unchanged_and_logs_nothing(self) -> None:
-        spec = ChannelSpec(zenith_transmittance=0.812)
+        spec = ChannelSpec(zenith_transmittance=0.812, scintillation_regime="weak")
         log = DegradationLog()
         got = spec.zenith_transmittance_at(
             wavelength_m=1.55e-6, station_altitude_m=30.0, degradations=log
@@ -269,30 +286,51 @@ class TestUnitsConvertOnceAtTheBoundary:
         assert station.station_height_m == 30.0
         assert station.rms_wind_speed_m_s == 21.0
 
-    def test_the_regime_default_is_the_physics_default_and_both_are_the_recommendation(
+    def test_the_schema_has_no_regime_default_and_the_physics_signatures_keep_theirs(
         self,
     ) -> None:
-        """The schema may not disagree with the function it feeds, and here is the check.
+        """The default did not disappear, it moved — and this is where that is checked.
 
-        ``ChannelSpec.scintillation_regime`` is passed straight to
-        :func:`~quoss.channel.link_budget.downlink_loss_budget`, so two defaults
-        describe the same choice and a drift between them would be invisible:
-        every scenario would quietly get one model while every direct caller got
-        the other. Both are ``WEAK``, and the reason is ADR 0022's measured one
-        — at ITU-R P.1622 Table 2's own fully-weak point the saturated model
-        reads 3.4 % below the recommendation, so defaulting to it would move
-        every V2 anchor of the channel by that much.
+        Until PR #15 the schema and
+        :func:`~quoss.channel.link_budget.downlink_loss_budget` both defaulted to
+        ``WEAK``, and the test here was that the two agreed: a drift between them
+        would have been invisible, every scenario quietly getting one model while
+        every direct caller got the other.
 
-        What it costs to leave it at ``WEAK`` is measured too, and it is not
-        nothing: on the reference day the saturated model is worth +3.66 % of
-        certified key, and it moves the optimal elevation mask from 8 degrees
-        to 4.5 (``tests/e2e/test_reference_scenarios.py``). This default buys
-        traceability to a printed number, not the larger key.
+        The schema's default is now **gone**, for the reason ADR 0022's annex
+        gives: a horizontal path (:class:`HorizontalPathSpec`) is the other member
+        of the ``link`` union, and on it the weak theory stops being citable at
+        2413 m — so one default cannot be right for both members. The seven
+        physics signatures keep ``WEAK``, because those are where the comparisons
+        against ITU-R P.1622 Table 2 are made and flipping them would move six of
+        its eight published cells outside half a printed digit.
+
+        So what is asserted is the new arrangement, in both directions: required
+        in the schema, ``WEAK`` in every physics signature, and the count of those
+        signatures pinned so that a new one appearing without a default — or with
+        the other one — is a red test rather than a silent asymmetry.
         """
-        schema_default = ChannelSpec.model_fields["scintillation_regime"].default
-        physics_default = inspect.signature(downlink_loss_budget).parameters["regime"].default
-        assert schema_default is physics_default is ScintillationRegime.WEAK
-        assert ChannelSpec(zenith_transmittance=1.0).scintillation_regime is schema_default
+        assert ChannelSpec.model_fields["scintillation_regime"].is_required()
+        with pytest.raises(ValidationError, match="scintillation_regime"):
+            ChannelSpec(zenith_transmittance=1.0)  # type: ignore[call-arg]
+
+        signatures: list[Callable[..., Any]] = [
+            downlink_loss_budget,
+            log_irradiance_variance,
+            downlink_log_irradiance_variance,
+            uplink_log_irradiance_variance,
+            horizontal_point_log_irradiance_variance,
+            horizontal_log_irradiance_variance,
+            horizontal_loss_budget,
+        ]
+        defaults = {
+            f.__name__: inspect.signature(f).parameters["regime"].default for f in signatures
+        }
+        assert defaults == dict.fromkeys(defaults, ScintillationRegime.WEAK)
+        assert len(defaults) == 7
+        assert "REQUIRED, no default" in str(
+            ChannelSpec.model_fields["scintillation_regime"].description
+        )
         assert "moderate-to-strong" in str(
             ChannelSpec.model_fields["scintillation_regime"].description
         )
@@ -771,7 +809,9 @@ class TestScenario:
 
     def test_enums_accept_members_and_values(self) -> None:
         assert (
-            ChannelSpec(zenith_transmittance=1.0, fade_combination="additive").fade_combination
+            ChannelSpec(
+                zenith_transmittance=1.0, scintillation_regime="weak", fade_combination="additive"
+            ).fade_combination
             is FadeCombination.ADDITIVE
         )
 
@@ -793,8 +833,9 @@ class TestTheModuleSurface:
     def test_every_numeric_field_carries_a_bound(self) -> None:
         """An unbounded float is a plausible wrong number the schema would wave through.
 
-        ``schema_version`` is the one exception: it is not a quantity but a
-        label checked for equality by its own validator.
+        ``schema_version`` is the one exception, on both members of the ``link``
+        union: it is not a quantity but a label checked for equality by its own
+        validator.
         """
         unbounded: list[str] = []
         for model in SpecModel.__subclasses__():
@@ -806,8 +847,217 @@ class TestTheModuleSurface:
                 members.discard(NoneType)
                 if not members or not members <= {float, int}:
                     continue
-                if (model, name) == (Scenario, "schema_version"):
+                if name == "schema_version" and model in (Scenario, HorizontalScenario):
                     continue
                 if not any(isinstance(m, Gt | Ge | Lt | Le) for m in info.metadata):
                     unbounded.append(f"{model.__name__}.{name}")
         assert unbounded == []
+
+
+# --------------------------------------------------------------------------- #
+class TestTheLinkUnion:
+    """``link`` is the discriminator, and ``extra="forbid"`` is what it buys (ADR 0024)."""
+
+    def test_a_horizontal_scenario_cannot_carry_a_downlink_section(self) -> None:
+        """The rule of ADR 0021 -- no elevation anywhere -- now asserted by the schema.
+
+        It was asserted by absence in the physics signatures and by an AST walk
+        over the module. Here it is a validation error that names the field,
+        which is the version a user of a YAML file sees.
+        """
+        data = ge1_two_terminals().model_dump(mode="json")
+        for forbidden in ("passes", "stations", "orbit", "time", "channel", "multi_station"):
+            polluted = dict(data)
+            polluted[forbidden] = {}
+            with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+                TypeAdapter(AnyScenario).validate_python(polluted)
+
+    def test_a_downlink_scenario_cannot_carry_a_horizontal_section(self) -> None:
+        data = reference_castelldefels().model_dump(mode="json")
+        for forbidden in ("path", "session"):
+            polluted = dict(data)
+            polluted[forbidden] = {}
+            with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+                TypeAdapter(AnyScenario).validate_python(polluted)
+
+    def test_the_tag_picks_the_member_and_nothing_else_does(self) -> None:
+        adapter: TypeAdapter[AnyScenario] = TypeAdapter(AnyScenario)
+        assert isinstance(
+            adapter.validate_python(reference_castelldefels().model_dump(mode="json")), Scenario
+        )
+        assert isinstance(
+            adapter.validate_python(ge1_two_terminals().model_dump(mode="json")),
+            HorizontalScenario,
+        )
+
+    def test_an_unknown_tag_is_refused_rather_than_guessed(self) -> None:
+        data = ge1_two_terminals().model_dump(mode="json")
+        data["link"] = "uplink"
+        with pytest.raises(ValidationError):
+            TypeAdapter(AnyScenario).validate_python(data)
+
+    def test_the_downlink_default_is_a_literal_with_one_legal_value(self) -> None:
+        """Why *this* default is defensible where ``scintillation_regime``'s was not.
+
+        A default can only hide a choice somebody might have made differently.
+        ``Scenario.link`` is a ``Literal`` with exactly one member, so there is
+        no alternative for it to hide -- which is the whole of the argument, and
+        is why the horizontal member's tag has no default at all: there the tag
+        is what distinguishes it from something else.
+        """
+        assert not Scenario.model_fields["link"].is_required()
+        assert Scenario.model_fields["link"].default is LinkKind.DOWNLINK
+        assert get_args(Scenario.model_fields["link"].annotation) == (LinkKind.DOWNLINK,)
+        assert HorizontalScenario.model_fields["link"].is_required()
+
+    def test_every_scenarios_file_writes_the_tag_anyway(self, project_root: Path) -> None:
+        for path in sorted((project_root / "scenarios").glob("*.yaml")):
+            assert "\nlink: " in path.read_text(encoding="utf-8"), path.name
+
+
+# --------------------------------------------------------------------------- #
+class TestTheHorizontalSchema:
+    @staticmethod
+    def _path(**overrides: object) -> dict[str, object]:
+        fields: dict[str, object] = {
+            "path_length_m": 1000.0,
+            "cn2_m23": 1e-14,
+            "wave": "spherical",
+            "altitude_m": 30.0,
+            "receive_aperture_m": 0.1,
+            "extinction_db_per_km": 0.2,
+            "scintillation_regime": "weak",
+        }
+        fields.update(overrides)
+        return fields
+
+    def test_exactly_one_way_of_declaring_extinction(self) -> None:
+        """``ChannelSpec``'s rule, for the same reason (ADR 0009 gap 14)."""
+        assert HorizontalPathSpec(**self._path()).models_extinction is False
+        with pytest.raises(ValidationError, match="exactly one of extinction_db_per_km"):
+            HorizontalPathSpec(**self._path(extinction_db_per_km=None))
+        with pytest.raises(ValidationError, match="exactly one of extinction_db_per_km"):
+            HorizontalPathSpec(
+                **self._path(
+                    extinction=ExtinctionSpec(
+                        visibility_km=23.0,
+                        visibility_altitude_m=30.0,
+                        aerosol_scale_height_m=1200.0,
+                        scaling_law="kim-2001",
+                    )
+                )
+            )
+
+    def test_the_wave_and_the_regime_are_required(self) -> None:
+        assert HorizontalPathSpec.model_fields["wave"].is_required()
+        assert HorizontalPathSpec.model_fields["scintillation_regime"].is_required()
+        assert "REQUIRED, no default" in str(HorizontalPathSpec.model_fields["wave"].description)
+        assert "2413 m" in str(HorizontalPathSpec.model_fields["scintillation_regime"].description)
+
+    def test_the_declared_number_and_the_model_go_through_one_call(self) -> None:
+        """``extinction_db_per_km_at`` is the counterpart of ``zenith_transmittance_at``."""
+        log = DegradationLog()
+        declared = HorizontalPathSpec(**self._path())
+        assert declared.extinction_db_per_km_at(wavelength_m=1.55e-6, degradations=log) == 0.2
+        assert len(log) == 0
+        modelled = HorizontalPathSpec(
+            **self._path(
+                extinction_db_per_km=None,
+                extinction=ExtinctionSpec(
+                    visibility_km=23.0,
+                    visibility_altitude_m=30.0,
+                    aerosol_scale_height_m=1200.0,
+                    scaling_law="kim-2001",
+                ),
+            )
+        )
+        assert modelled.models_extinction is True
+        assert modelled.extinction_db_per_km_at(
+            wavelength_m=1.55e-6, degradations=log
+        ) == pytest.approx(0.19199, abs=5e-6)
+
+    def test_the_model_depends_on_the_wavelength_and_the_number_does_not(self) -> None:
+        log = DegradationLog()
+        modelled = HorizontalPathSpec(
+            **self._path(
+                extinction_db_per_km=None,
+                extinction=ExtinctionSpec(
+                    visibility_km=23.0,
+                    visibility_altitude_m=30.0,
+                    aerosol_scale_height_m=1200.0,
+                    scaling_law="kim-2001",
+                ),
+            )
+        )
+        infrared = modelled.extinction_db_per_km_at(wavelength_m=1.55e-6, degradations=log)
+        near = modelled.extinction_db_per_km_at(wavelength_m=785e-9, degradations=log)
+        assert near > infrared
+        assert near == pytest.approx(0.465, abs=5e-4)
+
+    def test_the_scale_height_cancels_when_the_visibility_was_measured_at_the_link(self) -> None:
+        """An identity, not an approximation: the exponent is exactly zero (ADR 0024)."""
+        log = DegradationLog()
+
+        def gamma(scale_height_m: float) -> float:
+            spec = HorizontalPathSpec(
+                **self._path(
+                    extinction_db_per_km=None,
+                    extinction=ExtinctionSpec(
+                        visibility_km=23.0,
+                        visibility_altitude_m=30.0,
+                        aerosol_scale_height_m=scale_height_m,
+                        scaling_law="kim-2001",
+                    ),
+                )
+            )
+            return spec.extinction_db_per_km_at(wavelength_m=1.55e-6, degradations=log)
+
+        assert gamma(1200.0) == gamma(2000.0)
+
+    def test_the_path_length_converts_once_in_the_schema(self) -> None:
+        assert HorizontalPathSpec(**self._path()).path_length_km == 1.0
+
+    def test_the_session_duration_is_required_and_says_why(self) -> None:
+        assert SessionSpec.model_fields["duration_s"].is_required()
+        assert "ADR 0024" in str(SessionSpec.model_fields["duration_s"].description)
+        with pytest.raises(ValidationError, match="duration_s"):
+            SessionSpec()  # type: ignore[call-arg]
+
+    def test_the_gate_rule_is_the_downlinks_rule(self) -> None:
+        """One gate per pulse, on either geometry, from the same sentence."""
+        scenario = ge1_two_terminals()
+        with pytest.raises(ValidationError, match="One gate per pulse"):
+            scenario.model_copy(
+                update={"receiver": scenario.receiver.model_copy(update={"gate_ns": 20.0})}
+            ).model_validate(
+                scenario.model_dump(mode="json")
+                | {"receiver": scenario.receiver.model_dump(mode="json") | {"gate_ns": 20.0}}
+            )
+
+    def test_a_tabulated_background_outside_the_itu_table_is_refused(self) -> None:
+        """ITU-R P.1621-2 Table 1 covers 530-1500 nm whatever brought the light.
+
+        GE-1 is at 1550 nm, which is outside it; a daytime bench at 1064 nm is
+        inside and passes. Both directions are checked, because a rule that only
+        ever refuses is indistinguishable from one that always refuses.
+        """
+        data = ge1_two_terminals().model_dump(mode="json")
+        data["background"] = {"sky_radiance_w_m2_um_sr": None, "condition": "overcast"}
+        with pytest.raises(ValidationError, match="tabulated only for wavelengths"):
+            HorizontalScenario.model_validate(data)
+        inside = dict(data)
+        inside["transmitter"] = dict(data["transmitter"]) | {"wavelength_nm": 1064.0}
+        assert (
+            HorizontalScenario.model_validate(inside).background.condition is SkyCondition.OVERCAST
+        )
+
+    def test_an_unsupported_schema_version_is_refused_rather_than_misread(self) -> None:
+        data = ge1_two_terminals().model_dump(mode="json")
+        data["schema_version"] = SCHEMA_VERSION + 1
+        with pytest.raises(ValidationError, match="is not supported"):
+            HorizontalScenario.model_validate(data)
+
+    def test_the_labels_stay_out_of_the_physics_dict(self) -> None:
+        payload = ge1_two_terminals().physics_dict()
+        assert "name" not in payload and "description" not in payload
+        assert payload["link"] == "horizontal"

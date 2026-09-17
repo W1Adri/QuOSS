@@ -12,6 +12,10 @@
 # The ISS is not a QKD satellite; it is the best-tracked object in orbit, which is what
 # an example of the TLE path needs. Everything below the orbit is the reference receiver.
 
+link: downlink   # the discriminated union of scenario/models.py: this file describes a
+                 # satellite over a ground station, so it carries orbit/stations/passes/time.
+                 # The other member is 'horizontal' (scenarios/ge1_1km.yaml), which carries
+                 # none of those and cannot: extra="forbid" refuses them by name. ADR 0024.
 name: tle_example_iss
 description: 'ISS (ZARYA) over Castelldefels for one day from the TLE epoch, SGP4
   propagated, with Monte Carlo, multi-station and relay options present so the whole

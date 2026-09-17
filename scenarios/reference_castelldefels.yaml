@@ -12,6 +12,10 @@
 # Every value below is either a published constant (its NTANOS_* name is given) or a
 # project choice, and says which.
 
+link: downlink   # the discriminated union of scenario/models.py: this file describes a
+                 # satellite over a ground station, so it carries orbit/stations/passes/time.
+                 # The other member is 'horizontal' (scenarios/ge1_1km.yaml), which carries
+                 # none of those and cannot: extra="forbid" refuses them by name. ADR 0024.
 name: reference_castelldefels
 description: 'QuOSS reference downlink: Castelldefels 0.75 m, 700 km SSO, Ntanos et
   al. 2021 receiver and protocol, clear moonless study night, 10 deg mask, one UTC

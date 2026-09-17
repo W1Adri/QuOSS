@@ -348,7 +348,11 @@ huecos rellenado con la cita más plausible.
 8. ✅ `channel/horizontal.py` — **no estaba en este plan**, y lo pidió la
    escalera de experimentos de tierra: `C_n^2` constante, sin elevación, la onda
    declarada. Ver [ADR 0021](../docs/adr/0021-horizontal-path.md) y `LAST_CHANGES`
-   §36
+   §36. **Y desde la PR C ya no es una biblioteca suelta**: el
+   [ADR 0024](../docs/adr/0024-the-horizontal-scenario.md) le da escenario,
+   motor, resultado, barridos y figura, y el
+   [ADR 0025](../docs/adr/0025-two-terminals-one-way.md) decide la arquitectura
+   de GE-1 (dos terminales, un sentido)
 9. ✅ `channel/extinction.py` — **etapa 1.1 del plan de fases**: lo que el
    presupuesto recibía, calculado. Visibilidad → atenuación específica por la
    Ec. (4) de la **ITU-R P.1814**, y transmitancia cenital integrando un perfil
@@ -662,10 +666,15 @@ alimenta: lo que valida, convierte. ADR de la etapa:
    a la unidad de física como propiedad/método (`latitude_rad`, `wavelength_m`,
    `gate_s`, `to_elements()`, `to_protocol()`, `grid()`), hecha aquí y en ningún
    otro sitio. Dos campos sin defecto y con test: `zenith_transmittance` (ADR 0009
-   hueco 14) y `minimum_elevation_deg` (ADR 0011 §5). **Y un campo cuyo defecto
-   sí existe y está defendido con número:** `scintillation_regime`, `WEAK`,
-   porque flipar el otro dejaría **seis de las ocho celdas** de la Tabla 2 de la
-   P.1622 fuera de medio dígito impreso (ADR 0022, anexo). Una época ingenua se rechaza
+   hueco 14) y `minimum_elevation_deg` (ADR 0011 §5). **Y `scintillation_regime`,
+   que tuvo defecto (`WEAK`) hasta la PR C y ya no lo tiene:** flipar el defecto
+   seguiría costando **seis de las ocho celdas** de la Tabla 2 de la P.1622, así
+   que no se flipa; lo que se hizo es mudarlo a las siete firmas de física, donde
+   significa «la P.1622 tal como está impresa» y no «el aire de este
+   experimento». La razón de la mudanza es el otro miembro de la unión `link`: en
+   un camino horizontal la teoría débil deja de ser citable a 2413 m, así que un
+   defecto correcto para la bajada sería el modelo equivocado en más de la mitad
+   del barrido de GE-1 (ADR 0022, anexo; ADR 0024). Una época ingenua se rechaza
    como el defecto del reloj de pared que fue. `protocol.name` se valida contra
    el registro; `"e91"` se rechaza con la lista de lo que hay. **Desviación
    medida:** la estación lleva el viento r.m.s. (21.0 m/s) y no el de superficie,
@@ -689,11 +698,24 @@ alimenta: lo que valida, convierte. ADR de la etapa:
    `to_manifest_and_arrays`/`from_manifest_and_arrays` (manifiesto + `.npz`);
    `Provenance.collect` (hash, versión, commit o `None`, versiones, semilla,
    hora)
-6. ✅ `scenarios/*.yaml` — cinco ficheros comentados y comprobados iguales a sus
-   constructores: referencia, tres de Ntanos 2021, y un TLE real de la ISS
-   (CelesTrak, 2026-09-13) con las tres etapas opcionales activadas
+6. ✅ `scenarios/*.yaml` — **siete** ficheros comentados y comprobados iguales a
+   sus constructores: referencia, tres de Ntanos 2021, un TLE real de la ISS
+   (CelesTrak, 2026-09-13) con las tres etapas opcionales activadas, y desde la
+   PR C los dos de tierra — `ge0b_bench.yaml` (el banco, con el hueco 20 escrito
+   en el propio fichero) y `ge1_1km.yaml` (dos terminales, un sentido, con la
+   razón de no usar retrorreflector y su fuente marcada como leída solo en
+   resumen)
+7. ✅ **La unión discriminada `link: downlink | horizontal`**
+   ([ADR 0024](../docs/adr/0024-the-horizontal-scenario.md)). `HorizontalScenario`
+   con `HorizontalPathSpec` y `SessionSpec`, `AnyScenario` validada por
+   `TypeAdapter` en `scenario/io.py`, y `HorizontalResult` como contenedor propio
+   —no un `SimulationResult` con arrays de longitud cero, que reportaría un
+   enlace de 15.2 Mbit como cero bits al día—. La regla del ADR 0021 «ninguna
+   firma acepta elevación» pasa a estar asertada también por el esquema:
+   `extra="forbid"` rechaza `passes:` en un fichero horizontal por su nombre.
+   Digest de referencia repinchado a `17f44003…`, caso 2
 
-**Hecho:** 202 tests, 100 % de cobertura de líneas y ramas, ruff/mypy limpios.
+**Hecho:** 212 tests, 100 % de cobertura de líneas y ramas, ruff/mypy limpios.
 Lo que el motor recibe de aquí no lleva ni un grado.
 
 ---
@@ -706,8 +728,18 @@ el [ADR 0016](../docs/adr/0016-the-engine-adds-nothing-and-one-altitude.md).
 1. ✅ `engine/pipeline.py` — escenario → órbita → geometría → canal → QKD → sistema → resultado
 2. ✅ `engine/cache.py` — caché de resultados por hash de escenario
 3. ✅ `engine/parallel.py` — paralelismo por passes / estaciones / realizaciones MC
-4. ✅ `engine/sweep.py` — barridos de parámetros como ciudadano de primera (las figuras del paper *son* barridos)
+4. ✅ `engine/sweep.py` — barridos de parámetros como ciudadano de primera (las
+   figuras del paper *son* barridos). Desde la PR C toma los dos miembros de la
+   unión `link`, con dos juegos de raíces de métrica que **no se solapan**, así
+   que pedir `daily.finite_bits` sobre un escenario horizontal se rechaza antes
+   del primer punto nombrando las secciones que sí existen
 5. ✅ `engine/profiling.py` — tiempos por etapa dentro del propio resultado
+6. ✅ `engine/horizontal.py` — el camino horizontal como escenario de primera
+   clase: `run()` despacha sobre el tag `link` y devuelve un `HorizontalResult`.
+   Tres etapas (`channel`, `key`, `result`) y no siete, porque una etapa que
+   dice tardar cero segundos se lee como una que corrió deprisa. El bloque
+   finite-key es la sesión declarada, con el `INFO` que dice que nada en la
+   geometría la fija ([ADR 0024](../docs/adr/0024-the-horizontal-scenario.md))
 
 **Hecho cuando:** `run(scenario) → result` funciona en una línea de Python y un
 escenario de referencia reproduce números publicados (V2), no los de SimulCTTC.
@@ -859,7 +891,7 @@ física**: pinta lo que devuelve el motor.
 ## Numeración de ADRs, y los dos reservados
 
 Un ADR por decisión no obvia, numerado al escribirse y nunca renumerado. A
-2026-09-14 hay **dieciséis**, del 0001 al 0016, y dos números **reservados** por
+2026-09-17 hay **veintitrés**, del 0001 al 0025 menos los dos **reservados** por
 código que ya los cita:
 
 | Nº | Etapa | Estado |
@@ -867,6 +899,12 @@ código que ya los cita:
 | 0001–0015 | 0–4, 6 | escritos |
 | **0016** | 5 (`engine/`) | escrito el 2026-09-14, [aquí](../docs/adr/0016-the-engine-adds-nothing-and-one-altitude.md) |
 | **0019** | 3 + 5 (esquema de resultado) | escrito el 2026-09-14, [aquí](../docs/adr/0019-acquisition-in-the-result.md): Doppler y point-ahead en el resultado |
+| **0020** | 5 (`engine/`) | escrito, [aquí](../docs/adr/0020-declared-doppler-capture-range.md) |
+| **0021** | 2.2 (`channel/`) | escrito el 2026-09-15, [aquí](../docs/adr/0021-horizontal-path.md): el camino horizontal |
+| **0022** | 2.2 (`channel/`) | escrito el 2026-09-15, [aquí](../docs/adr/0022-the-strong-regime.md), con dos anexos: el régimen como campo y la mudanza de su defecto |
+| **0023** | 2.2 (`channel/`) | escrito el 2026-09-15, [aquí](../docs/adr/0023-traceable-extinction.md): la extinción con modelo |
+| **0024** | 4 + 5 | escrito el 2026-09-17, [aquí](../docs/adr/0024-the-horizontal-scenario.md): el escenario horizontal, su bloque y la forma de su resultado |
+| **0025** | 4 | escrito el 2026-09-17, [aquí](../docs/adr/0025-two-terminals-one-way.md): dos terminales y un sentido para GE-1 |
 | **0017** | 7 (`viz/`) | **reservado**. `src/quoss/viz/plots.py` lo cita como `0017-publication-figures.md` para la decisión de los dos paneles contra el doble eje |
 | **0018** | 8 (`validation/`) | **reservado**. `src/quoss/validation/__init__.py` lo cita como `0018-validation-is-a-table-not-a-badge.md` para la regla de que un estado de validación se **deriva** de los números y no se escribe a mano |
 

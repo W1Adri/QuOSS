@@ -64,30 +64,46 @@ from quoss.channel.detector import (
     NTANOS_SNSPD_DARK_COUNT_RATE_CPS,
     NTANOS_SNSPD_EFFICIENCY,
 )
+from quoss.channel.extinction import VisibilityScalingLaw
+from quoss.channel.horizontal import PathWave, equivalent_bench_cn2_m23
 from quoss.channel.link_budget import (
     NTANOS_OGS_APERTURES_M,
     NTANOS_ORBIT_HEIGHT_KM,
     NTANOS_OUTAGE_PROBABILITY,
     NTANOS_TRANSMIT_APERTURE_M,
 )
+from quoss.channel.turbulence import ScintillationRegime
 from quoss.qkd.base import NTANOS_SOURCE_PULSE_RATE_HZ
 from quoss.qkd.bb84 import Bb84DecoyProtocol
 from quoss.scenario.models import (
     BackgroundSpec,
     ChannelSpec,
+    ExtinctionSpec,
+    HorizontalPathSpec,
+    HorizontalScenario,
     KeplerOrbit,
+    LinkKind,
     OrbitSpec,
     PassSpec,
     ProtocolSpec,
     ReceiverSpec,
     Scenario,
     SecuritySpec,
+    SessionSpec,
     StationSpec,
     TimeSpec,
     TransmitterSpec,
 )
 
 __all__ = [
+    "GE0B_BENCH_LENGTH_M",
+    "GE0B_SESSION_DURATION_S",
+    "GE1_CN2_M23",
+    "GE1_PATH_LENGTH_M",
+    "GE1_POINTING_JITTER_URAD",
+    "GE1_RECEIVE_APERTURE_M",
+    "GE1_SESSION_DURATION_S",
+    "GE1_TRANSMIT_APERTURE_M",
     "NTANOS_DEAD_TIME_NS",
     "NTANOS_FIELD_OF_VIEW_URAD",
     "NTANOS_FILTER_BANDWIDTH_NM",
@@ -97,6 +113,8 @@ __all__ = [
     "NTANOS_STATIONS",
     "NTANOS_TIMING_JITTER_FWHM_PS",
     "REFERENCE_EPOCH_UTC",
+    "ge0b_bench",
+    "ge1_two_terminals",
     "ntanos_2021",
     "reference_castelldefels",
 ]
@@ -257,6 +275,7 @@ def reference_castelldefels() -> Scenario:
             zenith_transmittance=1.0,
             static_loss_db=0.0,
             outage_probability=NTANOS_OUTAGE_PROBABILITY,
+            scintillation_regime=ScintillationRegime.WEAK,
         ),
         receiver=_ntanos_receiver(),
         background=BackgroundSpec(sky_radiance_w_m2_um_sr=NTANOS_STUDY_NIGHT_RADIANCE_W_M2_UM_SR),
@@ -340,6 +359,7 @@ def ntanos_2021(aperture_m: float) -> Scenario:
             zenith_transmittance=1.0,
             static_loss_db=0.0,
             outage_probability=NTANOS_OUTAGE_PROBABILITY,
+            scintillation_regime=ScintillationRegime.WEAK,
         ),
         receiver=_ntanos_receiver(),
         background=BackgroundSpec(sky_radiance_w_m2_um_sr=NTANOS_STUDY_NIGHT_RADIANCE_W_M2_UM_SR),
@@ -347,4 +367,202 @@ def ntanos_2021(aperture_m: float) -> Scenario:
         security=SecuritySpec(correctness=1e-10, secrecy=1e-10, compose_daily=True),
         time=TimeSpec(epoch_utc=REFERENCE_EPOCH_UTC, duration_s=86_400.0, step_s=1.0),
         passes=PassSpec(minimum_elevation_deg=NTANOS_MINIMUM_ELEVATION_DEG),
+    )
+
+
+# --------------------------------------------------------------------------- #
+# The horizontal links: GE-0b (bench) and GE-1 (two terminals)
+# --------------------------------------------------------------------------- #
+GE1_PATH_LENGTH_M = 1000.0
+"""One kilometre: the recommendation of ``docs/adr/0025-two-terminals-one-way.md``.
+
+Not an arbitrary round number. Below ~500 m the link is inside the 316.7 m
+Rayleigh range of a 2.5 cm transmitter, where neither the plane nor the
+spherical closed form describes the beam and the bracket between them narrows
+for the wrong reason; past 2413 m the weak theory stops being citable at all
+(:func:`~quoss.channel.horizontal.weak_theory_path_limit_m` for
+``C_n^2 = 1e-14`` at 1550 nm). One kilometre is in the clean middle.
+"""
+
+GE1_TRANSMIT_APERTURE_M = 0.025
+"""2.5 cm. A collimator, not a telescope: what a two-terminal ground link actually uses."""
+
+GE1_RECEIVE_APERTURE_M = 0.10
+"""10 cm. The lens, and the largest single lever there is on this link.
+
+Going from 2.5 cm to 10 cm is worth a factor **between 8.4 and 11.2** in key
+rate -- an interval and not a number, because the plane and spherical waves
+bracket it in opposite senses at the two diameters (ADR 0021).
+"""
+
+GE1_CN2_M23 = 1e-14
+"""ITU-R P.1814 Table 4's "moderate" column, near the ground."""
+
+GE1_POINTING_JITTER_URAD = 5.0
+"""5 urad r.m.s. per axis: a ground terminal on a tripod, not a tracking telescope.
+
+Not from a publication -- it is the value ``tests/channel/test_horizontal.py``
+sizes GE-1 with, and it is here so that the scenario says what it assumed.
+"""
+
+GE0B_BENCH_LENGTH_M = 2.0
+"""Two metres of optical bench, which is what GE-0b physically is."""
+
+GE0B_SESSION_DURATION_S = 60.0
+GE1_SESSION_DURATION_S = 60.0
+"""One minute of measurement, and the number this project is least able to defend.
+
+It is the finite-key **block** (``docs/adr/0024-the-horizontal-scenario.md``),
+and unlike a pass nothing in the physics fixes it: it is a promise by whoever
+runs the experiment that the link was stationary for that long. Sixty seconds
+at the 100 MHz source of Ntanos et al. is 6e9 pulses, three orders of magnitude
+above the reference day's best pass, so the bound is nowhere near its
+small-block cliff -- which is a statement about the bound, not a defence of the
+minute.
+"""
+
+
+def _ge_transmitter(aperture_m: float) -> TransmitterSpec:
+    """Return the GE transmitter: the Ntanos source through a small collimator."""
+    return TransmitterSpec(
+        wavelength_nm=_WAVELENGTH_NM,
+        aperture_m=aperture_m,
+        pointing_jitter_urad=GE1_POINTING_JITTER_URAD,
+        pulse_rate_hz=NTANOS_SOURCE_PULSE_RATE_HZ,
+    )
+
+
+def ge1_two_terminals() -> HorizontalScenario:
+    """Return GE-1: two terminals, one way, one kilometre.
+
+    What the experiment is
+    ----------------------
+    Two fixed terminals on the ground, a kilometre apart, one sending and one
+    receiving. **Not** a retroreflector: the light does not come back. That is
+    the recommendation of ``docs/adr/0025-two-terminals-one-way.md``, and the
+    reason is that a monostatic retroreflected link crosses correlated air twice
+    and its scintillation is *enhanced*, which Mahon et al. measured at 1.1 km
+    and whose theory is Andrews & Phillips -- ADR 0009 gap 1, the source this
+    project could not open. One architecture can be sized with the sources it
+    has and the other cannot.
+
+    Every number, and where it comes from
+    -------------------------------------
+    2.5 cm transmitter, 10 cm receiving lens, ``C_n^2 = 1e-14`` (P.1814 Table
+    4's "moderate"), 1550 nm, 5 urad of jitter, a **spherical** wave, 23 km of
+    visibility through the Kim et al. law -- which is 0.192 dB/km at this
+    wavelength, against the 0.2 that ADR 0021's worked example assumed by hand
+    -- the Ntanos et al. receiver and protocol, a moonless study night, and a
+    60 s measurement session.
+
+    Why ``spherical`` and not ``plane``: the Rayleigh range of a 2.5 cm
+    transmitter at 1550 nm is 316.7 m, so a kilometre is **3.16 Rayleigh
+    ranges** and the beam has spread to 3.3 times its waist. The plane wave is
+    the other edge of the bracket, not a second opinion, and the budget records
+    ``horizontal.plane-wave-beyond-the-rayleigh-range`` if it is declared.
+
+    Why ``weak``: the plane-wave Rytov variance here is 0.199, a fifth of the
+    limit, so first-order theory is inside its own validity range and the
+    saturated model would be a correction to a number that does not need one.
+    At 5 km the same declaration would be wrong, and
+    ``scenarios/ge1_1km.yaml`` says so in a comment.
+
+    Returns
+    -------
+    HorizontalScenario
+        The GE-1 scenario.
+    """
+    return HorizontalScenario(
+        link=LinkKind.HORIZONTAL,
+        name="ge1_1km",
+        description=(
+            "GE-1: two ground terminals, one way, 1 km, 2.5 cm transmitter, 10 cm receiving "
+            "lens, C_n^2 = 1e-14, 23 km visibility, Ntanos et al. 2021 receiver and protocol, "
+            "moonless study night, 60 s measurement session."
+        ),
+        path=HorizontalPathSpec(
+            path_length_m=GE1_PATH_LENGTH_M,
+            cn2_m23=GE1_CN2_M23,
+            wave=PathWave.SPHERICAL,
+            altitude_m=30.0,
+            receive_aperture_m=GE1_RECEIVE_APERTURE_M,
+            extinction=ExtinctionSpec(
+                visibility_km=23.0,
+                visibility_altitude_m=30.0,
+                aerosol_scale_height_m=1200.0,
+                scaling_law=VisibilityScalingLaw.KIM_2001,
+            ),
+            scintillation_regime=ScintillationRegime.WEAK,
+            outage_probability=NTANOS_OUTAGE_PROBABILITY,
+        ),
+        transmitter=_ge_transmitter(GE1_TRANSMIT_APERTURE_M),
+        receiver=_ntanos_receiver(),
+        background=BackgroundSpec(sky_radiance_w_m2_um_sr=NTANOS_STUDY_NIGHT_RADIANCE_W_M2_UM_SR),
+        protocol=_ntanos_protocol(),
+        security=SecuritySpec(correctness=1e-10, secrecy=1e-10, compose_daily=False),
+        session=SessionSpec(duration_s=GE1_SESSION_DURATION_S),
+    )
+
+
+def ge0b_bench() -> HorizontalScenario:
+    """Return GE-0b: two metres of bench with a turbulence emulator.
+
+    What the experiment is, and the question it is really asking
+    ------------------------------------------------------------
+    A two-metre optical bench with a phase-screen emulator between the two
+    terminals, standing in for GE-1 before anything is put on a roof. The
+    ``C_n^2`` written here is
+    :func:`~quoss.channel.horizontal.equivalent_bench_cn2_m23` for two metres
+    against GE-1's kilometre: **8.87e-10**, because the Rytov variance goes as
+    ``L^(11/6)`` and ``(1000/2)^(11/6) = 8.87e4``.
+
+    **That number is a necessary condition and not a sufficient one, and the
+    scenario file says so rather than leaving it to a reader** (ADR 0009 gap
+    20). An emulator does not produce a ``C_n^2`` over a length; it produces a
+    *phase screen* with a given Fried parameter ``r_0``. Scintillation is phase
+    distortion converted into amplitude **by propagation**, so a screen needs
+    distance behind it: one screen at the start of a 2 m bench has 2 m in which
+    to develop what a kilometre of distributed air develops continuously. The
+    question to put to a manufacturer is therefore **not** "do you reach
+    8.87e-10?" but "what ``D/r_0`` and what Rytov number do you reach, and with
+    how many screens?".
+
+    ``background`` is zero radiance, which on a closed bench is a statement
+    about the enclosure and not a default; ``extinction_db_per_km`` is 0.0,
+    which over two metres of laboratory air is exact to well below a thousandth
+    of a dB.
+
+    Returns
+    -------
+    HorizontalScenario
+        The GE-0b scenario.
+    """
+    return HorizontalScenario(
+        link=LinkKind.HORIZONTAL,
+        name="ge0b_bench",
+        description=(
+            "GE-0b: 2 m bench with a turbulence emulator, C_n^2 set to the equivalent of GE-1's "
+            "kilometre at 1e-14 (8.87e-10 — a necessary and not a sufficient condition, ADR "
+            "0009 gap 20), dark enclosure, 60 s measurement session."
+        ),
+        path=HorizontalPathSpec(
+            path_length_m=GE0B_BENCH_LENGTH_M,
+            cn2_m23=equivalent_bench_cn2_m23(
+                bench_length_m=GE0B_BENCH_LENGTH_M,
+                path_length_m=GE1_PATH_LENGTH_M,
+                cn2_m23=GE1_CN2_M23,
+            ),
+            wave=PathWave.PLANE,
+            altitude_m=30.0,
+            receive_aperture_m=GE1_RECEIVE_APERTURE_M,
+            extinction_db_per_km=0.0,
+            scintillation_regime=ScintillationRegime.WEAK,
+            outage_probability=NTANOS_OUTAGE_PROBABILITY,
+        ),
+        transmitter=_ge_transmitter(GE1_TRANSMIT_APERTURE_M),
+        receiver=_ntanos_receiver(),
+        background=BackgroundSpec(sky_radiance_w_m2_um_sr=0.0),
+        protocol=_ntanos_protocol(),
+        security=SecuritySpec(correctness=1e-10, secrecy=1e-10, compose_daily=False),
+        session=SessionSpec(duration_s=GE0B_SESSION_DURATION_S),
     )

@@ -433,6 +433,14 @@ Esta lista es la parte que hace que la de arriba signifique algo.
     que este proyecto no puede abrir». De los dos artículos anteriores solo se
     leyó el **resumen**, que es lo que permite afirmar el signo y no la magnitud.
 
+    **Consecuencia tomada el 2026-09-17**, en el
+    [ADR 0025](0025-two-terminals-one-way.md): GE-1 se monta con **dos terminales
+    y un solo sentido**. No porque el retrorreflector sea peor, sino porque una
+    arquitectura que se puede dimensionar antes de comprarla vale más que una que
+    no. El hueco sigue abierto y ahora tiene forma: cerrarlo es conseguir acceso
+    a Andrews & Phillips o verificar la teoría desde cero, no buscar más
+    literatura.
+
     **Consecuencia de diseño, que es lo que el hueco existe para provocar:** un
     GE-1 de **un solo sentido con dos terminales** sí es modelable hoy, con las
     mismas funciones, y un GE-1 con retrorreflector no lo es. Ver el ADR 0021.
@@ -447,18 +455,90 @@ Esta lista es la parte que hace que la de arriba signifique algo.
     igualar los números adimensionales —`D/r_0` y el número de Rytov— con varias
     pantallas y óptica de relé entre ellas, no igualar un `C_n^2`. QuOSS no
     modela pantallas de fase, y `C_n^2` es la entrada que toma.
-21. **El promediado de apertura en régimen saturado sigue el convenio de la
-    P.1622, no el de Ntanos et al.** La Ec. (8) de la ITU-R P.1622 multiplica la
+
+    **Y hay una segunda mitad del hueco que sí se puede medir dentro del modelo,
+    medida el 2026-09-17.** El argumento de la pantalla de fase queda fuera de lo
+    que QuOSS calcula, así que solo se podía escribir. Esto no: el banco está
+    afinado para igualar la varianza de **Rytov** de GE-1, y la iguala a precisión
+    de máquina (0.198845 los dos). Pero la de Rytov es la que vería un detector
+    puntual, y lo que llega a la clave es la **promediada por la apertura** — que
+    depende de a qué distancia está la turbulencia. Una lente de 10 cm a dos
+    metros de la fuente lo promedia casi todo:
+
+    | enlace | `σ_R²` | promediado `A` | margen al 1 % |
+    |---|---|---|---|
+    | GE-1, 1 km | 0.198845 | 0.2386 | **1.446 dB** |
+    | GE-0b, 2 m | 0.198845 | 4.45e-5 | **0.030 dB** |
+
+    La varianza en el receptor es **2 183 veces menor** en el banco, y el margen
+    que tiene que presupuestar 1.42 dB menor. Así que un banco que iguala el
+    `C_n^2` en el sentido de `equivalent_bench_cn2_m23` **no** reproduce la
+    escintilación que el receptor de GE-1 va a tener que sobrevivir, por una
+    razón que no tiene nada que ver con pantallas de fase y todo con la
+    geometría. Medido en
+    `tests/e2e/test_horizontal_scenario.py::TestTheBenchIsTheOtherFile::test_matching_the_rytov_variance_does_not_match_what_the_receiver_sees`.
+21. **El promediado de apertura sigue el convenio de la P.1622, no el de
+    Ntanos et al. — y de esa elección depende el signo de un término que el
+    proyecto ya publica.** La Ec. (8) de la ITU-R P.1622 multiplica la
     **log-varianza** por `A`; la Ec. (14) de Ntanos et al. define su `A` como
-    cociente de **índices** de escintilación. En régimen débil es la misma
-    afirmación; en régimen saturado no. Medido en el día de referencia a 10° de
-    elevación con el telescopio de 0.75 m: `A·σ²_lnI = 0.0470` contra
-    `ln(1 + A·σ²_I) = 0.0633`, que son **2.29 contra 2.68 dB** de margen al 1 %
-    de outage, **0.39 dB**. Se mantiene el convenio de la P.1622 porque la `A`
-    que el proyecto usa es la Ec. (7) de la P.1622, definida como cociente de
-    log-varianzas; aplicarla en el espacio del índice sería un tercer convenio
-    que no imprime ninguna de las dos fuentes. Cerrarlo es implementar las Ecs.
-    (15)–(16) de Ntanos et al. enteras. Ver [ADR 0022](0022-the-strong-regime.md).
+    cociente de **índices** de escintilación. El índice es
+    `σ²_I = exp(σ²_lnI) − 1`, así que los dos convenios son
+    `σ² = A·σ²_lnI` y `σ² = ln(1 + A·(exp(σ²_lnI) − 1))`. Para
+    `σ²_lnI ≪ 1` coinciden a primer orden; fuera de ahí no.
+
+    **Subido de categoría el 2026-09-17.** Hasta esta ronda el hueco se citaba
+    con una sola cifra —«0.39 dB»— y se leía como una discrepancia pequeña. No
+    lo es, por dos razones que solo se ven midiendo hasta el final.
+
+    **Primera: el 0.39 dB era la celda más favorable.** Es el régimen *saturado*
+    a 10° con el telescopio de 0.75 m. En régimen débil, que es el
+    predeterminado de las siete firmas de física, el mismo punto vale **1.69 dB**
+    — 4.4 veces más:
+
+    | régimen (10°, 0.75 m, 30 m) | `σ²` P.1622 | `σ²` Ntanos | margen P.1622 | margen Ntanos | Δ |
+    |---|---|---|---|---|---|
+    | `weak` | 0.111004 | 0.226475 | 3.6072 dB | 5.2998 dB | **+1.69 dB** |
+    | `moderate-to-strong` | 0.047015 | 0.063303 | 2.2928 dB | 2.6794 dB | +0.39 dB |
+
+    **Segunda, y es la que sube el hueco de categoría: el convenio fija el signo
+    del cruce de 27.02°.** El [ADR 0016](0016-the-engine-adds-nothing-and-one-altitude.md)
+    publica que los 30 m de altitud de la estación valen **+457 bits** del día de
+    referencia, y el anexo del [ADR 0022](0022-the-strong-regime.md) mide que en
+    régimen saturado valen **−206**: quitar los primeros 30 m de aire baja
+    `σ²_punto` pero sube `A`, y cuál gana depende de la elevación. El cruce está
+    en **27.02°** y el día de referencia pasa el **67.72 %** de sus segundos en
+    pase por debajo de él, así que el total hereda el signo de las muestras
+    bajas. Ese cruce **es** este convenio: en el espacio del índice se mueve a
+    **18.95°**, y por debajo de él quedan el 56.05 % de los segundos.
+
+    Propagado hasta bits/día, que es donde la diferencia se puede leer sin saber
+    nada de `A` (día de referencia, Castelldefels, máscara de 10°, cadena a mano
+    de `tests/e2e/oracle.py`, un solo término cambiado):
+
+    | régimen | convenio P.1622 | convenio Ntanos | cambio | término de altitud (0 → 30 m) |
+    |---|---|---|---|---|
+    | `weak` | 433 442 | 419 162 | **−3.29 %** | +457 → **+1237 bits** |
+    | `moderate-to-strong` | 449 308 | 441 870 | **−1.66 %** | −206 → **+4 bits** |
+
+    Las dos columnas de la derecha son el hallazgo. **El término de altitud
+    saturado cambia de signo con el convenio y aterriza prácticamente en cero
+    (+4 bits de 449 308, 9e-6 del día)**: es decir, los −206 bits que el anexo del
+    ADR 0022 explica con un mecanismo correcto están **enteros dentro de este
+    hueco**. No es que la cifra sea frágil: es que la pregunta «¿suma o resta la
+    altitud de la estación?» no tiene respuesta hasta que alguien decida en qué
+    espacio vive `A`, y hoy este proyecto la decide por la Ec. (7) de la P.1622
+    sin que ninguna fuente lo confirme para el régimen saturado.
+
+    **El hueco no se cierra, y no se cierra a propósito.** Se mantiene el
+    convenio de la P.1622 porque la `A` que el proyecto usa **es** su Ec. (7),
+    definida como cociente de log-varianzas; aplicarla en el espacio del índice
+    sería un tercer convenio que no imprime ninguna de las dos fuentes, y elegirlo
+    por el resultado que da sería ajustar la física al número. Cerrarlo es
+    implementar las Ecs. (15)–(16) de Ntanos et al. enteras. Lo que **sí** se
+    cierra es la ignorancia sobre cuánto cuesta: 3.29 % del día en débil, 1.66 %
+    en saturado, y el signo de un término publicado. Medido en
+    `tests/e2e/test_reference_scenarios.py::TestWhatTheApertureAveragingConventionCosts`.
+    Ver [ADR 0022](0022-the-strong-regime.md).
 22. **La columna vertical de aerosol: la forma es un convenio y la altura de
     escala no tiene fuente — y la ley de visibilidad lleva dentro la dispersión
     molecular al exponente equivocado.** Dos cosas en un hueco porque las dos

@@ -17,7 +17,7 @@ draw time — a mathtext typo, a bad layout — fail here.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -35,11 +35,15 @@ from quoss.scenario.result import SimulationResult
 from quoss.viz.plots import (
     DEGRADED_GID,
     DEGRADED_PREFIX,
+    RAYLEIGH_GID,
+    WAVE_BAND_GID,
+    WEAK_LIMIT_GID,
     ZERO_KEY_GID,
     degraded_codes,
     mark_degradations,
     plot_daily_key,
     plot_elevation_and_rate,
+    plot_horizontal_key_against_distance,
     plot_multi_station,
     plot_pass_key_volume,
     plot_relay,
@@ -430,6 +434,166 @@ class TestSweep:
         ]
         with pytest.raises(DomainError, match="drop"):
             plot_sweep(records, x=self.X, y="daily.finite_bits", log_y=True)
+
+
+class TestHorizontalKeyAgainstDistance:
+    """The GE-1 figure: an interval, and two regions that have to be read carefully.
+
+    The band is **not** an error bar and the figure has to say so, so the tests
+    are about what is drawn and labelled rather than about numbers the engine
+    already checks elsewhere.
+    """
+
+    X = "path.path_length_m"
+    Y = "session.finite_bit_s"
+
+    @staticmethod
+    def _rows(
+        pairs: Sequence[tuple[float, float, float]],
+    ) -> list[dict[str, Any]]:
+        """Two rows per distance, tagged by wave, as a two-axis sweep returns them."""
+        rows: list[dict[str, Any]] = []
+        for length, plane, spherical in pairs:
+            rows.append(
+                {
+                    "path.path_length_m": length,
+                    "path.wave": "plane",
+                    "session.finite_bit_s": plane,
+                }
+            )
+            rows.append(
+                {
+                    "path.path_length_m": length,
+                    "path.wave": "spherical",
+                    "session.finite_bit_s": spherical,
+                }
+            )
+        return rows
+
+    BRACKET = ((200.0, 398_806.0, 394_786.0), (1000.0, 275_213.0, 253_418.0))
+    """Shape of the GE-1 sweep (fixture values; the measurement is in tests/e2e)."""
+
+    def test_the_two_edges_are_drawn_and_the_band_between_them(self) -> None:
+        fig = plot_horizontal_key_against_distance(self._rows(self.BRACKET), x=self.X, plane=self.Y)
+        lower, upper = fig.axes[0].lines[:2]
+        assert list(xdata(lower)) == [0.2, 1.0]
+        assert list(ydata(lower)) == [394_786.0, 253_418.0]
+        assert list(ydata(upper)) == [398_806.0, 275_213.0]
+        assert lower.get_label() == FINITE_LABEL
+        bands = [c for c in fig.axes[0].collections if c.get_gid() == WAVE_BAND_GID]
+        assert len(bands) == 1
+        assert "interval" in str(bands[0].get_label())
+
+    def test_the_edges_are_chosen_per_distance_and_not_once(self) -> None:
+        """The ordering of the two waves reverses with the receiving aperture (ADR 0021).
+
+        A figure that decided "spherical is the upper edge" once would draw a
+        band with a crossing in it as two crossing lines with the fill on the
+        wrong side. This asserts the per-point minimum and maximum instead.
+        """
+        rows = self._rows([(200.0, 10.0, 20.0), (1000.0, 40.0, 30.0)])
+        fig = plot_horizontal_key_against_distance(rows, x=self.X, plane=self.Y)
+        lower, upper = fig.axes[0].lines[:2]
+        assert list(ydata(lower)) == [10.0, 30.0]
+        assert list(ydata(upper)) == [20.0, 40.0]
+
+    def test_a_distance_that_certifies_nothing_is_marked_and_not_dropped(self) -> None:
+        """The most important point on the figure is the one a log axis would lose."""
+        rows = self._rows([(1000.0, 275_213.0, 253_418.0), (5000.0, 0.0, 0.0)])
+        fig = plot_horizontal_key_against_distance(rows, x=self.X, plane=self.Y, log_y=True)
+        marked = [line for line in fig.axes[0].lines if line.get_gid() == ZERO_KEY_GID]
+        assert len(marked) == 1
+        assert list(xdata(marked[0])) == [5.0]
+        zeros = [
+            text
+            for text in fig.findobj(Text)
+            if text.get_gid() == ZERO_KEY_GID and text.get_text() == "0"
+        ]
+        assert len(zeros) == 1
+        assert fig.axes[0].get_yscale() == "log"
+        # The axis reaches the dead distance rather than stopping before it.
+        assert fig.axes[0].get_xlim()[1] >= 5.0
+
+    def test_the_two_marks_are_drawn_only_when_given(self) -> None:
+        rows = self._rows(self.BRACKET)
+        bare = plot_horizontal_key_against_distance(rows, x=self.X, plane=self.Y)
+        assert not [o for o in bare.findobj() if o.get_gid() == WEAK_LIMIT_GID]
+        assert not [o for o in bare.findobj() if o.get_gid() == RAYLEIGH_GID]
+        marked = plot_horizontal_key_against_distance(
+            rows, x=self.X, plane=self.Y, weak_limit_m=2413.4, rayleigh_range_m=316.7
+        )
+        labels = [t.get_text() for t in marked.findobj(Text)]
+        assert any("weak theory" in text for text in labels)
+        assert any("wrong reason" in text for text in labels)
+        assert any("2.41" in text for text in labels)
+
+    def test_two_metric_columns_in_one_row_work_too(self) -> None:
+        """The other natural shape: two sweeps joined by the caller, no wave column."""
+        rows = [
+            {"path.path_length_m": 200.0, "plane": 398_806.0, "spherical": 394_786.0},
+            {"path.path_length_m": 1000.0, "plane": 275_213.0, "spherical": 253_418.0},
+        ]
+        fig = plot_horizontal_key_against_distance(
+            rows, x=self.X, plane="plane", spherical="spherical", log_y=False
+        )
+        lower, upper = fig.axes[0].lines[:2]
+        assert list(ydata(lower)) == [394_786.0, 253_418.0]
+        assert list(ydata(upper)) == [398_806.0, 275_213.0]
+        assert fig.axes[0].get_yscale() == "linear"
+
+    @pytest.mark.parametrize(
+        ("rows", "match"),
+        [
+            ([], "at least one"),
+            (
+                [
+                    {"path.path_length_m": 1.0, "path.wave": "plane", "session.finite_bit_s": 1.0},
+                    {"path.path_length_m": 1.0, "session.finite_bit_s": 1.0},
+                ],
+                "not one sweep",
+            ),
+            (
+                [{"path.path_length_m": 1.0, "path.wave": "plane", "session.finite_bit_s": 1.0}],
+                "exactly two values",
+            ),
+            (
+                [
+                    {"path.path_length_m": 1.0, "path.wave": "plane", "session.finite_bit_s": 1.0},
+                    {
+                        "path.path_length_m": 2.0,
+                        "path.wave": "spherical",
+                        "session.finite_bit_s": 1.0,
+                    },
+                ],
+                "same distances",
+            ),
+            (
+                [
+                    {"path.path_length_m": 1.0, "session.finite_bit_s": 1.0},
+                    {"path.path_length_m": 1.0, "session.finite_bit_s": 2.0},
+                ],
+                "neither one curve",
+            ),
+            (
+                [
+                    {
+                        "path.path_length_m": 1.0,
+                        "path.wave": "plane",
+                        "session.finite_bit_s": float("nan"),
+                    },
+                    {
+                        "path.path_length_m": 1.0,
+                        "path.wave": "spherical",
+                        "session.finite_bit_s": 1.0,
+                    },
+                ],
+                "not finite",
+            ),
+        ],
+    )
+    def test_refusals(self, rows: list[dict[str, Any]], match: str) -> None:
+        with pytest.raises(DomainError, match=match):
+            plot_horizontal_key_against_distance(rows, x=self.X, plane=self.Y)
 
 
 class TestSkyTrack:

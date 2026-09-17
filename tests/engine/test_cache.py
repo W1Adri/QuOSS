@@ -29,11 +29,25 @@ import pytest
 import quoss
 from quoss.core.errors import DegradationLog, DomainError, Severity
 from quoss.engine.cache import ARRAYS_NAME, MANIFEST_NAME, ResultCache, _json_default
-from quoss.engine.pipeline import run
+from quoss.engine.pipeline import run as _run
 from quoss.scenario.defaults import reference_castelldefels
 from quoss.scenario.hash import scenario_hash
 from quoss.scenario.models import MonteCarloSpec, Scenario
 from quoss.scenario.result import SimulationResult
+
+
+def run(scenario: Scenario, **kwargs: Any) -> SimulationResult:
+    """:func:`quoss.engine.pipeline.run` narrowed to the downlink result.
+
+    ``run`` takes either member of the ``link`` union and returns the matching
+    result, so its static type is ``SimulationResult | HorizontalResult``. Every
+    call in this file passes a downlink scenario, and the narrow is written as an
+    assertion rather than a ``cast`` so that a scenario of the wrong kind fails
+    here, by name, instead of on the first attribute the test reaches for.
+    """
+    result = _run(scenario, **kwargs)
+    assert isinstance(result, SimulationResult), f"expected a downlink result, got {type(result)}"
+    return result
 
 
 def with_monte_carlo(*, seed: int | None) -> Scenario:

@@ -44,10 +44,10 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from quoss.core.errors import ScenarioError
-from quoss.scenario.models import Scenario
+from quoss.scenario.models import AnyScenario, LinkKind
 
 __all__ = [
     "ScenarioFormat",
@@ -61,6 +61,15 @@ __all__ = [
 ScenarioFormat = Literal["yaml", "json"]
 
 _SUFFIXES: dict[str, ScenarioFormat] = {".yaml": "yaml", ".yml": "yaml", ".json": "json"}
+
+_ADAPTER: TypeAdapter[AnyScenario] = TypeAdapter(AnyScenario)
+"""The discriminated union, validated once and reused.
+
+Building a :class:`~pydantic.TypeAdapter` compiles a validator, so it is built
+at import and not per call. It is what makes ``link:`` pick the member before
+any field is checked, so a downlink file with one bad value is refused with that
+member's errors only, not with the union of two members' complaints.
+"""
 
 
 def format_for_path(path: Path) -> ScenarioFormat:
@@ -91,31 +100,65 @@ def format_for_path(path: Path) -> ScenarioFormat:
     return _SUFFIXES[suffix]
 
 
+_TAG_HELP = (
+    "a scenario must say which geometry it describes in a top-level 'link' field: "
+    "'downlink' (a satellite over ground stations: orbit, stations, passes, time) or "
+    "'horizontal' (a bench or a ground link at one height: path, session). The two schemas "
+    "have different sections, so the field is read before any other and cannot be guessed "
+    "from what the file happens to contain (docs/adr/0024-the-horizontal-scenario.md)."
+)
+"""What to say when the union's tag is missing or unknown.
+
+A discriminated union's own message -- "Unable to extract tag using discriminator
+'link'" -- names the mechanism and not the fix. This names the fix, and lists
+both values, because the most likely reader of it is somebody whose file
+predates the field.
+"""
+
+
+def _without_the_tag(location: tuple[Any, ...]) -> tuple[Any, ...]:
+    """Drop the union tag Pydantic prefixes to every path inside a tagged member.
+
+    A tagged union reports ``('horizontal', 'path', 'cn2_m23')`` where the user
+    wrote ``path.cn2_m23``. The tag is how Pydantic says which member it chose,
+    not a section of the file: leaving it in would print a dotted path that does
+    not exist in the document the reader is looking at, which is the one thing
+    this whole message exists to avoid. It is dropped only when it is exactly a
+    member tag, so a field genuinely called ``downlink`` further down would
+    survive.
+    """
+    if location and location[0] in {kind.value for kind in LinkKind}:
+        return location[1:]
+    return location
+
+
 def _describe(error: ValidationError) -> str:
     lines = []
     for item in error.errors(include_url=False):
-        location = ".".join(str(part) for part in item["loc"]) or "<root>"
+        location = ".".join(str(part) for part in _without_the_tag(item["loc"])) or "<root>"
         message = item["msg"]
         if message.startswith("Value error, "):
             message = message[len("Value error, ") :]
+        if item["type"] in ("union_tag_not_found", "union_tag_invalid"):
+            message = f"{message}. {_TAG_HELP}"
         lines.append(f"  {location}: {message}")
     count = error.error_count()
     plural = "s" if count != 1 else ""
     return f"scenario has {count} invalid field{plural}:\n" + "\n".join(lines)
 
 
-def _validate(data: Any) -> Scenario:
+def _validate(data: Any) -> AnyScenario:
     if not isinstance(data, dict):
         raise ScenarioError(
             f"a scenario must be a mapping of field names to values, got {type(data).__name__}."
         )
     try:
-        return Scenario.model_validate(data)
+        return _ADAPTER.validate_python(data)
     except ValidationError as error:
         raise ScenarioError(_describe(error)) from error
 
 
-def loads_scenario(text: str, *, format: ScenarioFormat = "yaml") -> Scenario:
+def loads_scenario(text: str, *, format: ScenarioFormat = "yaml") -> AnyScenario:
     """Parse and validate a scenario from text.
 
     Parameters
@@ -127,8 +170,8 @@ def loads_scenario(text: str, *, format: ScenarioFormat = "yaml") -> Scenario:
 
     Returns
     -------
-    Scenario
-        The validated scenario.
+    Scenario or HorizontalScenario
+        The validated scenario, the member its ``link`` field names.
 
     Raises
     ------
@@ -138,11 +181,20 @@ def loads_scenario(text: str, *, format: ScenarioFormat = "yaml") -> Scenario:
 
     Examples
     --------
-    >>> loads_scenario("orbit: {}", format="yaml")  # doctest: +ELLIPSIS
+    >>> loads_scenario('{"link": "downlink", "orbit": {}}', format="json")  # doctest: +ELLIPSIS
     Traceback (most recent call last):
         ...
     quoss.core.errors.ScenarioError: scenario has ... invalid fields:
     ...
+
+    A file that does not say which geometry it is gets told so, and told both
+    values, rather than being read as whichever member happens to be first:
+
+    >>> loads_scenario("orbit: {}", format="yaml")  # doctest: +ELLIPSIS
+    Traceback (most recent call last):
+        ...
+    quoss.core.errors.ScenarioError: scenario has 1 invalid field:
+      <root>: Unable to extract tag using discriminator 'link'. a scenario must say which...
     """
     if format == "yaml":
         try:
@@ -159,7 +211,7 @@ def loads_scenario(text: str, *, format: ScenarioFormat = "yaml") -> Scenario:
     return _validate(data)
 
 
-def load_scenario(path: str | Path) -> Scenario:
+def load_scenario(path: str | Path) -> AnyScenario:
     """Read and validate a scenario file, format from its suffix.
 
     Parameters
@@ -169,8 +221,8 @@ def load_scenario(path: str | Path) -> Scenario:
 
     Returns
     -------
-    Scenario
-        The validated scenario.
+    Scenario or HorizontalScenario
+        The validated scenario, the member its ``link`` field names.
 
     Raises
     ------
@@ -187,12 +239,12 @@ def load_scenario(path: str | Path) -> Scenario:
     return loads_scenario(text, format=format)
 
 
-def dumps_scenario(scenario: Scenario, *, format: ScenarioFormat = "yaml") -> str:
+def dumps_scenario(scenario: AnyScenario, *, format: ScenarioFormat = "yaml") -> str:
     """Serialise a scenario to text in the form a person would write.
 
     Parameters
     ----------
-    scenario : Scenario
+    scenario : Scenario or HorizontalScenario
         The scenario.
     format : {"yaml", "json"}
         Output format. YAML keeps the schema's field order (it reads top-down
@@ -216,12 +268,12 @@ def dumps_scenario(scenario: Scenario, *, format: ScenarioFormat = "yaml") -> st
     raise ScenarioError(f"unknown scenario format {format!r}; use 'yaml' or 'json'.")
 
 
-def dump_scenario(scenario: Scenario, path: str | Path) -> None:
+def dump_scenario(scenario: AnyScenario, path: str | Path) -> None:
     """Write a scenario to a file, format from its suffix.
 
     Parameters
     ----------
-    scenario : Scenario
+    scenario : Scenario or HorizontalScenario
         The scenario.
     path : str or Path
         Destination, ``.yaml``, ``.yml`` or ``.json``. Parent directories must

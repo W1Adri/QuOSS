@@ -444,3 +444,81 @@ baja.
 La forma de tener las dos cosas sin pagar ninguna es la que ya está: el campo
 existe, el aviso nombra la alternativa en los dos sentidos, y elegir el saturado
 para un estudio de máscara es **una línea de YAML**.
+
+---
+
+## Anexo (2026-09-17): el defecto no desaparece, se muda a las firmas
+
+**Qué cambia.** `ChannelSpec.scintillation_regime` pasa a ser **obligatorio y sin
+defecto**. Las siete firmas de física —`downlink_loss_budget`,
+`log_irradiance_variance`, `downlink_log_irradiance_variance`,
+`uplink_log_irradiance_variance`, `horizontal_point_log_irradiance_variance`,
+`horizontal_log_irradiance_variance` y `horizontal_loss_budget`— **conservan su
+`ScintillationRegime.WEAK`**. No es un flip: es una mudanza, y las dos mitades
+tienen defensa separada.
+
+### Lo que no se hace, y por qué
+
+**No se flipa el defecto a saturado.** La sección anterior lo mide: costaría
+**seis de las ocho celdas** de la Tabla 2 de la ITU-R P.1622, que son seis de los
+ocho anclajes V2 más fuertes que tiene el canal. Esa medición sigue siendo la
+misma y la decisión sigue siendo la misma.
+
+**Y no se deja el defecto invisible donde estaba.** Un defecto en el esquema es
+un parámetro que recibe todo el que no lo declara, que es exactamente lo que el
+[ADR 0014](0014-scenario-contract-and-provenance.md) refusa para un campo que
+mueve una decisión de diseño. La defensa que tenía —«los cinco `scenarios/*.yaml`
+lo escriben igualmente, así que el defecto no lo recibe nadie»— era cierta
+mientras el único enlace del esquema fuera la bajada.
+
+### Por qué deja de ser cierta: el camino horizontal es el otro miembro de la unión
+
+Desde el [ADR 0024](0024-the-horizontal-scenario.md) el escenario es una unión
+discriminada, `link: downlink | horizontal`. Y los dos miembros no están en el
+mismo régimen:
+
+- En la **bajada** de referencia el modelo débil es el ordinario y el saturado es
+  la corrección que importa por debajo de ~20° de elevación: vale **+3.66 %** del
+  día.
+- En un **camino horizontal** de `C_n^2 = 1e-14` a 1550 nm la teoría débil deja
+  de ser citable a **2413 m** (`weak_theory_path_limit_m`), y GE-1 se dimensiona
+  entre 200 m y 5 km. Es decir: **en más de la mitad del barrido que la PR C
+  existe para hacer, el defecto sería el modelo equivocado**, y lo sería en
+  silencio salvo por un `WARNING` en un log.
+
+Un defecto que es correcto para un miembro de la unión y equivocado para el otro
+no es un defecto, es un sesgo. Por eso el campo del escenario deja de tener uno:
+el autor del escenario elige, y la elección entra en el SHA-256 y por tanto en la
+procedencia y en la clave de caché.
+
+### Por qué en las firmas de física sí vale un defecto, que es la otra mitad
+
+Porque una firma de física **no es un escenario**: es donde se hacen las
+comparaciones contra un número impreso. `tests/channel/test_turbulence.py` llama
+a `log_irradiance_variance` con los parámetros de la Tabla 2 de la P.1622 y
+compara contra sus ocho celdas; ese punto de llamada no está eligiendo un modelo
+de física, está preguntando «¿qué dice la recomendación?», y el modelo que
+responde a esa pregunta es el suyo, el débil de su Ec. (4a).
+
+Dicho de otra forma: el defecto de las firmas significa **«la P.1622 tal como
+está impresa»**, que es una afirmación bibliográfica y estable; el defecto del
+esquema significaba **«el aire que este experimento tiene»**, que es una
+afirmación física y depende del experimento. Son dos preguntas distintas bajo un
+nombre, y separarlas es lo que permite que flipar una no arrastre a la otra.
+
+**Y la asimetría queda asertada, no confiada.** El test que comprobaba que los
+dos defectos coincidían (`test_the_regime_default_is_the_physics_default…`) pasa
+a comprobar el arreglo nuevo en las dos direcciones:
+`ChannelSpec.model_fields["scintillation_regime"].is_required()`, y las **siete**
+firmas con `WEAK` —el recuento incluido, para que una firma nueva sin defecto, o
+con el otro, sea un test rojo en vez de una asimetría callada—. Está en
+`tests/scenario/test_models.py::TestTheStationSpecConversions::test_the_schema_has_no_regime_default_and_the_physics_signatures_keep_theirs`.
+
+### Lo que cuesta, medido
+
+Cinco ficheros de `scenarios/` ya escribían el campo, así que **ningún escenario
+comprometido cambia de significado ni de digest**: el digest de referencia sigue
+en `303a3729…`. Lo que cambia es que `ChannelSpec(zenith_transmittance=1.0)` en
+Python pasa a ser un `ValidationError` — ocho puntos de llamada en `src/` y
+`tests/`, todos actualizados en la misma PR, y ninguno de ellos era un escenario
+de física: eran constructores de prueba que ahora dicen qué régimen prueban.

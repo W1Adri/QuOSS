@@ -111,7 +111,7 @@ from __future__ import annotations
 import datetime as dt
 from enum import StrEnum
 from itertools import pairwise
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import (
     BaseModel,
@@ -131,10 +131,11 @@ from quoss.channel.background import (
 from quoss.channel.detector import receiver_efficiency
 from quoss.channel.extinction import (
     VisibilityScalingLaw,
+    specific_attenuation_at_altitude_db_per_km,
     zenith_transmittance_from_visibility,
 )
 from quoss.channel.link_budget import FadeCombination
-from quoss.channel.turbulence import ScintillationRegime
+from quoss.channel.turbulence import PathWave, ScintillationRegime
 from quoss.core.constants import WGS84_RADIUS_EQUATORIAL_KM
 from quoss.core.errors import DegradationLog, DomainError
 from quoss.core.types import TimeGrid
@@ -152,10 +153,14 @@ __all__ = [
     "HV57_RMS_WIND_SPEED_M_S",
     "SCHEMA_VERSION",
     "AggregationPolicyName",
+    "AnyScenario",
     "BackgroundSpec",
     "ChannelSpec",
     "ExtinctionSpec",
+    "HorizontalPathSpec",
+    "HorizontalScenario",
     "KeplerOrbit",
+    "LinkKind",
     "MonteCarloSpec",
     "MultiStationSpec",
     "OrbitSpec",
@@ -165,6 +170,7 @@ __all__ = [
     "RelaySpec",
     "Scenario",
     "SecuritySpec",
+    "SessionSpec",
     "SpecModel",
     "StationSpec",
     "TimeSpec",
@@ -764,37 +770,60 @@ class ChannelSpec(SpecModel):
     ``tests/e2e/test_reference_scenarios.py``). A result that did not carry the
     choice in its provenance would be two different days under one hash.
 
-    The default is ``WEAK``, and it is the conservative one in the sense that
-    matters here: saturation can only *lower* a variance, so ``WEAK`` never
-    reports more key than the alternative. It is also the one every V2 anchor of
-    this project is compared against: at ITU-R P.1622 Table 2's own fully-weak
-    point (75° elevation) the saturated model reads 3.4 % below the
-    recommendation at 1550 nm, and more at shorter wavelengths — six of that
-    table's eight published cells would stop reproducing if this default were
-    flipped (``tests/channel/test_turbulence.py``). Choosing
-    ``MODERATE_TO_STRONG`` is one line, and the channel records
-    ``turbulence.weak-fluctuation-limit-exceeded`` naming it whenever ``WEAK``
-    is used past its own validity limit.
+    **There is no default, and that is a change from the schema this field
+    arrived in.** It had one, ``WEAK``, defended with a measurement: flipping it
+    to the saturated model would move six of the eight published cells of ITU-R
+    P.1622 Table 2 outside half a printed digit, so the project would lose six
+    of its eight strongest V2 anchors of the channel
+    (``tests/channel/test_turbulence.py::test_what_the_default_would_cost_across_the_whole_published_table``).
+    That measurement still holds and the flip is still refused. What stopped
+    holding is the *other* half of the argument — that a default here is
+    invisible only in theory, because every file in ``scenarios/`` writes the
+    field anyway. A horizontal link (``HorizontalPathSpec``) writes it too, and
+    for it the saturated model is not a refinement below 20 degrees of elevation
+    but the ordinary case: with ``C_n^2 = 1e-14`` at 1550 nm the weak theory
+    stops being citable at **2413 m**
+    (:func:`quoss.channel.horizontal.weak_theory_path_limit_m`), which is inside
+    the range GE-1 is being sized over. A default that is right for one member of
+    a discriminated union and wrong for the other is exactly the invisible
+    parameter ADR 0014 refuses.
+
+    So the field is required here, and the ``WEAK`` default **moves to the seven
+    physics signatures** rather than disappearing — see the annex of ADR 0022.
+    There it keeps the six anchors, because those signatures are where the
+    comparisons against P.1622 are made; here the scenario author chooses and the
+    choice is in the hash. Choosing ``MODERATE_TO_STRONG`` is one line, and the
+    channel records ``turbulence.weak-fluctuation-limit-exceeded`` naming it
+    whenever ``WEAK`` is used past its own validity limit.
 
     Examples
     --------
-    >>> ChannelSpec(zenith_transmittance=0.812).fade_combination
+    >>> ChannelSpec(zenith_transmittance=0.812, scintillation_regime="weak").fade_combination
     <FadeCombination.EXACT: 'exact'>
-    >>> ChannelSpec(zenith_transmittance=0.812).scintillation_regime
-    <ScintillationRegime.WEAK: 'weak'>
     >>> ChannelSpec(
     ...     zenith_transmittance=0.812, scintillation_regime="moderate-to-strong"
     ... ).scintillation_regime
     <ScintillationRegime.MODERATE_TO_STRONG: 'moderate-to-strong'>
-    >>> ChannelSpec(zenith_transmittance=0.812).models_extinction
+
+    Leaving the regime out is refused rather than assumed:
+
+    >>> ChannelSpec(zenith_transmittance=0.812)
+    Traceback (most recent call last):
+        ...
+    pydantic_core._pydantic_core.ValidationError: 1 validation error for ChannelSpec
+    scintillation_regime
+      Field required...
+
+    >>> ChannelSpec(zenith_transmittance=0.812, scintillation_regime="weak").models_extinction
     False
     >>> modelled = ChannelSpec(
+    ...     scintillation_regime="weak",
     ...     extinction=ExtinctionSpec(
     ...         visibility_km=23.0,
     ...         visibility_altitude_m=30.0,
     ...         aerosol_scale_height_m=1200.0,
     ...         scaling_law="kim-2001",
-    ...     )
+    ...     ),
     ... )
     >>> modelled.models_extinction
     True
@@ -832,15 +861,14 @@ class ChannelSpec(SpecModel):
         "two marginal quantiles as the published budgets do (it overstates the fade).",
     )
     scintillation_regime: ScintillationRegime = Field(
-        default=ScintillationRegime.WEAK,
-        description="Which scintillation model turns the Rytov variance into the fade. 'weak' "
-        "(the default) is ITU-R P.1622 equation (4a) itself, the number every V2 anchor in "
-        "this project is compared against; 'moderate-to-strong' saturates it with the "
-        "large-scale/small-scale split of Gruneisen et al. (A8)-(A9), which is never larger "
-        "and is 6.1 dB smaller at the reference day's worst sample. The default is 'weak' "
-        "because the saturated model reads 3.4 % below P.1622 Table 2 at 1550 nm and more "
-        "at shorter wavelengths, so six of that table's eight cells would stop reproducing; "
-        "ADR 0022 measures both and says what each buys.",
+        description="Which scintillation model turns the Rytov variance into the fade. 'weak' is "
+        "ITU-R P.1622 equation (4a) itself, the number every V2 anchor in this project is "
+        "compared against; 'moderate-to-strong' saturates it with the large-scale/small-scale "
+        "split of Gruneisen et al. (A8)-(A9), which is never larger and is 6.1 dB smaller at the "
+        "reference day's worst sample. REQUIRED, no default: the two differ by +3.66 % of the "
+        "reference day's certified key and move the optimal elevation mask from 8 to 4.5 degrees, "
+        "and on a horizontal path the weak theory stops being citable past 2413 m. ADR 0022 "
+        "measures both and says what each buys.",
     )
 
     @model_validator(mode="after")
@@ -1066,9 +1094,11 @@ class BackgroundSpec(SpecModel):
 
     sky_radiance_w_m2_um_sr: float | None = Field(
         default=None,
-        gt=0.0,
+        ge=0.0,
         description="Sky spectral radiance, W/(m^2 um sr). Ntanos et al. 2021 §4.2.2 give "
-        "1.5e-5 for a moonless night, 1.5e-4 for their study night, 1.5e-3 at full moon.",
+        "1.5e-5 for a moonless night, 1.5e-4 for their study night, 1.5e-3 at full moon. Zero "
+        "is legal and means a closed enclosure (a bench, ADR 0024) — a declaration, not an "
+        "omission, which the exactly-one validator below is what prevents.",
     )
     condition: SkyCondition | None = Field(
         default=None,
@@ -1497,6 +1527,383 @@ class RelaySpec(SpecModel):
 
 
 # --------------------------------------------------------------------------- #
+# The horizontal link
+# --------------------------------------------------------------------------- #
+class LinkKind(StrEnum):
+    """Which geometry a scenario describes. The discriminator of the ``link`` union.
+
+    A scenario is one of exactly two things, and there is no third and no
+    "either":
+
+    ``DOWNLINK``
+        A satellite over a ground station. Elevation changes every second, the
+        turbulence is an integral of the Hufnagel-Valley profile along
+        ``1 / sin(theta)``, and the run is organised into **passes**.
+    ``HORIZONTAL``
+        A bench or a link of a few hundred metres to a few kilometres, at one
+        height. ``C_n^2`` is a constant of the path, there is **no elevation**,
+        and the run is one stationary **measurement session**.
+
+    Why this is a tag and not a pair of optional sections
+    -----------------------------------------------------
+    Because :class:`SpecModel` sets ``extra="forbid"``, and a tag turns that
+    setting into the rule. A horizontal scenario cannot carry ``stations``,
+    ``passes``, ``orbit`` or ``time`` -- not by a validator that would have to
+    be written and kept correct, but because
+    :class:`HorizontalScenario` has no such fields and the model refuses names
+    it does not have. The absence-based assertion of
+    ``docs/adr/0021-horizontal-path.md`` (no signature of
+    :mod:`quoss.channel.horizontal` takes an elevation) is now also a schema
+    rule: no *scenario* of this kind can hold one either.
+    """
+
+    DOWNLINK = "downlink"
+    HORIZONTAL = "horizontal"
+
+
+class HorizontalPathSpec(SpecModel):
+    """The air, the geometry and the extinction of a horizontal link.
+
+    What a horizontal path is, for someone arriving new
+    ---------------------------------------------------
+    Light going to a satellite leaves the atmosphere: what it crosses is a
+    *column* whose turbulence changes with height, traversed at an angle that
+    changes every second. Light crossing a laboratory bench, or a kilometre
+    between two rooftops, does neither. It stays at one height, so the
+    refractive-index structure parameter ``C_n^2`` -- the number saying how
+    strongly the air bends light, in m^(-2/3) -- is **one constant of the
+    path**, and there is no elevation to speak of.
+
+    That is not the slant-path formulas with a small angle. ITU-R P.1622's
+    integral at 0.1 degrees runs along 11 000 km of atmosphere and returns
+    **2.1e4 times** the variance of one horizontal kilometre in the same ground
+    air (``docs/adr/0021-horizontal-path.md``).
+
+    The two ways of declaring extinction, which are ``ChannelSpec``'s two
+    ------------------------------------------------------------------------
+    Exactly one of :attr:`extinction_db_per_km` (a number in dB/km, the unit
+    ITU-R P.1814 equation (3) uses) or :attr:`extinction` (an
+    :class:`ExtinctionSpec`) -- never both, never neither. The shape is
+    deliberately the same as :class:`ChannelSpec`'s, and so is the reason: ADR
+    0009 gap 14 says there is no value of this field that can quietly mean "I
+    did not think about it", and a link through perfectly clear air writes
+    ``extinction_db_per_km: 0.0`` and has said so.
+
+    **What the model is evaluated to is different, and that is the only
+    difference.** A downlink needs a *vertical transmittance*: the whole column
+    above the station, one dimensionless number, which is what
+    :func:`~quoss.channel.extinction.zenith_transmittance_from_visibility`
+    integrates. A horizontal link has no column -- it needs the extinction
+    **coefficient at its own height**, a loss per kilometre, which is
+    :func:`~quoss.channel.extinction.specific_attenuation_at_altitude_db_per_km`.
+    Same :class:`ExtinctionSpec`, same profile, one integration step apart.
+
+    ``altitude_m`` is the field the downlink does not have an equivalent of,
+    and it is here rather than on a station because a horizontal scenario has
+    no stations. It matters only through
+    ``exp(-(altitude_m - extinction.visibility_altitude_m) / aerosol_scale_height_m)``,
+    so for the ordinary case -- a visibility measured where the link runs -- it
+    cancels exactly and the declared scale height has no effect on any number.
+    It is still required, for the reason ``visibility_altitude_m`` is: nothing
+    in a visibility figure says at what height it was taken, and reading a
+    sea-level climatological figure on a 2 km plateau is a different
+    atmosphere by a factor 5.3.
+
+    Examples
+    --------
+    >>> path = HorizontalPathSpec(
+    ...     path_length_m=1000.0,
+    ...     cn2_m23=1e-14,
+    ...     wave="spherical",
+    ...     altitude_m=30.0,
+    ...     receive_aperture_m=0.10,
+    ...     extinction_db_per_km=0.2,
+    ...     scintillation_regime="weak",
+    ... )
+    >>> path.path_length_km
+    1.0
+    >>> path.models_extinction
+    False
+    """
+
+    path_length_m: float = Field(
+        gt=0.0,
+        description="Length of the link, m. The unit is metres: a 2 km link is 2000.0, and 2.0 "
+        "would be a bench, whose Rytov variance is 3.2e5 times smaller.",
+    )
+    cn2_m23: float = Field(
+        ge=0.0,
+        description="Refractive-index structure parameter along the path, m^(-2/3), constant. "
+        "ITU-R P.1814 Table 4 gives 1e-16 (low), 1e-14 (moderate) and 1e-13 (high) near the "
+        "ground; 0.0 is still air and is exact.",
+    )
+    wave: PathWave = Field(
+        description="Which closed form describes the beam at the receiver: 'plane' or "
+        "'spherical'. REQUIRED, no default: the two differ by a factor 2.46 in the point "
+        "variance, and which one applies depends on the transmitter's Rayleigh range, not on a "
+        "preference (ADR 0021). The budget records a WARNING when the declared wave contradicts "
+        "that range.",
+    )
+    altitude_m: float = Field(
+        ge=-500.0,
+        le=9000.0,
+        description="Height the link runs at, m above the WGS-84 ellipsoid. Used only by the "
+        "extinction model, and only through its difference with "
+        "extinction.visibility_altitude_m, which cancels exactly when the two agree.",
+    )
+    receive_aperture_m: float = Field(
+        gt=0.0,
+        description="Receiving lens diameter, m. Here and not on a station because a horizontal "
+        "scenario has none; the transmitting aperture is transmitter.aperture_m.",
+    )
+    extinction_db_per_km: float | None = Field(
+        default=None,
+        ge=0.0,
+        description="Specific attenuation of the air, dB/km (ITU-R P.1814's gamma_atmo). One of "
+        "the two ways to declare extinction; writing 0.0 here is how a scenario declares 'no "
+        "extinction modelled' (ADR 0009 gap 14).",
+    )
+    extinction: ExtinctionSpec | None = Field(
+        default=None,
+        description="The other way: a visibility, a scale height and a published scaling law, "
+        "evaluated at altitude_m as a specific attenuation rather than integrated into a "
+        "vertical transmittance (ADR 0023, ADR 0024).",
+    )
+    scintillation_regime: ScintillationRegime = Field(
+        description="Which scintillation model turns the Rytov variance into the fade: 'weak' "
+        "(first-order theory, ITU-R P.1814 equation (8) itself) or 'moderate-to-strong' (the "
+        "saturated split of Gruneisen et al. (A8)-(A9)). REQUIRED, no default: on this path the "
+        "weak theory stops being citable at 2413 m for C_n^2 = 1e-14 at 1550 nm "
+        "(weak_theory_path_limit_m), which is inside the range GE-1 is sized over.",
+    )
+    static_loss_db: float = Field(
+        default=0.0,
+        ge=0.0,
+        description="Fixed losses not modelled elsewhere, dB, positive means loss.",
+    )
+    outage_probability: float = Field(
+        default=0.01,
+        gt=0.0,
+        lt=1.0,
+        description="Probability at which the fade allowance is budgeted; 0.01 is Ntanos et "
+        "al. 2021 §4.1's 1 %.",
+    )
+    fade_combination: FadeCombination = Field(
+        default=FadeCombination.EXACT,
+        description="'exact' takes the joint quantile of the two fades; 'additive' sums the two "
+        "marginal quantiles as the published budgets do (it overstates the fade).",
+    )
+
+    @model_validator(mode="after")
+    def _exactly_one_extinction(self) -> HorizontalPathSpec:
+        """Require a number or a model, never both, never neither."""
+        if (self.extinction_db_per_km is None) == (self.extinction is None):
+            raise ValueError(
+                "give exactly one of extinction_db_per_km or extinction. A number and a model "
+                "are two answers to the same question, and giving neither would leave the air "
+                "at whatever the code happened to default to — which is what "
+                "docs/adr/0009-citation-policy.md gap 14 exists to prevent. A link that does "
+                "not model extinction writes extinction_db_per_km: 0.0 and has said so."
+            )
+        return self
+
+    @property
+    def path_length_km(self) -> float:
+        """Path length, km."""
+        return float(m_to_km(self.path_length_m))
+
+    @property
+    def models_extinction(self) -> bool:
+        """True when the attenuation comes from a model rather than a number."""
+        return self.extinction is not None
+
+    def extinction_db_per_km_at(
+        self, *, wavelength_m: float, degradations: DegradationLog
+    ) -> float:
+        """Resolve the specific attenuation whichever way it was declared.
+
+        The counterpart of
+        :meth:`ChannelSpec.zenith_transmittance_at`, and a method for the same
+        reason: a declared number does not depend on the wavelength and a model
+        does -- 23 km of visibility is 0.192 dB/km at 1550 nm and 0.465 at 785.
+        The engine calls this rather than reading a field, so the two ways of
+        declaring produce one number through one call.
+
+        Parameters
+        ----------
+        wavelength_m : float
+            The transmitter wavelength, m.
+        degradations : DegradationLog
+            Receives whatever the extinction model records; untouched when the
+            attenuation was declared as a number, because a number written down
+            deliberately has nothing to report.
+
+        Returns
+        -------
+        float
+            Specific attenuation, dB/km, non-negative.
+        """
+        if self.extinction_db_per_km is not None:
+            return self.extinction_db_per_km
+        assert self.extinction is not None  # narrowed by the model validator
+        return float(
+            specific_attenuation_at_altitude_db_per_km(
+                self.extinction.visibility_km,
+                wavelength_m=wavelength_m,
+                aerosol_scale_height_m=self.extinction.aerosol_scale_height_m,
+                altitude_m=self.altitude_m,
+                visibility_altitude_m=self.extinction.visibility_altitude_m,
+                law=self.extinction.scaling_law,
+                degradations=degradations,
+            )
+        )
+
+
+class SessionSpec(SpecModel):
+    """How long the measurement runs. On a horizontal link this **is** the key block.
+
+    Why one number needs its own model and this much prose
+    ------------------------------------------------------
+    ``docs/adr/0011-the-block-is-the-pass.md`` decided that the block a
+    finite-key bound is evaluated over is **a pass**, and the argument was that
+    the geometry fixes it: between two passes the satellite is below the
+    horizon and no pulse is sent, so a pass is not a choice anybody makes, it is
+    where the data stops.
+
+    A horizontal link is stationary. Nothing stops the data. The block is
+    whatever the operator decides to call one, and that changes **who is
+    responsible for the bound being valid**: on a downlink the schema can
+    refuse to let anyone get it wrong, and here it cannot. So the duration is a
+    required field with no default, it is written in the scenario where it
+    enters the hash and the provenance, and ``docs/adr/0024-the-horizontal-scenario.md``
+    says what the operator is promising by writing it.
+
+    What the promise is, concretely: every pulse counted into one block must
+    have been sent under the conditions the block was priced at, and the
+    security parameters are per block, so running ``n`` sessions and
+    concatenating their keys composes the failure probabilities to ``n * eps``
+    exactly as :func:`~quoss.system.key_volume.composed_security` does for
+    passes. A session declared longer than the link was actually stable is not
+    an approximation, it is a false security claim.
+
+    Examples
+    --------
+    >>> SessionSpec(duration_s=60.0).duration_s
+    60.0
+    """
+
+    duration_s: float = Field(
+        gt=0.0,
+        description="Length of one measurement session, s. This is the finite-key block. "
+        "REQUIRED, no default: on a stationary link nothing fixes it but the operator "
+        "(ADR 0024), unlike a pass, which the geometry fixes (ADR 0011).",
+    )
+
+
+class HorizontalScenario(SpecModel):
+    """The whole input of one horizontal run: a bench, or a link a few kilometres long.
+
+    The other member of the ``link`` discriminated union, and deliberately not a
+    :class:`Scenario` with the orbital half left empty. What it does **not**
+    have is the point: no ``orbit``, no ``stations``, no ``passes``, no
+    ``time``, and therefore nowhere to write an elevation, an elevation mask, a
+    ground wind speed or a station height. ``extra="forbid"`` turns each of
+    those absences into an error message naming the field, which is what
+    ``docs/adr/0021-horizontal-path.md``'s "asserted by absence" becomes once
+    the path has a scenario of its own.
+
+    What it shares with a downlink, and why sharing is right here
+    -------------------------------------------------------------
+    ``transmitter``, ``receiver``, ``background``, ``protocol`` and ``security``
+    are the **same** models. They describe hardware and a protocol, and a
+    photon does not know what geometry brought it: an SNSPD has the same dark
+    count rate on a bench as under a satellite. Copying them into horizontal
+    twins would have created two ways to say one thing and two places for them
+    to drift apart.
+
+    ``background`` on a closed bench is ``sky_radiance_w_m2_um_sr: 0.0``, which
+    is a declaration and not a default.
+
+    Examples
+    --------
+    >>> from quoss.scenario.defaults import ge1_two_terminals
+    >>> scenario = ge1_two_terminals()
+    >>> scenario.link
+    <LinkKind.HORIZONTAL: 'horizontal'>
+    >>> scenario.path.path_length_m
+    1000.0
+    >>> scenario.session.duration_s
+    60.0
+    """
+
+    link: Literal[LinkKind.HORIZONTAL] = Field(
+        description="The discriminator: 'horizontal'. REQUIRED, with one legal value, so that a "
+        "file says which geometry it describes in its first line rather than by which sections "
+        "it happens to carry."
+    )
+    name: str = Field(min_length=1, description="Label. Excluded from the hash.")
+    description: str = Field(default="", description="Free text. Excluded from the hash.")
+    schema_version: int = Field(
+        default=SCHEMA_VERSION, description="Schema version this file was written for."
+    )
+    path: HorizontalPathSpec
+    transmitter: TransmitterSpec
+    receiver: ReceiverSpec
+    background: BackgroundSpec
+    protocol: ProtocolSpec
+    security: SecuritySpec
+    session: SessionSpec
+
+    @field_validator("schema_version")
+    @classmethod
+    def _supported(cls, value: int) -> int:
+        """Refuse a file written for another schema rather than misread it."""
+        if value != SCHEMA_VERSION:
+            raise ValueError(
+                f"schema_version {value} is not supported; this code reads version "
+                f"{SCHEMA_VERSION}. Field meanings may differ between versions."
+            )
+        return value
+
+    @model_validator(mode="after")
+    def _consistent(self) -> HorizontalScenario:
+        """Enforce the rules that span two sub-models.
+
+        The gate rule is :class:`Scenario`'s, verbatim and for the same reason:
+        one gate per pulse, and a gate wider than the pulse period would have
+        two pulses inside it. The tabulated-background rule is
+        :class:`Scenario`'s too -- ITU-R P.1621-2 Table 1 covers a wavelength
+        range whatever the geometry.
+        """
+        if self.receiver.gate_s > self.transmitter.pulse_period_s:
+            raise ValueError(
+                f"receiver.gate_ns={self.receiver.gate_ns} exceeds the pulse period "
+                f"{self.transmitter.pulse_period_s * 1e9} ns at transmitter.pulse_rate_hz="
+                f"{self.transmitter.pulse_rate_hz}. One gate per pulse; wider gates overlap."
+            )
+        if self.background.is_tabulated:
+            lo, hi = min(ITU_SKY_RADIANCE_WAVELENGTHS_M), max(ITU_SKY_RADIANCE_WAVELENGTHS_M)
+            wavelength = self.transmitter.wavelength_m
+            if not lo <= wavelength <= hi:
+                raise ValueError(
+                    f"background.condition is tabulated only for wavelengths "
+                    f"{lo * 1e9:.0f}-{hi * 1e9:.0f} nm (ITU-R P.1621-2 Table 1); the transmitter "
+                    f"is at {self.transmitter.wavelength_nm} nm. Give sky_radiance_w_m2_um_sr "
+                    "instead."
+                )
+        return self
+
+    def physics_dict(self) -> dict[str, Any]:
+        """Return the JSON-mode dump with the label fields removed.
+
+        The payload :mod:`quoss.scenario.hash` canonicalises, and the reason both
+        members of the union carry this method rather than the hash special-casing
+        them: a third member would then need nothing but the method.
+        """
+        return self.model_dump(mode="json", exclude={"name", "description"})
+
+
+# --------------------------------------------------------------------------- #
 # The scenario
 # --------------------------------------------------------------------------- #
 class Scenario(SpecModel):
@@ -1523,6 +1930,13 @@ class Scenario(SpecModel):
     1
     """
 
+    link: Literal[LinkKind.DOWNLINK] = Field(
+        default=LinkKind.DOWNLINK,
+        description="The discriminator of the link union: 'downlink'. It has a default, and the "
+        "default is defensible where scintillation_regime's was not, because this Literal has "
+        "exactly one legal value: there is no alternative for it to hide. Writing it is still "
+        "how a file says in its first line which geometry it describes.",
+    )
     name: str = Field(min_length=1, description="Label. Excluded from the hash.")
     description: str = Field(default="", description="Free text. Excluded from the hash.")
     schema_version: int = Field(
@@ -1611,3 +2025,46 @@ class Scenario(SpecModel):
         the datetime as an ISO-8601 string, floats as floats.
         """
         return self.model_dump(mode="json", exclude={"name", "description"})
+
+
+# --------------------------------------------------------------------------- #
+# The union
+# --------------------------------------------------------------------------- #
+AnyScenario = Annotated[Scenario | HorizontalScenario, Field(discriminator="link")]
+"""A scenario of either geometry, told apart by its ``link`` field.
+
+What a discriminated union buys, over a union
+---------------------------------------------
+A plain ``Scenario | HorizontalScenario`` would make Pydantic try each member
+and report the errors of both when neither validates -- so a downlink file with
+one bad field would be refused with a message about ``path``, ``session`` and
+``link`` as well, and the user would have to work out which half of the message
+was about their file. With a discriminator, ``link`` picks the member first and
+the errors are that member's only.
+
+It also makes the tag **load-bearing rather than decorative**: the schema cannot
+be entered without saying which geometry the file describes, so
+``extra="forbid"`` is what refuses ``passes:`` in a horizontal file, by name,
+before any physics runs.
+
+Examples
+--------
+>>> from pydantic import TypeAdapter
+>>> from quoss.scenario.defaults import ge1_two_terminals, reference_castelldefels
+>>> adapter = TypeAdapter(AnyScenario)
+>>> type(adapter.validate_python(reference_castelldefels().model_dump(mode="json"))).__name__
+'Scenario'
+>>> type(adapter.validate_python(ge1_two_terminals().model_dump(mode="json"))).__name__
+'HorizontalScenario'
+
+A horizontal file that carries a downlink section is refused by name:
+
+>>> data = ge1_two_terminals().model_dump(mode="json")
+>>> data["passes"] = {"minimum_elevation_deg": 10.0}
+>>> adapter.validate_python(data)
+Traceback (most recent call last):
+    ...
+pydantic_core._pydantic_core.ValidationError: 1 validation error for ...
+horizontal.passes
+  Extra inputs are not permitted...
+"""
