@@ -180,7 +180,18 @@ def _default_runner(scenario: Scenario) -> SimulationResult:
             "the paper figures run the engine, and quoss.engine.pipeline cannot be imported; "
             "pass runner= explicitly or install a build that includes the engine."
         ) from exc
-    return run(scenario)
+    result = run(scenario)
+    # `run` takes either member of the link union and returns the matching
+    # result; these figures are the paper's downlink ones, and the narrow is an
+    # assertion rather than a cast so that pointing one at a horizontal scenario
+    # says so here instead of failing inside a plotting routine.
+    if not isinstance(result, SimulationResult):
+        raise ConfigurationError(
+            f"the paper figures are downlink figures and {scenario.name!r} is a horizontal "
+            "scenario; its result has no passes and no days to plot. "
+            "quoss.viz.plots.horizontal_key_against_distance is the horizontal figure."
+        )
+    return result
 
 
 def _default_sweeper(

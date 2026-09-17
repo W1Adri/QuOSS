@@ -25,9 +25,9 @@ import pytest
 from quoss.scenario.defaults import reference_castelldefels
 from quoss.scenario.hash import HASH_EXCLUDED_FIELDS, canonical_json, scenario_hash
 from quoss.scenario.io import dumps_scenario, load_scenario, loads_scenario
-from quoss.scenario.models import SCHEMA_VERSION, Scenario
+from quoss.scenario.models import SCHEMA_VERSION, AnyScenario, Scenario
 
-REFERENCE_DIGEST = "303a3729092aa0550384974e5591068d0ce7b3d217ba5a147b921f2228a653cd"
+REFERENCE_DIGEST = "17f440032007d3754827d9f57f0c70fe21d90aa1d1ea1b52070ce2c4610ea94a"
 """SHA-256 of ``canonical_json(reference_castelldefels())``. Its history is `DIGEST_HISTORY`.
 
 If this changes, the canonical form changed: every cached result keyed on the
@@ -140,7 +140,41 @@ DIGEST_HISTORY: tuple[DigestRepin, ...] = (
             "by 6.4 % of the reference day's key, so they must not be able to share an entry."
         ),
     ),
+    DigestRepin(
+        digest="17f440032007d3754827d9f57f0c70fe21d90aa1d1ea1b52070ce2c4610ea94a",
+        date="2026-09-17",
+        schema_version=1,
+        added_fields=("link",),
+        bumped_schema=False,
+        why=(
+            "Case 2. Scenario.link was added, the discriminator of the downlink/horizontal "
+            "union (ADR 0024). On Scenario it is a Literal with exactly one legal value, so it "
+            "defaults to it and adds no choice anybody could make differently; every "
+            "scenarios/*.yaml means exactly what it meant and SCHEMA_VERSION stays at 1. The "
+            'canonical form gained the key "link":"downlink", and that is the whole difference. '
+            "ChannelSpec.scintillation_regime went from optional to required in the same "
+            "change, which is *not* case 1 and moves no digest: its meaning, unit and "
+            "serialisation are untouched and all five files already wrote it. What did move "
+            "with it was the writing of the tag into those five files, which is why they are "
+            "in this diff (ADR 0022, annex)."
+        ),
+    ),
 )
+
+
+def as_downlink(scenario: AnyScenario) -> Scenario:
+    """Narrow a loaded scenario to the downlink member, or fail the test saying so.
+
+    :func:`~quoss.scenario.io.load_scenario` returns the member the file's
+    ``link`` field names, so its static type is the union. A test that loads a
+    downlink file and then reads ``scenario.time`` is not making an assumption
+    worth hiding behind a ``cast``: it is asserting that the file is a downlink,
+    and that assertion is worth running.
+    """
+    assert isinstance(scenario, Scenario), f"expected a downlink scenario, got {type(scenario)}"
+    return scenario
+
+
 """Every value the reference digest has had, oldest first. Append; never edit."""
 
 
@@ -250,8 +284,8 @@ class TestFloatsHashByRepr:
         """YAML ``1`` and ``1.0`` coerce to the same double before anything is dumped."""
         text = dumps_scenario(reference_castelldefels())
         assert "zenith_transmittance: 1.0" in text
-        as_int = loads_scenario(
-            text.replace("zenith_transmittance: 1.0", "zenith_transmittance: 1")
+        as_int = as_downlink(
+            loads_scenario(text.replace("zenith_transmittance: 1.0", "zenith_transmittance: 1"))
         )
         assert as_int.channel.zenith_transmittance == 1.0
         assert isinstance(as_int.channel.zenith_transmittance, float)

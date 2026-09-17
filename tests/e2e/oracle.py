@@ -40,6 +40,16 @@ from quoss.channel.detector import (
     NTANOS_SNSPD_EFFICIENCY,
     receiver_efficiency,
 )
+from quoss.channel.extinction import (
+    VisibilityScalingLaw,
+    specific_attenuation_at_altitude_db_per_km,
+)
+from quoss.channel.horizontal import (
+    PathWave,
+    horizontal_log_irradiance_variance,
+    horizontal_loss_budget,
+    plane_wave_rytov_variance,
+)
 from quoss.channel.link_budget import (
     NTANOS_FILTER_BANDWIDTH_M,
     NTANOS_POINTING_JITTER_RAD,
@@ -65,14 +75,20 @@ from quoss.orbits.geometry import (
 )
 from quoss.orbits.kepler import ClassicalElements
 from quoss.orbits.propagator import PropagationMethod, Trajectory, propagate
-from quoss.qkd.base import NTANOS_SOURCE_PULSE_RATE_HZ, LinkConditions
+from quoss.qkd.base import NTANOS_SOURCE_PULSE_RATE_HZ, KeyRate, LinkConditions
 from quoss.qkd.bb84 import Bb84DecoyProtocol
-from quoss.qkd.finite_key import SecurityParameters
+from quoss.qkd.finite_key import (
+    FiniteKeyResult,
+    SecurityParameters,
+    expected_block_counts,
+    secret_key_length,
+)
 from quoss.scenario.models import MonteCarloSpec, StationSpec
 from quoss.system.correlated_fading import FadingParameters
 from quoss.system.key_volume import (
     PassKeyVolume,
     asymptotic_pass_key_volume,
+    decoy_settings_from_protocol,
     pass_key_volume,
 )
 from quoss.system.monte_carlo import (
@@ -443,3 +459,167 @@ def mean_log_transmittance(link: HandLink, pass_index: int | None = None) -> flo
         return float(np.log(transmittance).mean())
     selected = np.asarray(link.samples.pass_index) == pass_index
     return float(np.log(transmittance[selected]).mean())
+
+
+# --------------------------------------------------------------------------- #
+# The horizontal link, wired the same way
+# --------------------------------------------------------------------------- #
+GE1_TRANSMIT_APERTURE_M = 0.025
+GE1_RECEIVE_APERTURE_M = 0.10
+GE1_PATH_LENGTH_M = 1000.0
+GE1_CN2_M23 = 1e-14
+GE1_JITTER_RAD = 5e-6
+GE1_SESSION_S = 60.0
+GE1_VISIBILITY_KM = 23.0
+GE1_ALTITUDE_M = 30.0
+GE1_SCALE_HEIGHT_M = 1200.0
+"""The GE-1 link of ``scenarios/ge1_1km.yaml``, as literals rather than read from it.
+
+Written out here for the reason the downlink constants above are: this module is
+the person calling the physics functions by hand, and a hand chain that read the
+scenario file would be comparing the engine against itself.
+"""
+
+
+@dataclass(frozen=True)
+class HandHorizontal:
+    """Every stage of a horizontal link, computed without touching ``quoss.engine``."""
+
+    extinction_db_per_km: float
+    loss: LossBudget
+    noise: NoiseBudget
+    conditions: LinkConditions
+    finite: FiniteKeyResult
+    asymptotic: KeyRate
+    pulses: float
+    variance_np2: float
+    rytov_np2: float
+    gamma: float
+
+
+def hand_horizontal(
+    *,
+    path_length_m: float = GE1_PATH_LENGTH_M,
+    cn2_m23: float = GE1_CN2_M23,
+    wave: PathWave = PathWave.SPHERICAL,
+    transmit_aperture_m: float = GE1_TRANSMIT_APERTURE_M,
+    receive_aperture_m: float = GE1_RECEIVE_APERTURE_M,
+    jitter_rad: float = GE1_JITTER_RAD,
+    session_s: float = GE1_SESSION_S,
+    regime: ScintillationRegime = ScintillationRegime.WEAK,
+    radiance_w_m2_um_sr: float = NTANOS_STUDY_NIGHT_RADIANCE_W_M2_UM_SR,
+    extinction_db_per_km: float | None = None,
+) -> HandHorizontal:
+    """Return the whole GE-1 chain, the five calls of ``engine/horizontal.py`` by hand.
+
+    ``extinction_db_per_km=None`` means "resolve it from the visibility the way
+    the scenario declares it", which is the interesting case: it exercises
+    :func:`~quoss.channel.extinction.specific_attenuation_at_altitude_db_per_km`
+    against the engine's call to the same function through
+    :meth:`~quoss.scenario.models.HorizontalPathSpec.extinction_db_per_km_at`.
+    A number is passed straight through, which is the other declaration.
+    """
+    log = DegradationLog()
+    chain = chain_efficiency()
+    if extinction_db_per_km is None:
+        extinction = float(
+            specific_attenuation_at_altitude_db_per_km(
+                GE1_VISIBILITY_KM,
+                wavelength_m=WAVELENGTH_M,
+                aerosol_scale_height_m=GE1_SCALE_HEIGHT_M,
+                altitude_m=GE1_ALTITUDE_M,
+                visibility_altitude_m=GE1_ALTITUDE_M,
+                law=VisibilityScalingLaw.KIM_2001,
+                degradations=log,
+            )
+        )
+    else:
+        extinction = extinction_db_per_km
+    loss = horizontal_loss_budget(
+        path_length_m,
+        wavelength_m=WAVELENGTH_M,
+        transmit_aperture_m=transmit_aperture_m,
+        receive_aperture_m=receive_aperture_m,
+        cn2_m23=cn2_m23,
+        extinction_db_per_km=extinction,
+        wave=wave,
+        pointing_jitter_rad=jitter_rad,
+        receiver_efficiency=chain,
+        degradations=log,
+        regime=regime,
+    )
+    protocol = reference_protocol()
+    mean_photon_number = (
+        protocol.signal_probability * protocol.signal_intensity
+        + protocol.decoy_probability * protocol.decoy_intensity
+    )
+    noise = downlink_noise_budget(
+        radiance_w_m2_um_sr,
+        wavelength_m=WAVELENGTH_M,
+        receive_aperture_m=receive_aperture_m,
+        field_of_view_full_angle_rad=NTANOS_RECEIVER_FIELD_OF_VIEW_RAD,
+        filter_bandwidth_m=NTANOS_FILTER_BANDWIDTH_M,
+        gate_duration_s=GATE_S,
+        receiver_efficiency=chain,
+        dark_count_rate_cps=NTANOS_SNSPD_DARK_COUNT_RATE_CPS,
+        degradations=log,
+        detector_count=2,
+        afterpulse_probability=0.0,
+        signal_counts_per_gate=mean_photon_number * np.asarray(loss.transmittance),
+    )
+    conditions = LinkConditions(
+        transmittance=loss.transmittance,
+        noise_counts_per_gate=noise.total_per_gate,
+        misalignment_error=MISALIGNMENT_ERROR,
+        pulse_rate_hz=NTANOS_SOURCE_PULSE_RATE_HZ,
+        gate_duration_s=GATE_S,
+    )
+    pulses = NTANOS_SOURCE_PULSE_RATE_HZ * session_s
+    settings = decoy_settings_from_protocol(protocol)
+    block = expected_block_counts(
+        conditions, settings=settings, key_basis_probability=0.5, pulses=pulses
+    )
+    finite = secret_key_length(
+        block,
+        settings=settings,
+        security=reference_security(),
+        error_correction_efficiency=protocol.error_correction_efficiency,
+        degradations=log,
+    )
+    asymptotic = protocol.key_rate(conditions, degradations=log)
+    variance = float(
+        horizontal_log_irradiance_variance(
+            path_length_m,
+            cn2_m23=cn2_m23,
+            aperture_diameter_m=receive_aperture_m,
+            wavelength_m=WAVELENGTH_M,
+            wave=wave,
+            degradations=log,
+            regime=regime,
+        )
+    )
+    rytov = float(
+        plane_wave_rytov_variance(path_length_m, cn2_m23=cn2_m23, wavelength_m=WAVELENGTH_M)
+    )
+    gamma = float(
+        beam_to_jitter_ratio(
+            path_length_m / 1000.0,
+            jitter_rad=jitter_rad,
+            wavelength_m=WAVELENGTH_M,
+            transmit_aperture_m=transmit_aperture_m,
+            receive_aperture_m=receive_aperture_m,
+            degradations=log,
+        )
+    )
+    return HandHorizontal(
+        extinction_db_per_km=extinction,
+        loss=loss,
+        noise=noise,
+        conditions=conditions,
+        finite=finite,
+        asymptotic=asymptotic,
+        pulses=float(pulses),
+        variance_np2=variance,
+        rytov_np2=rytov,
+        gamma=gamma,
+    )

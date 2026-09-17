@@ -64,7 +64,9 @@ True
 from __future__ import annotations
 
 import copy
+import dataclasses
 import datetime as dt
+import math
 import platform
 import subprocess
 from collections.abc import Iterator, Mapping, Sequence
@@ -80,11 +82,15 @@ import quoss
 from quoss.core.errors import DomainError
 from quoss.core.types import BoolArray, FloatArray, IntArray, TimeGrid, TimeSeries, frozen_copy
 from quoss.scenario.hash import scenario_hash
-from quoss.scenario.models import Scenario
+from quoss.scenario.models import HorizontalScenario, Scenario
 
 __all__ = [
     "ARRAY_MARKER",
+    "AnyResult",
     "DailyResults",
+    "HorizontalBudgetResults",
+    "HorizontalResult",
+    "HorizontalSessionResults",
     "MonteCarloResults",
     "MultiStationResults",
     "PassRecord",
@@ -268,14 +274,18 @@ class Provenance:
 
     @classmethod
     def collect(
-        cls, scenario: Scenario, *, seed: int | None, data_versions: Mapping[str, str]
+        cls,
+        scenario: Scenario | HorizontalScenario,
+        *,
+        seed: int | None,
+        data_versions: Mapping[str, str],
     ) -> Provenance:
         """Fill every field from the environment at the moment of the call.
 
         Parameters
         ----------
-        scenario : Scenario
-            The inputs of the run.
+        scenario : Scenario or HorizontalScenario
+            The inputs of the run, of either geometry.
         seed : int or None
             The recorded seed.
         data_versions : Mapping[str, str]
@@ -1186,3 +1196,301 @@ class SimulationResult:
             If the manifest references an array that ``arrays`` lacks.
         """
         return cls._from_tree(_merge(dict(manifest), arrays))
+
+
+# --------------------------------------------------------------------------- #
+# The horizontal result
+# --------------------------------------------------------------------------- #
+@dataclass(frozen=True, slots=True)
+class HorizontalBudgetResults:
+    """Every term of a horizontal loss budget, one number each.
+
+    The same decomposition :class:`~quoss.channel.link_budget.LossBudget` carries
+    and in the same units, flattened from arrays to scalars because a horizontal
+    link has one geometry and not a time series of them. A consumer reading
+    ``geometric_db`` here and ``SeriesResults.loss_total_db`` there is reading the
+    same quantity from the same assembler
+    (:func:`quoss.channel.link_budget._assembled_loss_budget`); what differs is
+    that one of them has an axis.
+
+    Parameters
+    ----------
+    geometric_db : float
+        Diffraction and the transmitter's truncation, dB.
+    atmospheric_db : float
+        ``extinction_db_per_km`` times the path length, dB.
+    pointing_db, scintillation_db : float
+        The two fade allowances at ``outage_probability``, each on its own, dB.
+    fade_db : float
+        The two combined, as ``fade_combination`` says. **Not** their sum unless
+        that is what was asked for.
+    receiver_chain_db, static_db : float
+        The receiver's efficiency and the declared static loss, dB.
+    total_db : float
+        Everything, dB.
+    transmittance : float
+        ``10^(-total_db/10)``, linear.
+    extinction_db_per_km : float
+        What the scenario declared or the model resolved, dB/km. Carried because
+        the two ways of declaring it are indistinguishable downstream, and a
+        result that did not say which number the run used would make a modelled
+        extinction untraceable.
+    log_irradiance_variance_np2 : float
+        The aperture-averaged scintillation variance, Np^2.
+    rytov_variance_np2 : float
+        The plane-wave Rytov variance of the path, Np^2. It is here and not
+        derivable from the previous field because it is what says whether the
+        weak theory applied at all: above 1 it did not.
+    beam_to_jitter_ratio : float
+        ``gamma``, the beam radius measured in pointing jitters.
+
+    Raises
+    ------
+    DomainError
+        If any field is not finite, or a decibel term is negative.
+    """
+
+    geometric_db: float
+    atmospheric_db: float
+    pointing_db: float
+    scintillation_db: float
+    fade_db: float
+    receiver_chain_db: float
+    static_db: float
+    total_db: float
+    transmittance: float
+    extinction_db_per_km: float
+    log_irradiance_variance_np2: float
+    rytov_variance_np2: float
+    beam_to_jitter_ratio: float
+
+    def __post_init__(self) -> None:
+        """Check every term is a finite number and the losses are losses."""
+        for field_ in dataclasses.fields(self):
+            value = float(getattr(self, field_.name))
+            object.__setattr__(self, field_.name, value)
+            if not math.isfinite(value) and field_.name != "beam_to_jitter_ratio":
+                raise DomainError(
+                    f"HorizontalBudgetResults.{field_.name} must be finite, got {value}."
+                )
+            if field_.name.endswith("_db") and value < 0.0:
+                raise DomainError(
+                    f"HorizontalBudgetResults.{field_.name} is a loss in dB and must be "
+                    f"non-negative, got {value}. A negative loss would be gain."
+                )
+
+    def _tree(self) -> dict[str, Any]:
+        return {f.name: getattr(self, f.name) for f in dataclasses.fields(self)}
+
+    @classmethod
+    def _from_tree(cls, node: Mapping[str, Any]) -> HorizontalBudgetResults:
+        return cls(**{f.name: float(node[f.name]) for f in dataclasses.fields(cls)})
+
+
+@dataclass(frozen=True, slots=True)
+class HorizontalSessionResults:
+    """What one measurement session certifies, and what it would have without the bound.
+
+    Parameters
+    ----------
+    duration_s : float
+        The declared session length. **This is the finite-key block**; see
+        :class:`~quoss.scenario.models.SessionSpec` and ADR 0024 for who is
+        responsible for it being a legitimate one.
+    pulses : float
+        Pulses emitted in the session, ``pulse_rate_hz * duration_s``. Not
+        rounded: the bound is sensitive to the block size, not to the
+        integrality of a pulse count.
+    finite_bits : float
+        Secret bits the session certifies under Lim et al. 2014 equation (1).
+        ``floor`` of a real number, so a whole number.
+    asymptotic_bits : float
+        What the same session would yield if the block were infinite. Reported
+        beside the finite figure and never instead of it, for the reason ADR
+        0011 gives: on the reference day two passes out of four differ by "some
+        bits" against "none at all".
+    qber : float
+        Quantum bit error rate in the key basis, linear.
+    phase_error_rate : float
+        The inferred error rate in the conjugate basis. The field that says
+        *why* a session certifies nothing when it does: at 0.5 the single-photon
+        term vanishes entirely.
+    noise_counts_per_gate : float
+        Background, dark counts and afterpulsing, per detection gate.
+    correctness, secrecy : float
+        The per-block failure probabilities the figure is quoted under. Per
+        **this** block: concatenating ``n`` sessions composes them to ``n eps``,
+        which is :func:`~quoss.system.key_volume.composed_security`'s rule and
+        is not applied here, because nothing in one session's result knows how
+        many sessions an experiment will run.
+
+    Raises
+    ------
+    DomainError
+        On a non-finite field, a negative bit count or duration, or a rate
+        outside ``[0, 1]``.
+    """
+
+    duration_s: float
+    pulses: float
+    finite_bits: float
+    asymptotic_bits: float
+    qber: float
+    phase_error_rate: float
+    noise_counts_per_gate: float
+    correctness: float
+    secrecy: float
+
+    def __post_init__(self) -> None:
+        """Check the counts are counts and the probabilities are probabilities."""
+        for field_ in dataclasses.fields(self):
+            value = float(getattr(self, field_.name))
+            object.__setattr__(self, field_.name, value)
+            if not math.isfinite(value):
+                raise DomainError(
+                    f"HorizontalSessionResults.{field_.name} must be finite, got {value}."
+                )
+            if value < 0.0:
+                raise DomainError(
+                    f"HorizontalSessionResults.{field_.name} must be non-negative, got {value}."
+                )
+        for name in ("qber", "phase_error_rate", "correctness", "secrecy"):
+            value = float(getattr(self, name))
+            if value > 1.0:
+                raise DomainError(
+                    f"HorizontalSessionResults.{name} is a probability and must be at most 1, "
+                    f"got {value}."
+                )
+
+    @property
+    def has_key(self) -> bool:
+        """True when the session certifies at least one bit."""
+        return self.finite_bits > 0.0
+
+    @property
+    def finite_bit_s(self) -> float:
+        """Certified secret bits per second of the session."""
+        return self.finite_bits / self.duration_s
+
+    @property
+    def asymptotic_bit_s(self) -> float:
+        """Asymptotic secret bits per second. Never the number to report on its own."""
+        return self.asymptotic_bits / self.duration_s
+
+    def _tree(self) -> dict[str, Any]:
+        return {f.name: getattr(self, f.name) for f in dataclasses.fields(self)}
+
+    @classmethod
+    def _from_tree(cls, node: Mapping[str, Any]) -> HorizontalSessionResults:
+        return cls(**{f.name: float(node[f.name]) for f in dataclasses.fields(cls)})
+
+
+@dataclass(frozen=True, slots=True)
+class HorizontalResult:
+    """Everything one horizontal run produced, with its provenance.
+
+    Why this is a container of its own and not ``SimulationResult`` with holes
+    ---------------------------------------------------------------------------
+    :class:`SimulationResult` is five containers about a satellite:
+    ``series`` (one per station, over a time grid), ``passes`` (a table of
+    passes), ``daily`` (per-day totals), and the optional ``monte_carlo``,
+    ``multi_station`` and ``relay``. A horizontal run has **none** of those
+    things -- no station, no pass, no day -- and the two ways of expressing
+    that inside the existing container are both worse than a new one:
+
+    * **``None`` where arrays are.** ``passes.finite_bits`` is typed
+      ``FloatArray``, and every consumer -- ``io/export.py``, ``viz/plots.py``,
+      ``engine/sweep.py``'s metric resolver -- indexes it without asking. Making
+      it optional pushes an ``if`` into every one of them, and the ``if`` that
+      somebody forgets is an ``AttributeError`` in a plotting routine, which is
+      the good case; the bad case is a silent zero.
+    * **Zero-length arrays.** They type-check and they are worse: a sum over an
+      empty axis is ``0.0``, so ``daily.finite_bits.sum()`` would report **a
+      horizontal link that certified 448 kbit as zero bits per day**, with no
+      error anywhere. That is exactly the "plausible and wrong number" this
+      project exists to refuse, and no consumer could tell it from a link that
+      genuinely closed nothing.
+
+    What the two results *do* share is the part that is about the run rather
+    than the geometry: ``scenario``, ``provenance``, ``warnings`` and
+    ``timings``, with the same names and the same types, so anything that reads
+    only those -- the cache, the CLI's warning printer, a provenance check --
+    works on both without knowing which it has. ADR 0024 records the choice.
+
+    Parameters
+    ----------
+    scenario : HorizontalScenario
+        The inputs, verbatim.
+    provenance : Provenance
+        Hash, versions, seed, timestamp -- the same record a downlink carries,
+        because the hash is over the canonical form of either member of the
+        union.
+    budget : HorizontalBudgetResults
+        The loss budget, term by term.
+    session : HorizontalSessionResults
+        What the measurement session certifies.
+    warnings : Sequence[Mapping[str, Any]]
+        :meth:`~quoss.core.errors.DegradationLog.to_dicts` of the run's log.
+    timings : StageTimings
+        Seconds per stage.
+    """
+
+    scenario: HorizontalScenario
+    provenance: Provenance
+    budget: HorizontalBudgetResults
+    session: HorizontalSessionResults
+    warnings: Sequence[Mapping[str, Any]]
+    timings: StageTimings
+
+    def __post_init__(self) -> None:
+        """Freeze the warning list, deep-copying each entry as ``SimulationResult`` does."""
+        object.__setattr__(self, "warnings", tuple(copy.deepcopy(dict(w)) for w in self.warnings))
+
+    # -- serialisation ------------------------------------------------------ #
+    def _tree(self) -> dict[str, Any]:
+        return {
+            "scenario": self.scenario.model_dump(mode="json"),
+            "provenance": self.provenance.to_dict(),
+            "budget": self.budget._tree(),
+            "session": self.session._tree(),
+            "warnings": [copy.deepcopy(dict(w)) for w in self.warnings],
+            "timings": self.timings.to_dict(),
+        }
+
+    @classmethod
+    def _from_tree(cls, node: Mapping[str, Any]) -> HorizontalResult:
+        return cls(
+            scenario=HorizontalScenario.model_validate(node["scenario"]),
+            provenance=Provenance.from_dict(node["provenance"]),
+            budget=HorizontalBudgetResults._from_tree(node["budget"]),
+            session=HorizontalSessionResults._from_tree(node["session"]),
+            warnings=tuple(node["warnings"]),
+            timings=StageTimings.from_dict(node["timings"]),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return one JSON-serialisable dict.
+
+        No array splitting counterpart (``to_manifest_and_arrays``), and that is
+        not an omission: this result holds no arrays. The whole of it is a few
+        dozen floats, so the JSON *is* the archive format.
+        """
+        out: dict[str, Any] = _listify(self._tree())
+        return out
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> HorizontalResult:
+        """Rebuild from :meth:`to_dict`."""
+        return cls._from_tree(data)
+
+
+AnyResult = SimulationResult | HorizontalResult
+"""What :func:`quoss.engine.pipeline.run` returns, for either member of ``link``.
+
+A plain union and not a base class. The two results share four fields
+(``scenario``, ``provenance``, ``warnings``, ``timings``) and nothing else, and
+a base class carrying four fields would invite a consumer to write against it
+and then reach for ``passes`` behind an ``isinstance``. The union makes the
+narrowing explicit at the one place it matters -- ``isinstance(result,
+SimulationResult)`` -- and a type checker enforces it.
+"""

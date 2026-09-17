@@ -1,0 +1,131 @@
+# GE-0b — two metres of optical bench with a turbulence emulator.
+# Must equal `quoss.scenario.defaults.ge0b_bench()` field for field
+# (tests/scenario/test_scenario_files.py::TestFilesEqualTheirBuilders).
+#
+# ==========================================================================================
+# THE QUESTION TO PUT TO A MANUFACTURER IS NOT THE ONE THIS FILE LOOKS LIKE IT IS ASKING.
+# (ADR 0009 gap 20; notes/LAST_CHANGES.md §37)
+#
+# `cn2_m23` below is 8.87e-10, which is what `channel.horizontal.equivalent_bench_cn2_m23`
+# returns for two metres standing in for GE-1's kilometre at 1e-14: the Rytov variance goes
+# as L^(11/6), and (1000/2)^(11/6) = 8.87e4. It is five orders of magnitude above the
+# strongest turbulence anybody measures outdoors.
+#
+# That number is a NECESSARY and NOT a SUFFICIENT condition, and the reason is physical
+# rather than a matter of tolerance. An emulator does not produce a C_n^2 over a length. It
+# produces a PHASE SCREEN with a given Fried parameter r_0. Scintillation is phase distortion
+# converted into amplitude BY PROPAGATION, so a screen needs distance behind it: one screen
+# at the start of a 2 m bench has two metres in which to develop what a kilometre of
+# distributed air develops continuously. Laboratory practice for deep turbulence is therefore
+# several screens with relay optics between them, so that r_0, the isoplanatic angle and the
+# Rytov number can be set independently.
+#
+# AND THERE IS A SECOND HALF, WHICH IS INSIDE WHAT QuOSS DOES MODEL AND IS LARGE.
+# The bench matches GE-1's RYTOV variance exactly (0.198845 both). The Rytov variance is
+# what a POINT detector would see; what reaches the key is the APERTURE-AVERAGED one, and
+# aperture averaging depends on how far away the turbulence is. A 10 cm lens two metres
+# from the source averages essentially all of it out:
+#
+#     link          Rytov variance    averaging A     fade at 1 % outage
+#     GE-1, 1 km    0.198845          0.2386          1.446 dB
+#     GE-0b, 2 m    0.198845          4.45e-5         0.030 dB
+#
+# That is 2183 times less variance at the receiver and 1.42 dB less fade to budget. So this
+# bench does NOT reproduce the scintillation GE-1's receiver will have to survive, for a
+# reason that has nothing to do with phase screens. It answers a different question, and it
+# is still worth building — but not this question.
+#
+# So do NOT ask a vendor "do you reach C_n^2 = 8.87e-10?". Ask:
+#     "What D/r_0 do you reach, what Rytov number, and with how many screens?"
+# QuOSS models Kolmogorov turbulence given a C_n^2; it does not model phase screens, and
+# saying so in this file is cheaper than discovering it after a purchase order.
+# ==========================================================================================
+
+link: horizontal   # see scenarios/ge1_1km.yaml for what this tag is and what it forbids.
+name: ge0b_bench
+description: 'GE-0b: 2 m bench with a turbulence emulator, C_n^2 set to the equivalent
+  of GE-1''s kilometre at 1e-14 (8.87e-10 — a necessary and not a sufficient condition,
+  ADR 0009 gap 20), dark enclosure, 60 s measurement session.'
+schema_version: 1
+
+path:
+  path_length_m: 2.0             # the bench.
+  cn2_m23: 8.873841649388922e-10 # equivalent_bench_cn2_m23(bench_length_m=2.0,
+                                 # path_length_m=1000.0, cn2_m23=1e-14). Written at full
+                                 # precision so the file and the builder are the same double,
+                                 # not the same three figures. SEE THE HEADER.
+  wave: plane                    # REQUIRED, no default — and here the choice is easy, which
+                                 # it is not on GE-1: two metres is 0.0063 Rayleigh ranges of
+                                 # the 2.5 cm transmitter, so the beam is collimated and the
+                                 # plane wave is the right idealisation. The budget would log
+                                 # `horizontal.spherical-wave-inside-the-rayleigh-range` if
+                                 # this said `spherical`.
+  altitude_m: 30.0               # of no consequence here: extinction is declared as a number.
+  receive_aperture_m: 0.1        # the same 10 cm lens GE-1 uses, which is the point of a
+                                 # stand-in.
+  extinction_db_per_km: 0.0      # DECLARED, not defaulted (ADR 0009 gap 14). Over two metres
+                                 # of laboratory air the true figure is a few ten-thousandths
+                                 # of a dB even in a dusty room, so zero is exact at the
+                                 # precision anything downstream can use. It is the model of
+                                 # the enclosure and not an omission.
+  extinction: null               # the other of the two ways; exactly one is allowed.
+  scintillation_regime: weak     # REQUIRED, no default. Legitimate because the bench is TUNED
+                                 # to a Rytov variance of 0.199 — the same 0.199 as GE-1's
+                                 # kilometre, which is what "equivalent" means here. An
+                                 # emulator turned up past the weak limit needs this line
+                                 # changed, and the budget will say so first.
+  static_loss_db: 0.0
+  outage_probability: 0.01
+  fade_combination: exact
+
+transmitter:
+  wavelength_nm: 1550.0
+  aperture_m: 0.025
+  truncation_ratio: 1.0
+  pointing_jitter_urad: 5.0      # kept at GE-1's value so that the bench and the field link
+                                 # differ in ONE thing, the path. A bolted-down bench would
+                                 # do better, and a smaller number here is a claim about the
+                                 # mount that nobody has measured yet.
+  pulse_rate_hz: 100000000.0
+
+receiver:
+  detector_efficiency: 0.85
+  optical_loss_db: 5.65
+  dark_count_rate_cps: 300.0
+  detector_count: 2
+  afterpulse_probability: 0.0
+  dead_time_ns: 30.0
+  gate_ns: 1.0
+  timing_jitter_fwhm_ps: 50.0
+  field_of_view_urad: 100.0
+  filter_bandwidth_nm: 0.2
+  doppler_capture_range_hz: null
+
+background:
+  sky_radiance_w_m2_um_sr: 0.0   # a closed enclosure. Zero is a STATEMENT about the box, not
+                                 # a missing value: the schema refuses a BackgroundSpec that
+                                 # declares neither a radiance nor a sky condition, so this
+                                 # line had to be written by somebody who meant it.
+  condition: null
+
+protocol:
+  name: bb84-decoy
+  signal_intensity: 0.56
+  decoy_intensity: 0.11
+  signal_probability: 0.7619047619047619
+  decoy_probability: 0.047619047619047616
+  vacuum_probability: 0.19047619047619047
+  error_correction_efficiency: 1.22
+  misalignment_error: 0.01
+  key_basis_probability: 0.5
+
+security:
+  correctness: 1.0e-10
+  secrecy: 1.0e-10
+  compose_daily: false
+
+session:
+  duration_s: 60.0               # the finite-key block; see scenarios/ge1_1km.yaml and
+                                 # ADR 0024 for what declaring it commits the operator to.
+                                 # A bench is the one place where that promise is easy to
+                                 # keep, which is part of why GE-0b comes first.

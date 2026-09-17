@@ -183,6 +183,11 @@ quince sitios.
 - Dar longitud, `C_n^2` y diámetros y obtener presupuesto, QBER y clave de un
   banco y de un enlace horizontal. La receta, en cuatro llamadas, es
   `tests/channel/test_horizontal.py::ge1_key`.
+- **Desde el 2026-09-17 esto ya no es solo una biblioteca**: el
+  [ADR 0024](0024-the-horizontal-scenario.md) convierte el camino horizontal en
+  un escenario de primera clase (`link: horizontal`), con hash, procedencia,
+  exportación y barridos, y las tablas de este ADR las reproduce `run()` a través
+  de `engine/sweep.py`.
 - Dos defectos del camino compartido que el horizontal destapó (ver
   `notes/LAST_CHANGES.md` §35): `combined_fade_db` devolvía números falsos con
   `γ` grande, y `equivalent_beam_radius_m` desbordaba con lentes mucho más anchas
@@ -195,7 +200,11 @@ quince sitios.
   desvanecimiento **con el modelo débil** — 8.41 contra 9.94 dB con el saturado,
   que es la cifra que hay que citar. Ver abajo.
 - **Retrorreflector** (hueco 19). Ida y vuelta por el mismo aire, correlacionadas;
-  no es un camino de longitud `2L`. **Investigado el 2026-09-15 y sigue abierto**,
+  no es un camino de longitud `2L`. **Decidido el 2026-09-17** en el
+  [ADR 0025](0025-two-terminals-one-way.md): GE-1 se monta con **dos terminales y
+  un solo sentido**, que es la única de las dos arquitecturas que este proyecto
+  puede dimensionar con las fuentes que tiene. El hueco sigue abierto.
+  **Investigado el 2026-09-15**,
   con el signo ya decidido: en geometría monoestática el doble paso **empeora**
   la escintilación, medido a 1.1 km por Mahon et al. (*Appl. Opt.* 51:6147), y la
   teoría es Andrews otra vez. **Consecuencia:** un GE-1 de un solo sentido con

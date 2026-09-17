@@ -88,17 +88,21 @@ from quoss.engine.parallel import map_workers, validated_workers
 from quoss.engine.pipeline import run
 from quoss.scenario.hash import scenario_hash
 from quoss.scenario.io import loads_scenario
-from quoss.scenario.models import Scenario
+from quoss.scenario.models import AnyScenario, HorizontalScenario
 from quoss.scenario.result import (
+    AnyResult,
     DailyResults,
+    HorizontalBudgetResults,
+    HorizontalSessionResults,
     MonteCarloResults,
     MultiStationResults,
     PassResults,
     RelayResults,
-    SimulationResult,
 )
 
 __all__ = [
+    "DOWNLINK_METRIC_ROOTS",
+    "HORIZONTAL_METRIC_ROOTS",
     "METRIC_ROOTS",
     "SweepResult",
     "SweepSpec",
@@ -109,7 +113,7 @@ __all__ = [
 
 _WHERE = "quoss.engine.sweep"
 
-METRIC_ROOTS: Mapping[str, type] = MappingProxyType(
+DOWNLINK_METRIC_ROOTS: Mapping[str, type] = MappingProxyType(
     {
         "passes": PassResults,
         "daily": DailyResults,
@@ -118,7 +122,26 @@ METRIC_ROOTS: Mapping[str, type] = MappingProxyType(
         "relay": RelayResults,
     }
 )
-"""Result sections a metric may start from, and the class each one is."""
+"""Sections of a :class:`~quoss.scenario.result.SimulationResult` a metric may start from."""
+
+HORIZONTAL_METRIC_ROOTS: Mapping[str, type] = MappingProxyType(
+    {
+        "budget": HorizontalBudgetResults,
+        "session": HorizontalSessionResults,
+    }
+)
+"""Sections of a :class:`~quoss.scenario.result.HorizontalResult`.
+
+Two, against the downlink's five, and the names do not overlap — which is what
+lets :func:`run_sweep` refuse ``daily.finite_bits`` on a horizontal scenario
+**before the first point runs**, naming the sections that do exist, instead of
+running every point and failing on the first metric lookup.
+"""
+
+METRIC_ROOTS: Mapping[str, type] = MappingProxyType(
+    {**DOWNLINK_METRIC_ROOTS, **HORIZONTAL_METRIC_ROOTS}
+)
+"""Every result section a metric may start from, of either geometry."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -227,21 +250,24 @@ class SweepResult:
 # --------------------------------------------------------------------------- #
 # Points
 # --------------------------------------------------------------------------- #
-def apply_point(scenario: Scenario, point: Mapping[str, Any]) -> Scenario:
+def apply_point(scenario: AnyScenario, point: Mapping[str, Any]) -> AnyScenario:
     """Return the scenario with every ``path: value`` of a point set and re-validated.
 
     Parameters
     ----------
-    scenario : Scenario
-        The base scenario.
+    scenario : Scenario or HorizontalScenario
+        The base scenario, of either geometry.
     point : Mapping[str, Any]
         Dotted path to value. A path segment that is an integer indexes a
         list (``stations.1.altitude_m``).
 
     Returns
     -------
-    Scenario
-        A new scenario that passed every validator.
+    Scenario or HorizontalScenario
+        A new scenario of the same kind, that passed every validator. The kind
+        cannot change: the ``link`` tag is part of the dump a point edits, and
+        a point that tried to rewrite it would have to supply a whole other
+        scenario's sections and would be refused by name.
 
     Raises
     ------
@@ -296,34 +322,48 @@ def _set_path(data: dict[str, Any], path: str, value: Any, point: Mapping[str, A
 # --------------------------------------------------------------------------- #
 # Metrics
 # --------------------------------------------------------------------------- #
-def _check_metric(metric: str) -> None:
+def _check_metric(metric: str, roots: Mapping[str, type] = METRIC_ROOTS) -> None:
+    """Refuse a metric path that no result section could answer.
+
+    ``roots`` narrows the check to one geometry's sections, which is how
+    :func:`run_sweep` turns "this metric belongs to the other kind of scenario"
+    into a message naming the sections that do exist.
+    """
     if not isinstance(metric, str) or not metric:
         raise ScenarioError(f"a metric must be a non-empty dotted path, got {metric!r}.")
     parts = metric.split(".")
     root = parts[0]
-    if root not in METRIC_ROOTS:
+    if root not in roots:
+        elsewhere = (
+            f" It is a section of the other link geometry's result; this sweep's scenario is "
+            f"the {'horizontal' if roots is HORIZONTAL_METRIC_ROOTS else 'downlink'} one."
+            if root in METRIC_ROOTS
+            else ""
+        )
         raise ScenarioError(
             f"metric {metric!r} starts at {root!r}, which is not a result section; valid roots: "
-            f"{sorted(METRIC_ROOTS)}."
+            f"{sorted(roots)}.{elsewhere}"
         )
-    if len(parts) < 2 or not hasattr(METRIC_ROOTS[root], parts[1]):
+    if len(parts) < 2 or not hasattr(roots[root], parts[1]):
         attribute = parts[1] if len(parts) > 1 else ""
-        names = sorted(f.name for f in dataclasses.fields(METRIC_ROOTS[root]))
+        names = sorted(f.name for f in dataclasses.fields(roots[root]))
         raise ScenarioError(
             f"metric {metric!r}: {root} has no attribute {attribute!r}; fields: {names}."
         )
 
 
-def metric_value(result: SimulationResult, metric: str) -> float:
+def metric_value(result: AnyResult, metric: str) -> float:
     """Resolve a dotted metric path in a result and sum it to one number.
 
     Parameters
     ----------
-    result : SimulationResult
-        A finished run.
+    result : SimulationResult or HorizontalResult
+        A finished run of either geometry.
     metric : str
         ``<section>.<attribute>[.<index>...]``, the section one of
-        :data:`METRIC_ROOTS`.
+        :data:`METRIC_ROOTS`. A horizontal result's sections hold scalars rather
+        than arrays, and summing a scalar is the identity, so the same resolver
+        serves both.
 
     Returns
     -------
@@ -372,7 +412,7 @@ def metric_value(result: SimulationResult, metric: str) -> float:
 # --------------------------------------------------------------------------- #
 @dataclass(frozen=True, slots=True)
 class _PointTask:
-    scenario: Scenario
+    scenario: AnyScenario
     point: Mapping[str, Any]
     metrics: tuple[str, ...]
     random_source: RandomSource | None
@@ -397,7 +437,7 @@ def _run_point(task: _PointTask, degradations: DegradationLog) -> tuple[str, tup
 
 
 def run_sweep(
-    scenario: Scenario,
+    scenario: AnyScenario,
     spec: SweepSpec,
     *,
     metrics: Sequence[str] = ("daily.finite_bits",),
@@ -414,8 +454,10 @@ def run_sweep(
 
     Parameters
     ----------
-    scenario : Scenario
-        The base scenario.
+    scenario : Scenario or HorizontalScenario
+        The base scenario. Its geometry decides which metric roots are legal,
+        and a metric from the other geometry is refused before the first point
+        runs, with the sections that do exist named.
     spec : SweepSpec
         The points.
     metrics : Sequence[str], optional
@@ -456,8 +498,13 @@ def run_sweep(
     names = tuple(metrics)
     if not names:
         raise ScenarioError("a sweep needs at least one metric.")
+    roots = (
+        HORIZONTAL_METRIC_ROOTS
+        if isinstance(scenario, HorizontalScenario)
+        else (DOWNLINK_METRIC_ROOTS)
+    )
     for metric in names:
-        _check_metric(metric)
+        _check_metric(metric, roots)
         if "quantile_bits" in metric.split("."):
             log.warn(
                 "engine.sweep-sums-quantiles",

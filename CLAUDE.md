@@ -147,7 +147,7 @@ return _wrap_two_pi(self._argp_rad + self._true_anomaly_rad)
 |---|---|
 | [`notes/ROADMAP.md`](notes/ROADMAP.md) | En qué orden se construye y por qué ese orden |
 | [`notes/LAST_CHANGES.md`](notes/LAST_CHANGES.md) | Estado actual, decisiones tomadas, y lo pendiente con fecha |
-| [`notes/INCONSISTENCIAS.md`](notes/INCONSISTENCIAS.md) | Lo que el código o los documentos afirman y hoy no se cumple. **Hoy está vacío**, y su valor está en cómo se llenó: ninguna de las siete entradas que tuvo la detectaba la suite, y una de ellas era un número citado en quince sitios que resultó falso |
+| [`notes/INCONSISTENCIAS.md`](notes/INCONSISTENCIAS.md) | Lo que el código o los documentos afirman y hoy no se cumple. **Hoy tiene una entrada abierta**, y su valor está en cómo se llenó: ninguna de las catorce que ha tenido la detectaba la suite, y una de ellas era un número citado en quince sitios que resultó falso |
 | [`notes/GUIA_REIMPLEMENTACION.md`](notes/GUIA_REIMPLEMENTACION.md) | Por qué la arquitectura es esta y no la de SimulCTTC |
 | [`tests/golden/README.md`](tests/golden/README.md) | Los cuatro niveles de verificación V1–V4 |
 | `docs/adr/*.md` | Las decisiones no obvias, una por fichero |

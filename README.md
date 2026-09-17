@@ -114,11 +114,34 @@ result.daily.asymptotic_bits.tolist()       # [3779461.558061474]
 result.provenance.scenario_hash             # qué entradas produjeron esto
 ```
 
+Y un enlace de tierra, que desde el [ADR 0024](docs/adr/0024-the-horizontal-scenario.md)
+es el otro miembro de una unión discriminada por el campo `link` y no un caso
+especial del anterior:
+
+```python
+result = run(load_scenario("scenarios/ge1_1km.yaml"))
+
+type(result).__name__                       # 'HorizontalResult' — sin pases ni días
+result.budget.total_db                      # 11.637
+result.session.finite_bits                  # 15236099.0 en 60 s de sesión
+result.session.finite_bit_s                 # 253934.98
+```
+
+Un escenario horizontal **no puede** llevar elevación, máscara, viento ni altura
+de estación: el esquema no tiene esos campos y `extra="forbid"` los rechaza por
+su nombre. Y su bloque finite-key es la sesión que declara el operador, no un
+pase que fije la geometría — lo que cambia de quién es la responsabilidad de que
+la cota sea válida, y por eso cada ejecución lo dice en `warnings[]`.
+
 Los mismos números salen de `quoss.scenario.defaults.reference_castelldefels()`,
 sin tocar el disco. `quoss.engine.sweep` corre barridos de parámetros como una
-ejecución de primera clase, y `quoss.io.export.export_result` escribe el
-resultado a un directorio que se describe a sí mismo (manifiesto con SHA-256 por
-fichero, CSV, `arrays.npz` y, con el extra, Parquet).
+ejecución de primera clase —de los dos tipos de escenario—, y
+`quoss.io.export.export_result` escribe un **resultado de bajada** a un directorio
+que se describe a sí mismo (manifiesto con SHA-256 por fichero, CSV, `arrays.npz`
+y, con el extra, Parquet). Un resultado horizontal todavía **no**: no tiene arrays
+y decidir qué ficheros escribe es trabajo de la etapa 7
+([`notes/INCONSISTENCIAS.md`](notes/INCONSISTENCIAS.md) #15); hasta entonces se
+serializa con `to_dict()`, que es completo.
 
 **La CLI (`quoss run scenario.yaml`, `quoss sweep`, `quoss validate`) todavía no
 existe**: `src/quoss/cli/` está vacío y el `project.scripts` del `pyproject.toml`
@@ -132,11 +155,12 @@ Lo que hay, marcado por lo que hay de verdad:
 src/quoss/     core ✅  orbits ✅  channel ✅  qkd ✅  system ✅
                scenario ✅  engine ✅  io ✅  viz 🚧  validation 🚧
                cli ⬜  api ⬜  kernels ⬜
-scenarios/     ✅ cinco escenarios versionados y reproducibles (.yaml)
+scenarios/     ✅ siete escenarios versionados y reproducibles (.yaml): cinco de
+                  bajada (link: downlink) y dos de tierra (link: horizontal)
 data/          ✅ catálogo de estaciones + snapshots offline con manifiesto
 tests/         ✅ unit · orbits · channel · qkd · system · scenario · engine
                   · io · viz · e2e · golden      ⬜ physics · api · validation
-docs/          ✅ 16 ADRs                        ⬜ manual de física autogenerado
+docs/          ✅ 23 ADRs                        ⬜ manual de física autogenerado
 benchmarks/    ⬜ puerta de regresión de rendimiento
 web/           ⬜ frontend (TS + Vite + Svelte), deps vendorizadas
 deploy/        ⬜ Dockerfile y compose — la imagen funciona offline

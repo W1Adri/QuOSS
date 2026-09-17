@@ -11,7 +11,11 @@
 
 ---
 
-## Estado: **ninguna abierta**
+## Estado: **una abierta**
+
+| # | Qué es | Medida, y por qué sigue abierta |
+|---|---|---|
+| 15 | **`io/export.py` no sabe escribir un `HorizontalResult`, y el README dice que escribe «el resultado».** Desde el [ADR 0024](../docs/adr/0024-the-horizontal-scenario.md) hay dos resultados, y `export_result` está tipado sobre `ExportableResult`, un protocolo que pide `to_manifest_and_arrays`. Un resultado horizontal no lo tiene | **Medido:** `export_result(run(load_scenario("scenarios/ge1_1km.yaml")), …)` levanta `AttributeError: 'HorizontalResult' object has no attribute 'to_manifest_and_arrays'`. No es un fallo silencioso —revienta en la primera línea y con el nombre del método— pero es un `AttributeError` donde debería haber un `ConfigurationError` o, mejor, un exportador. **Sigue abierta porque cerrarla es la etapa 7**, donde `quoss run scenarios/ge1_1km.yaml --out out/` la necesita: exportar un resultado sin arrays no es «lo mismo con menos ficheros» (no hay `arrays.npz`, no hay `passes.csv`, no hay `daily.csv`), y decidir qué escribe es una decisión de esa etapa, no de esta. Mientras tanto un resultado horizontal se serializa con `to_dict()`, que es completo: no tiene arrays, así que el JSON **es** su formato de archivo |
 
 > Cinco entradas nuevas (7-11) se abrieron y cerraron el **2026-09-14**, al escribir
 > el puente de extremo a extremo que el motor decía tener. Se listan abajo en vez de

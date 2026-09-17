@@ -157,6 +157,8 @@ TestTheScenarioChoosesTheRegime
     Stage 1.2 wired: ``run()`` in the saturated regime, against the hand chain.
 TestTheFourHundredAndFiftySevenBitsChangeSignUnderSaturation
     The same 30 m, worth -206 bits instead of +457, and the two factors why.
+TestWhatTheApertureAveragingConventionCosts
+    ADR 0009 gap 21 in bits per day, and the sign of the 30 m term inside it.
 TestTheEnsembleIsTheSameDraw
     The Monte Carlo stage: same seed, same stream, same quantiles.
 TestTheAggregationAndTheRelayAddNothing
@@ -176,10 +178,21 @@ import numpy as np
 import pytest
 
 from quoss.channel.atmosphere import integrated_cn2_m13
+from quoss.channel.beam import geometric_transmittance
 from quoss.channel.extinction import (
     VisibilityScalingLaw,
     zenith_transmittance_from_visibility,
 )
+from quoss.channel.link_budget import (
+    GAUSSIAN_TRUNCATION_RATIO_OF_THE_BEAM_MODULE,
+    NTANOS_OUTAGE_PROBABILITY,
+    NTANOS_POINTING_JITTER_RAD,
+    NTANOS_TRANSMIT_APERTURE_M,
+    FadeCombination,
+    _assembled_loss_budget,
+    atmospheric_transmittance,
+)
+from quoss.channel.pointing import beam_to_jitter_ratio
 from quoss.channel.turbulence import (
     ScintillationRegime,
     aperture_averaging_factor,
@@ -187,9 +200,11 @@ from quoss.channel.turbulence import (
     log_irradiance_variance,
 )
 from quoss.core.errors import DegradationLog
+from quoss.core.types import FloatArray
+from quoss.core.units import transmittance_to_loss_db
 from quoss.engine.cache import ResultCache
 from quoss.engine.pipeline import Simulation, StationRun, simulate
-from quoss.engine.pipeline import run as run_scenario
+from quoss.engine.pipeline import run as _run
 from quoss.engine.sweep import SweepResult, SweepSpec, run_sweep
 from quoss.qkd.base import LinkConditions, binary_entropy
 from quoss.scenario.defaults import reference_castelldefels
@@ -202,6 +217,7 @@ from quoss.scenario.models import (
     RelaySpec,
     Scenario,
 )
+from quoss.scenario.result import SimulationResult
 from quoss.system.key_volume import pass_key_volume
 from quoss.system.multi_ogs import AggregationPolicy, aggregate_stations
 from quoss.system.relay import trusted_node_relay
@@ -212,6 +228,7 @@ from .oracle import (
     STATIONS,
     WAVELENGTH_M,
     HandLink,
+    chain_efficiency,
     hand_link,
     hand_monte_carlo,
     mean_log_transmittance,
@@ -343,6 +360,22 @@ CHAIN_MODULES = (
     "quoss.system.passes",
     "quoss.system.key_volume",
 )
+
+
+def run_scenario(scenario: Scenario, **kwargs: Any) -> SimulationResult:
+    """:func:`quoss.engine.pipeline.run` narrowed to the downlink result.
+
+    ``run`` takes either member of the ``link`` union and returns the matching
+    result, so its static type is ``SimulationResult | HorizontalResult``. Every
+    call in this file passes a downlink scenario, and the narrow is written as an
+    assertion rather than a ``cast`` so that a scenario of the wrong kind fails
+    here, by name, instead of on the first attribute the test reaches for.
+    """
+    result = _run(scenario, **kwargs)
+    assert isinstance(result, SimulationResult), f"expected a downlink result, got {type(result)}"
+    return result
+
+
 """Every module the reference chain runs through, whole: an over-count, never an under-count."""
 
 ULP_PER_ELEMENTARY_CALL = 1.0
@@ -1538,16 +1571,23 @@ class TestTheScenarioChoosesTheRegime:
             }
         )
 
-    def test_the_default_is_weak_and_saying_so_changes_nothing(self) -> None:
-        """A scenario that declares ``weak`` is the scenario that says nothing.
+    def test_declaring_weak_is_the_reference_scenario_itself(self) -> None:
+        """The scenario that declares ``weak`` is the reference scenario, hash included.
 
         Not only the same numbers: the same *hash*, which is the stronger claim
         and the one that keeps every result written before this field existed
         reachable in the cache it was written to.
+
+        The field has **no schema default** since PR C — see
+        ``tests/scenario/test_models.py::
+        TestTheStationSpecConversions::test_the_schema_has_no_regime_default_and_the_physics_signatures_keep_theirs``
+        and the annex of ADR 0022 — so what this asserts is that
+        :func:`~quoss.scenario.defaults.reference_castelldefels` writes ``weak``
+        itself rather than receiving it, and that writing it a second time by
+        hand lands on the same bytes.
         """
-        assert ChannelSpec.model_fields["scintillation_regime"].default is (
-            ScintillationRegime.WEAK
-        )
+        assert ChannelSpec.model_fields["scintillation_regime"].is_required()
+        assert reference_castelldefels().channel.scintillation_regime is ScintillationRegime.WEAK
         declared = self._scenario(ScintillationRegime.WEAK)
         assert scenario_hash(declared) == scenario_hash(reference_castelldefels())
         result = run_scenario(declared)
@@ -2019,6 +2059,7 @@ class TestWhatTheExtinctionModelIsWorth:
                     static_loss_db=scenario.channel.static_loss_db,
                     outage_probability=scenario.channel.outage_probability,
                     fade_combination=scenario.channel.fade_combination,
+                    scintillation_regime=scenario.channel.scintillation_regime,
                 )
             }
         )
@@ -2057,6 +2098,7 @@ class TestWhatTheExtinctionModelIsWorth:
                     static_loss_db=scenario.channel.static_loss_db,
                     outage_probability=scenario.channel.outage_probability,
                     fade_combination=scenario.channel.fade_combination,
+                    scintillation_regime=scenario.channel.scintillation_regime,
                 )
             }
         )
@@ -2254,6 +2296,306 @@ class TestTheMaskSweepInBothRegimes:
         assert gains == sorted(gains, reverse=True)
         assert gains[0] == pytest.approx(0.1184, abs=5e-4)
         assert gains[-1] == pytest.approx(0.0099, abs=5e-4)
+
+
+class TestWhatTheApertureAveragingConventionCosts:
+    """Gap 21 of ADR 0009, propagated all the way to bits per day.
+
+    What the two conventions are, from scratch
+    ------------------------------------------
+    **Aperture averaging** is the fact that a telescope wider than the speckles
+    of the twinkling pattern adds several of them together, so what it measures
+    flickers less than a pinhole would. The suppression is a factor ``A`` in
+    ``(0, 1]``, and both sources this project cites give one. They do **not**
+    give it in the same space, and that is the gap:
+
+    - **ITU-R P.1622 equation (8)** multiplies the **log-variance**:
+      ``sigma^2 = A * sigma^2_point``. Its ``A`` is equation (7), itself defined
+      as a ratio of log-variances, so the convention is self-consistent.
+    - **Ntanos et al. 2021 equation (14)** defines ``A`` as a ratio of
+      **scintillation indices**. The scintillation index is the variance of the
+      irradiance itself over its mean squared, ``sigma^2_I = exp(sigma^2_lnI) -
+      1``, so the same ``A`` used that way gives
+      ``sigma^2 = ln(1 + A * (exp(sigma^2_point) - 1))``.
+
+    For ``sigma^2_point << 1`` the two agree to first order, because
+    ``exp(x) - 1 ~ x``. The reference day is not there: at 10 degrees of
+    elevation the point variance is **1.478 Np^2** under the weak model, and
+    ``exp(1.478) - 1 = 3.38`` is 2.3 times the variance itself.
+
+    Why this is a gap and not a preference
+    --------------------------------------
+    Neither source says what to do in the other's space, and inventing a third
+    convention to reconcile them would be exactly the "plausible and wrong
+    number" this project exists to refuse. QuOSS keeps P.1622's, because the
+    ``A`` it evaluates **is** P.1622 equation (7). What this class does is
+    measure what that choice is worth, so the gap is declared with a price
+    instead of a shrug.
+
+    What it is worth, measured
+    --------------------------
+    One term changed in the hand chain of ``oracle.py``, everything else
+    identical (Castelldefels, 10 degree mask, 30 m, one day):
+
+    ======================  ===============  ===============  ========
+    regime                  P.1622 (used)    Ntanos           change
+    ======================  ===============  ===============  ========
+    ``weak``                433 442          419 162          -3.29 %
+    ``moderate-to-strong``  449 308          441 870          -1.66 %
+    ======================  ===============  ===============  ========
+
+    And the part that makes the gap load-bearing rather than merely large: the
+    **sign** of the station-altitude term of ADR 0016 is inside it.
+
+    ======================  ===============  ===============
+    regime                  term, P.1622     term, Ntanos
+    ======================  ===============  ===============
+    ``weak``                +457 bits        +1 237 bits
+    ``moderate-to-strong``  **-206 bits**    **+4 bits**
+    ======================  ===============  ===============
+
+    The -206 bits that `TestTheFourHundredAndFiftySevenBitsChangeSignUnderSaturation`
+    explains with a correct mechanism live **entirely** inside this gap: change
+    the convention and they become +4, which is 9e-6 of the day. The mechanism
+    is the crossing elevation, and the crossing is what the convention moves:
+    **27.02 degrees** under P.1622, **18.95** under Ntanos, with 67.7 % and
+    56.1 % of the day's in-pass seconds below them.
+
+    So "does the station's altitude add key or subtract it, under saturation?"
+    has no answer today. That is the thing this class exists to say out loud.
+    """
+
+    SATURATED = ScintillationRegime.MODERATE_TO_STRONG
+    APERTURE_M = 0.75
+
+    @staticmethod
+    def _ntanos_variance(point: FloatArray, factor: FloatArray) -> FloatArray:
+        """``ln(1 + A (e^v - 1))``: Ntanos et al. (14)'s ``A``, applied to indices.
+
+        ``log1p``/``expm1`` rather than ``log(1 + ...)``/``exp(...) - 1``: at the
+        top of the day's passes the point variance is 1e-4 and the naive form
+        loses most of its significant digits to cancellation, which would turn a
+        measurement of a modelling choice into a measurement of rounding.
+        """
+        result: FloatArray = np.log1p(factor * np.expm1(point))
+        return result
+
+    @classmethod
+    def _day_bits(cls, *, regime: ScintillationRegime, height_m: float, convention: str) -> float:
+        """Return the day's finite key with one term of the hand chain replaced.
+
+        Everything but the scintillation variance comes from
+        :func:`~tests.e2e.oracle.hand_link` at the same arguments, so this is the
+        reference chain with a single substitution rather than a second chain
+        that might differ somewhere else. The check that the substitution is
+        faithful is ``convention="p1622"`` reproducing
+        `ENGINE_FINITE_DAY_BITS` exactly, which
+        ``test_the_p1622_branch_is_the_reference_chain_to_the_bit`` asserts.
+        """
+        link = hand_link("castelldefels", station_height_m=height_m, regime=regime)
+        rows = (np.asarray(link.samples.satellite_index), np.asarray(link.samples.sample_index))
+        elevation = np.asarray(link.angles.elevation_rad)[rows]
+        slant_km = np.asarray(link.angles.range_km)[rows]
+        log = DegradationLog()
+        point = np.asarray(
+            log_irradiance_variance(
+                elevation,
+                wavelength_m=WAVELENGTH_M,
+                degradations=log,
+                station_height_m=height_m,
+                regime=regime,
+            ),
+            dtype=np.float64,
+        )
+        factor = np.asarray(
+            aperture_averaging_factor(
+                elevation,
+                aperture_diameter_m=cls.APERTURE_M,
+                wavelength_m=WAVELENGTH_M,
+                station_height_m=height_m,
+            ),
+            dtype=np.float64,
+        )
+        variance = factor * point if convention == "p1622" else cls._ntanos_variance(point, factor)
+        chain = chain_efficiency()
+        loss = _assembled_loss_budget(
+            geometric=np.asarray(
+                geometric_transmittance(
+                    slant_km,
+                    wavelength_m=WAVELENGTH_M,
+                    transmit_aperture_m=NTANOS_TRANSMIT_APERTURE_M,
+                    receive_aperture_m=cls.APERTURE_M,
+                ),
+                dtype=np.float64,
+            ),
+            atmospheric_db=np.asarray(
+                transmittance_to_loss_db(
+                    atmospheric_transmittance(elevation, zenith_transmittance=1.0, degradations=log)
+                ),
+                dtype=np.float64,
+            ),
+            gamma=np.asarray(
+                beam_to_jitter_ratio(
+                    slant_km,
+                    jitter_rad=NTANOS_POINTING_JITTER_RAD,
+                    wavelength_m=WAVELENGTH_M,
+                    transmit_aperture_m=NTANOS_TRANSMIT_APERTURE_M,
+                    receive_aperture_m=cls.APERTURE_M,
+                    degradations=log,
+                ),
+                dtype=np.float64,
+            ),
+            variance=variance,
+            chain=chain,
+            outage=NTANOS_OUTAGE_PROBABILITY,
+            static=0.0,
+            transmit_truncation_ratio=GAUSSIAN_TRUNCATION_RATIO_OF_THE_BEAM_MODULE,
+            combination=FadeCombination.EXACT,
+        )
+        conditions = LinkConditions(
+            transmittance=loss.transmittance,
+            noise_counts_per_gate=link.noise.total_per_gate,
+            misalignment_error=link.conditions.misalignment_error,
+            pulse_rate_hz=link.conditions.pulse_rate_hz,
+            gate_duration_s=link.conditions.gate_duration_s,
+        )
+        volume = pass_key_volume(
+            conditions,
+            samples=link.samples,
+            protocol=reference_protocol(),
+            security=reference_security(),
+            degradations=log,
+        )
+        return float(np.asarray(volume.key_bits).sum())
+
+    def test_the_p1622_branch_is_the_reference_chain_to_the_bit(self) -> None:
+        """The substitution is faithful, so the other branch measures the convention.
+
+        Without this the whole class would be comparing two chains that differ
+        in an unknown number of places. With it, one of the two branches is
+        exactly `ENGINE_FINITE_DAY_BITS` -- the same doubles the engine
+        produces -- so whatever the other branch differs by is the convention
+        and nothing else.
+        """
+        assert (
+            self._day_bits(
+                regime=ScintillationRegime.WEAK,
+                height_m=CASTELLDEFELS_HEIGHT_M,
+                convention="p1622",
+            )
+            == ENGINE_FINITE_DAY_BITS
+        )
+        assert (
+            self._day_bits(
+                regime=self.SATURATED, height_m=CASTELLDEFELS_HEIGHT_M, convention="p1622"
+            )
+            == 449_308.0
+        )
+
+    def test_the_two_conventions_differ_by_three_percent_of_the_day(self) -> None:
+        """-3.29 % weak, -1.66 % saturated. The gap, in the unit the project reports."""
+        table = {
+            regime: tuple(
+                self._day_bits(
+                    regime=regime, height_m=CASTELLDEFELS_HEIGHT_M, convention=convention
+                )
+                for convention in ("p1622", "ntanos")
+            )
+            for regime in (ScintillationRegime.WEAK, self.SATURATED)
+        }
+        assert table[ScintillationRegime.WEAK] == (433_442.0, 419_162.0)
+        assert table[self.SATURATED] == (449_308.0, 441_870.0)
+        for used, other in table.values():
+            assert other < used
+        assert table[ScintillationRegime.WEAK][1] / table[ScintillationRegime.WEAK][0] - 1.0 == (
+            pytest.approx(-0.0329, abs=5e-4)
+        )
+        assert table[self.SATURATED][1] / table[self.SATURATED][0] - 1.0 == pytest.approx(
+            -0.0166, abs=5e-4
+        )
+
+    def test_the_convention_fixes_the_sign_of_the_station_altitude_term(self) -> None:
+        """-206 bits becomes +4: the whole of ADR 0016's saturated term is inside the gap."""
+        terms = {
+            (regime, convention): (
+                self._day_bits(
+                    regime=regime, height_m=CASTELLDEFELS_HEIGHT_M, convention=convention
+                )
+                - self._day_bits(regime=regime, height_m=0.0, convention=convention)
+            )
+            for regime in (ScintillationRegime.WEAK, self.SATURATED)
+            for convention in ("p1622", "ntanos")
+        }
+        assert terms[(ScintillationRegime.WEAK, "p1622")] == 457.0
+        assert terms[(ScintillationRegime.WEAK, "ntanos")] == 1_237.0
+        assert terms[(self.SATURATED, "p1622")] == -206.0
+        assert terms[(self.SATURATED, "ntanos")] == 4.0
+        # The sign flips, and the alternative lands within 1e-5 of the day at zero.
+        assert terms[(self.SATURATED, "p1622")] < 0.0 < terms[(self.SATURATED, "ntanos")]
+        assert abs(terms[(self.SATURATED, "ntanos")]) / 449_308.0 < 1e-5
+
+    def test_the_crossing_moves_from_twenty_seven_degrees_to_nineteen(self) -> None:
+        """27.02 -> 18.95 degrees, and with it the share of the day below it.
+
+        The bisection is written out rather than imported, for the reason
+        `TestTheFourHundredAndFiftySevenBitsChangeSignUnderSaturation` gives:
+        what is asserted is the *location* of a sign change, and a root finder
+        that silently returned an endpoint would assert nothing.
+        """
+
+        def variance(elevation_deg: float, height_m: float, convention: str) -> float:
+            log = DegradationLog()
+            elevation = float(np.deg2rad(elevation_deg))
+            point = np.asarray(
+                log_irradiance_variance(
+                    elevation,
+                    wavelength_m=WAVELENGTH_M,
+                    degradations=log,
+                    station_height_m=height_m,
+                    regime=self.SATURATED,
+                ),
+                dtype=np.float64,
+            )
+            factor = np.asarray(
+                aperture_averaging_factor(
+                    elevation,
+                    aperture_diameter_m=self.APERTURE_M,
+                    wavelength_m=WAVELENGTH_M,
+                    station_height_m=height_m,
+                ),
+                dtype=np.float64,
+            )
+            combined = (
+                factor * point if convention == "p1622" else self._ntanos_variance(point, factor)
+            )
+            return float(combined)
+
+        def crossing(convention: str) -> float:
+            def difference(elevation_deg: float) -> float:
+                return variance(elevation_deg, CASTELLDEFELS_HEIGHT_M, convention) - variance(
+                    elevation_deg, 0.0, convention
+                )
+
+            low, high = 5.0, 45.0
+            assert difference(low) > 0.0 > difference(high)
+            for _ in range(60):
+                middle = 0.5 * (low + high)
+                if difference(middle) > 0.0:
+                    low = middle
+                else:
+                    high = middle
+            return 0.5 * (low + high)
+
+        assert crossing("p1622") == pytest.approx(27.02, abs=0.01)
+        assert crossing("ntanos") == pytest.approx(18.95, abs=0.01)
+
+        link = hand_link("castelldefels", station_height_m=CASTELLDEFELS_HEIGHT_M)
+        rows = (np.asarray(link.samples.satellite_index), np.asarray(link.samples.sample_index))
+        elevation_deg = np.rad2deg(np.asarray(link.angles.elevation_rad)[rows])
+        dwell = np.asarray(link.samples.dwell_s, dtype=np.float64)
+        shares = [float(dwell[elevation_deg < cut].sum() / dwell.sum()) for cut in (27.02, 18.95)]
+        assert shares[0] == pytest.approx(0.677, abs=2e-3)
+        assert shares[1] == pytest.approx(0.561, abs=2e-3)
 
 
 class TestTheEnsembleIsTheSameDraw:

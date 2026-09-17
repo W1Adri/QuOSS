@@ -7,6 +7,10 @@
 # caveat — the paper prints "longitude: 37.9855, latitude: 22.1984" for Helmos; the
 #          labels are swapped (Helmos is in the Peloponnese, 38.0 N 22.2 E).
 
+link: downlink   # the discriminated union of scenario/models.py: this file describes a
+                 # satellite over a ground station, so it carries orbit/stations/passes/time.
+                 # The other member is 'horizontal' (scenarios/ge1_1km.yaml), which carries
+                 # none of those and cannot: extra="forbid" refuses them by name. ADR 0024.
 name: ntanos2021_helmos
 description: 'Ntanos et al. 2021 (Photonics 8(12):544) downlink to Helmos (2.3 m):
   600 km orbit at the printed 97.4 deg inclination, §4.1 transmitter, receiver and

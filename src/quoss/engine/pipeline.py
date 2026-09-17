@@ -111,6 +111,7 @@ from quoss.core.constants import SECONDS_PER_DAY, SPEED_OF_LIGHT_M_S
 from quoss.core.errors import DegradationLog, DomainError, ScenarioError
 from quoss.core.rng import RandomSource
 from quoss.core.types import FloatArray, IntArray, TimeGrid, TimeSeries
+from quoss.engine.horizontal import simulate_horizontal
 from quoss.engine.parallel import map_workers
 from quoss.engine.profiling import StageTimer
 from quoss.orbits.geometry import (
@@ -124,8 +125,9 @@ from quoss.orbits.tle import propagate_tle
 from quoss.qkd.base import KeyRegime, LinkConditions
 from quoss.qkd.bb84 import Bb84DecoyProtocol
 from quoss.qkd.finite_key import FiniteKeyResult, SecurityParameters
-from quoss.scenario.models import Scenario, StationSpec
+from quoss.scenario.models import AnyScenario, HorizontalScenario, Scenario, StationSpec
 from quoss.scenario.result import (
+    AnyResult,
     DailyResults,
     MonteCarloResults,
     MultiStationResults,
@@ -379,18 +381,36 @@ class _StationTask:
 # Public entry points
 # --------------------------------------------------------------------------- #
 def run(
-    scenario: Scenario,
+    scenario: AnyScenario,
     *,
     random_source: RandomSource | None = None,
     cache: ResultCache | None = None,
     workers: int = 1,
     degradations: DegradationLog | None = None,
-) -> SimulationResult:
-    """Run one scenario and return its result.
+) -> AnyResult:
+    """Run one scenario of either geometry and return its result.
+
+    Which of the two it runs is the scenario's ``link`` field, the discriminator
+    of :data:`~quoss.scenario.models.AnyScenario`, and not a guess from which
+    sections the object happens to carry -- a
+    :class:`~quoss.scenario.models.HorizontalScenario` has no ``orbit`` to be
+    absent. A horizontal run goes to
+    :func:`quoss.engine.horizontal.simulate_horizontal` and comes back as a
+    :class:`~quoss.scenario.result.HorizontalResult`, which is a different
+    container for the reason that class gives: a horizontal run has no passes
+    and no days, and a zero-length array of them would make a link that
+    certified megabits read as zero.
+
+    ``random_source``, ``cache`` and ``workers`` are downlink-only, and a
+    horizontal run says so rather than ignoring them: there is nothing to
+    parallelise (one budget, one block), no Monte Carlo stage to seed, and the
+    cache stores the ``.npz`` arrays of a :class:`SimulationResult`, which a
+    horizontal result does not have. Passing a cache with a horizontal scenario
+    records an ``INFO`` ``engine.horizontal-is-not-cached`` and runs.
 
     Parameters
     ----------
-    scenario : Scenario
+    scenario : Scenario or HorizontalScenario
         The validated inputs.
     random_source : RandomSource, optional
         The source of the Monte Carlo. Defaults to
@@ -412,8 +432,8 @@ def run(
 
     Returns
     -------
-    SimulationResult
-        The result.
+    SimulationResult or HorizontalResult
+        The result, the container matching the scenario's ``link``.
 
     Raises
     ------
@@ -423,8 +443,29 @@ def run(
     DomainError
         If ``workers`` is not a positive integer, or a physics function
         refuses its inputs.
+
+    Examples
+    --------
+    >>> from quoss.scenario.defaults import ge1_two_terminals
+    >>> result = run(ge1_two_terminals())
+    >>> type(result).__name__
+    'HorizontalResult'
+    >>> result.session.has_key
+    True
     """
     log = DegradationLog() if degradations is None else degradations
+    if isinstance(scenario, HorizontalScenario):
+        if cache is not None:
+            log.info(
+                "engine.horizontal-is-not-cached",
+                "a result cache was given with a horizontal scenario and is not used. The cache "
+                "stores a SimulationResult's arrays as .npz and a HorizontalResult has none — it "
+                "is a few dozen floats, and re-running it costs milliseconds against the "
+                "day-long Monte Carlo the cache exists for. Said here rather than skipped "
+                "silently.",
+                where=f"{_WHERE}.run",
+            )
+        return simulate_horizontal(scenario, degradations=log).result
     _require_scenario(scenario)
     source = _random_source_for(scenario, random_source)
     seed = source.seed if source is not None else None
@@ -552,8 +593,8 @@ def simulate(
 def _require_scenario(scenario: Any) -> None:
     if not isinstance(scenario, Scenario):
         raise ScenarioError(
-            f"run expects a quoss.scenario.models.Scenario, got {type(scenario).__name__}. Load "
-            "a file with quoss.scenario.io.load_scenario."
+            f"run expects a quoss.scenario.models.Scenario or HorizontalScenario, got "
+            f"{type(scenario).__name__}. Load a file with quoss.scenario.io.load_scenario."
         )
 
 
