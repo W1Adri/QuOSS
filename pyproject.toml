@@ -182,9 +182,19 @@ docstring-code-format = true
 python_version = "3.11"
 files = ["src", "tests"]
 plugins = ["pydantic.mypy"]
-# The per-module sections below are forward-looking: they cover modules that the
-# roadmap creates in stages 1-4. Warning about them until then is pure noise.
-warn_unused_configs = false
+# On since 2026-09-19. It was false because the per-module sections below were
+# forward-looking -- they covered modules the roadmap creates in stages 1-4 --
+# and warning about them until then was noise. Every one of those stages is
+# written now, so the flag has nothing left to excuse; turned on, it named
+# exactly three dead sections (`quoss.kernels.*`, `numba.*`, `pyarrow.*`) and
+# all three are gone, each with its reason at the removal site.
+#
+# What it does *not* do, said here because it is easy to over-read: mypy emits
+# this as a `note:` and still exits 0, so it reports and cannot fail CI. What
+# fails is tests/unit/test_project_config.py, which asserts the same property
+# from the other side -- every module pattern in the sections below names
+# something that exists.
+warn_unused_configs = true
 warn_redundant_casts = true
 warn_unused_ignores = true
 show_error_codes = true
@@ -201,9 +211,14 @@ module = [
     "quoss.scenario.*",
     "quoss.engine.*",
     "quoss.validation.*",
-    "quoss.kernels.*",
     "quoss.cli.*",
 ]
+# `quoss.kernels.*` was in this list from stage 0 and left it on 2026-09-19.
+# Stage 2.4 is not written and ADR 0026 says no measurement of today justifies
+# it, so the entry was strictness promised to a package that does not exist --
+# and `warn_unused_configs` named it the moment it was turned on. Putting it
+# back costs one line the day `kernels/` is written; leaving it in costs a
+# config nobody can tell is live.
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
 disallow_untyped_calls = true
@@ -218,7 +233,12 @@ extra_checks = true
 [[tool.mypy.overrides]]
 # astropy and erfa appear only in tests/golden/generators/, which are not
 # installed in the default environment, so mypy cannot see them.
-module = ["scipy.*", "numba.*", "matplotlib.*", "sgp4.*", "astropy.*", "erfa.*", "pyarrow.*"]
+# `numba.*` and `pyarrow.*` left this list on 2026-09-19 for the same reason:
+# neither is imported anywhere mypy looks. numba belongs to the unwritten stage
+# 2.4; pyarrow is reached only through `importlib.import_module` in
+# `io/export.py`, deliberately, so that Parquet stays an extra -- and a module
+# mypy never sees needs no override for its missing stubs.
+module = ["scipy.*", "matplotlib.*", "sgp4.*", "astropy.*", "erfa.*"]
 ignore_missing_imports = true
 
 # --------------------------------------------------------------------------- #

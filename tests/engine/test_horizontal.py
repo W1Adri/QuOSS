@@ -255,3 +255,132 @@ class TestTheObjectsBehindTheResult:
         assert float(np.asarray(engine.noise.total_per_gate)) == (
             engine.result.session.noise_counts_per_gate
         )
+
+
+class TestNothingIsDroppedWithTheScratchLog:
+    """The one log inside ``simulate_horizontal`` whose entries are thrown away.
+
+    **What a scratch log is, and why there is one.** A ``DegradationLog`` is
+    where a physics function writes the fact that it had to work outside the
+    range its source states — "this Rytov variance is past where first-order
+    theory holds", "this beam is narrower relative to the aperture than Farid &
+    Hranilovic checked". Those entries end up in ``result.warnings`` and are the
+    project's alternative to silently returning a number that looks fine.
+
+    The ``result`` stage of ``simulate_horizontal`` recomputes two quantities
+    the budget does not hand back — the log-irradiance variance and the
+    beam-to-jitter ratio — and passes them a **scratch** log whose entries are
+    then dropped on the floor. Dropping a degradation entry is exactly the thing
+    this project forbids, so the code carries a defence: the budget already made
+    the *identical* calls a moment earlier with the run's own log, so every code
+    the scratch log can hold is in ``degradations`` already, and dropping it
+    loses nothing.
+
+    **Why this class exists.** That defence was written in a comment ending
+    "That is asserted, not assumed, by
+    tests/engine/test_horizontal.py::TestNothingIsDroppedWithTheScratchLog" —
+    and the class did not exist. A comment claiming an assertion that is not
+    there is worse than one claiming nothing: it stops the next reader from
+    checking. Found on 2026-09-19 by the node-id citation test of
+    ``tests/unit/test_notes.py``, and closed here by writing the test rather
+    than by softening the comment.
+
+    **How it is asserted without repeating the argument list.** The obvious
+    test — call the two functions again with the same arguments and compare —
+    reproduces by hand the very call the code makes, so it goes green when the
+    copy drifts out of step with the original, which is the failure it exists
+    to catch. Instead the ``DegradationLog`` the module constructs is replaced
+    by a subclass that keeps every instance, so what is compared is the real
+    scratch log and not a reconstruction of it.
+    """
+
+    @staticmethod
+    def _run_capturing_scratch_logs(
+        monkeypatch: pytest.MonkeyPatch, path_length_m: float
+    ) -> tuple[DegradationLog, list[DegradationLog]]:
+        created: list[DegradationLog] = []
+
+        class RecordingLog(DegradationLog):
+            def __init__(self) -> None:
+                super().__init__()
+                created.append(self)
+
+        monkeypatch.setattr("quoss.engine.horizontal.DegradationLog", RecordingLog)
+        base = ge1_two_terminals()
+        scenario = base.model_copy(
+            update={"path": base.path.model_copy(update={"path_length_m": path_length_m})}
+        )
+        run_log = DegradationLog()
+        simulate_horizontal(scenario, degradations=run_log)
+        return run_log, created
+
+    @pytest.mark.parametrize(
+        ("path_length_m", "expected"),
+        [
+            (1_000.0, {"pointing.gaussian-approximation-out-of-published-range"}),
+            (
+                5_000.0,
+                {
+                    "pointing.gaussian-approximation-out-of-published-range",
+                    "horizontal.weak-fluctuation-limit-exceeded",
+                },
+            ),
+        ],
+    )
+    def test_every_code_the_scratch_log_holds_is_in_the_runs_log(
+        self, monkeypatch: pytest.MonkeyPatch, path_length_m: float, expected: set[str]
+    ) -> None:
+        """At 1 km one of the two recomputed calls warns; at 5 km both do.
+
+        The two lengths are the test's own control. A single length would leave
+        it unable to tell "the property holds" from "nothing warned at all":
+        GE-1 at its declared 1 km is below the weak-fluctuation limit, so only
+        the pointing call speaks, and the turbulence half of the claim would
+        never be exercised. At 5 km the plane-wave Rytov variance passes 1 Np^2
+        and ``horizontal.weak-fluctuation-limit-exceeded`` appears too — the
+        same 5 km cliff §40 measured, used here as an instrument.
+
+        ``expected`` is asserted exactly, not as a lower bound. A subset check
+        would pass on an empty scratch log, which is the vacuous version of this
+        test.
+        """
+        run_log, created = self._run_capturing_scratch_logs(monkeypatch, path_length_m)
+
+        assert len(created) == 1, (
+            f"simulate_horizontal built {len(created)} logs of its own, not the one scratch log "
+            f"this test knows about. A second one is a second place entries can be dropped."
+        )
+        scratch_codes = {entry.code for entry in created[0].entries}
+        assert scratch_codes == expected, (
+            f"the scratch log held {sorted(scratch_codes)}, not {sorted(expected)}. If the "
+            f"physics moved this is the number to update; if it is empty the test below is "
+            f"vacuous and proves nothing."
+        )
+        run_codes = {entry.code for entry in run_log.entries}
+        assert scratch_codes <= run_codes, (
+            f"the scratch log holds {sorted(scratch_codes - run_codes)}, which the run's log "
+            f"does not. Those entries are dropped on the floor, and the comment in "
+            f"engine/horizontal.py's `result` stage that says nothing is lost is now false."
+        )
+
+    def test_the_dropped_entries_are_dropped_and_not_merged(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The claim is that dropping is harmless, not that it does not happen.
+
+        Worth pinning separately: if somebody "fixes" this by extending the
+        run's log with the scratch one, the result grows duplicate warnings —
+        the same code twice for the same call — and the test above would still
+        pass. What keeps the result honest is that the scratch entries are
+        dropped *and* already present, so the count does not change.
+        """
+        run_log, created = self._run_capturing_scratch_logs(monkeypatch, 5_000.0)
+        duplicated = [
+            entry.code
+            for entry in created[0].entries
+            if sum(other.code == entry.code for other in run_log.entries) > 1
+        ]
+        assert not duplicated, (
+            f"{sorted(set(duplicated))} appears more than once in the run's log. The scratch "
+            f"log's entries have been merged in as well as recorded by the budget."
+        )
