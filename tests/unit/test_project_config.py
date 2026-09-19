@@ -274,3 +274,82 @@ def test_a_requirement_declared_floorless_is_still_shipped(distribution: str) ->
     assert distribution in _shipped_requirements(), (
         f"FLOORLESS names {distribution}, which pyproject.toml no longer ships. Remove the row."
     )
+
+
+# --------------------------------------------------------------------------- #
+# The three places that name a version name the same one
+# --------------------------------------------------------------------------- #
+# ``src/quoss/__init__.py`` is the single source: hatch reads ``__version__``
+# from it to build the wheel, and every result carries it as provenance. But
+# ``CITATION.cff`` has to repeat it, because that is the file GitHub and Zenodo
+# read and neither of them runs Python -- so there are two copies of one fact,
+# and a second copy is a thing that drifts.
+#
+# It drifts in the worst possible direction, too. The failure is not a red
+# build: it is a release whose citation metadata says 0.1.0 while the code says
+# 0.2.0, published to a DOI that is permanent, in a file whose entire purpose is
+# to let somebody else say which version they ran. So it is asserted, and
+# asserted **before** the tag rather than noticed after it.
+CITATION = PROJECT_ROOT / "CITATION.cff"
+
+
+def _citation() -> dict:
+    """Parse ``CITATION.cff``, which is YAML with a schema on top."""
+    import yaml
+
+    with CITATION.open(encoding="utf-8") as handle:
+        parsed = yaml.safe_load(handle)
+    assert isinstance(parsed, dict), "CITATION.cff must parse to a mapping"
+    return parsed
+
+
+def test_the_citation_file_names_the_version_the_package_reports() -> None:
+    import quoss
+
+    assert _citation()["version"] == quoss.__version__, (
+        f"CITATION.cff says version {_citation()['version']!r} and the package reports "
+        f"{quoss.__version__!r}. src/quoss/__init__.py is the source; CITATION.cff is the "
+        f"copy GitHub and Zenodo read, and a release published from a wrong copy mints a "
+        f"permanent DOI against the wrong version. CHANGELOG.md, step 1."
+    )
+
+
+def test_the_citation_file_names_the_authors_pyproject_names() -> None:
+    """Same drift, other field, and this one has no build step to catch it.
+
+    A wrong version at least produces a wheel somebody might notice; a wrong
+    author list produces a correct-looking citation with the wrong name on it.
+    """
+    declared = {author["name"] for author in _config()["project"]["authors"]}
+    cited = {
+        f"{author['given-names']} {author['family-names']}" for author in _citation()["authors"]
+    }
+    assert declared == cited, (
+        f"pyproject.toml declares {sorted(declared)} and CITATION.cff cites {sorted(cited)}."
+    )
+
+
+def test_the_citation_file_declares_the_licence_the_project_declares() -> None:
+    assert _citation()["license"] == _config()["project"]["license"]
+
+
+def test_the_citation_file_points_at_the_repository_pyproject_points_at() -> None:
+    assert _citation()["repository-code"] == _config()["project"]["urls"]["Repository"]
+
+
+def test_the_changelog_has_an_entry_for_the_version_the_package_reports() -> None:
+    """A release with no changelog entry is a version nobody can find out about.
+
+    Third copy of the same fact, and it earns its place for a different reason
+    than ``CITATION.cff``: that file is metadata a machine reads, this one is
+    the only place that says what the version *contains* and, more to the
+    point, what it does **not** affirm. A tag pushed without it publishes a
+    citable object with no statement of scope attached.
+    """
+    import quoss
+
+    changelog = (PROJECT_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert f"## [{quoss.__version__}]" in changelog, (
+        f"CHANGELOG.md has no `## [{quoss.__version__}]` heading. CHANGELOG.md, step 2: the "
+        f"entry is written before the tag, because the tag is what mints the DOI."
+    )

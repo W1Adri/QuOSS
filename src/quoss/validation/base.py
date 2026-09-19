@@ -78,6 +78,7 @@ from importlib import import_module
 from types import MappingProxyType
 from typing import Final, Literal
 
+import quoss
 from quoss.core.errors import DomainError
 
 __all__ = [
@@ -641,11 +642,26 @@ def render_markdown(cases: Sequence[ValidationCase]) -> str:
     Returns
     -------
     str
-        A header saying the file is generated and by which command, a count per
-        status, then one table per source in order of first appearance, each
-        followed by the notes of its cases. Deterministic: no timestamps, no
-        timings, numbers at four significant figures, so the committed file can
-        be compared with the generated text byte for byte.
+        A header naming the tool that wrote it and the command that rewrites
+        it, a count per status, then one table per source in order of first
+        appearance, each followed by the notes of its cases. Deterministic: no
+        timestamps, no timings, no commit, numbers at four significant figures,
+        so the committed file can be compared with the generated text byte for
+        byte.
+
+    Notes
+    -----
+    The header names the **version** and not the commit, and that asymmetry
+    with ``quoss --version`` is deliberate. This file is committed and compared
+    byte for byte, and a commit line in it can never be right: git cannot put a
+    commit's own hash inside the commit, so the line would be stale the instant
+    the file was committed and the comparison would be red for ever after.
+    Worse, ``git_commit()`` returns ``None`` outside a checkout, so the
+    rendered bytes would depend on whether the machine running the test had a
+    ``.git`` -- a test reporting its environment rather than the code, which is
+    the defect ``LAST_CHANGES.md`` §32 was written about. The version is a pure
+    function of the tree; the commit is answered by ``quoss --version``, whose
+    output nothing compares byte for byte.
 
     Examples
     --------
@@ -658,6 +674,11 @@ def render_markdown(cases: Sequence[ValidationCase]) -> str:
         "tests/validation/test_docs.py fails when this file differs from the generated text. -->",
         "",
         "# Validation",
+        "",
+        "|  |  |",
+        "|---|---|",
+        f"| QuOSS version | `{quoss.__version__}` |",
+        f"| Regenerate with | `{REGENERATE_COMMAND}` |",
         "",
         "Every row below is a number printed in a source, recomputed by this project at the "
         "moment this file was generated, and compared under a tolerance whose origin is "

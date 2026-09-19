@@ -1,8 +1,8 @@
 # QuOSS — Últimos cambios
 
 > **Bitácora viva. Se actualiza al cerrar cada etapa del [`ROADMAP.md`](ROADMAP.md).**
-> Última entrada: **§48, 2026-09-19** — cuatro directorios que prometían cosas,
-> y dos suelos de dependencia que no estaban sin probar sino equivocados.
+> Última entrada: **§49, 2026-09-19** — la puerta de entrada, una versión que se
+> puede citar, y la cuarta clase de cita rota, que no era una cita.
 >
 > **Qué hay aquí y qué no.** Este fichero guarda **las cinco últimas entradas
 > completas**. Todo lo anterior está en [`archive/`](archive/), íntegro y sin
@@ -22,7 +22,7 @@
 
 ---
 
-## Índice de lo archivado (§1–§43)
+## Índice de lo archivado (§1–§44)
 
 | § | Fecha | La cifra o la regla que la resume | Dónde |
 |---|---|---|---|
@@ -69,282 +69,8 @@
 | §41 | 2026-09-19 | **Las notas dejan de caber en la sesión que las tiene que leer.** `LAST_CHANGES.md` llegó a **6 834 líneas**; la regla de las cinco entradas vivas y sus dos cotas derivadas se asertan en `tests/unit/test_notes.py`. **240 de los 241 números** del ROADMAP ya vivían en un ADR, un test o un docstring | [archivo](archive/LAST_CHANGES-41.md) |
 | §42 | 2026-09-19 | **Las dos decisiones que llevaban cincuenta días sin dueño lo tienen**: los ADR [0026](../docs/adr/0026-the-language-ladder.md) y [0027](../docs/adr/0027-four-levels-of-distribution.md). Y los **55.6 s** de sesenta satélites resultaron medir un bucle en serie, no la aritmética | [archivo](archive/LAST_CHANGES-42.md) |
 | §43 | 2026-09-19 | **La CLI existe** → [ADR 0028](../docs/adr/0028-the-cli-computes-nothing.md). Un resultado horizontal tiene **su propia forma de directorio**, y el despacho es sobre qué método ofrece el resultado, **sin un método en común** | [archivo](archive/LAST_CHANGES-43.md) |
+| §44 | 2026-09-19 | **La tabla de validación pasa de 22 casos de tres fuentes a 35 de ocho, y de un desacuerdo publicado a ocho** — siete de ellos del paper del que sale el enlace de referencia entero, que hasta entonces no tenía ni una fila | [archivo](archive/LAST_CHANGES-44.md) |
 
----
-
-## 44. La fila que faltaba, y la tabla de validación deja de ser un comando
-
-**Fecha:** 2026-09-19. **ADRs nuevos:** ninguno — la etapa 8 ya tenía el suyo,
-el [0018](../docs/adr/0018-validation-is-a-table-not-a-badge.md), escrito en §43
-cinco días antes de que existiera lo que gobierna.
-
-**La cifra que resume la entrada: la tabla pasa de 22 casos de tres fuentes a
-35 de ocho, y de un desacuerdo publicado a ocho — siete de ellos del paper del
-que sale el enlace de referencia entero, que hasta hoy no tenía ni una fila.**
-
-### 1. El problema, que no era escribir un módulo
-
-`validation/` existía desde §42 con `base.py`, `channel.py`, `satquma.py` y
-`micius.py`: 22 casos, el 100 % de cobertura, y una regla que **deriva** el
-estado de cada comparación en vez de aceptarlo escrito a mano. Lo que no tenía
-era a Ntanos et al. 2021.
-
-Y eso no es «una fuente menos». Ese paper aporta el receptor (los nanohilos
-superconductores, su tiempo muerto, su puerta, su tasa de cuentas oscuras), el
-transmisor (la apertura de 0.15 m y los 0.75 µrad de jitter de apuntado), los
-parámetros del protocolo (las dos intensidades señuelo y la razón de estados), la
-radiancia de la noche de estudio y las tres estaciones griegas. Prácticamente
-todo lo de `scenarios/reference_castelldefels.yaml` que no es una coordenada de
-Castelldefels salió de ahí.
-
-**Una tabla que cubre las recomendaciones de la UIT y dos sistemas externos, y
-deja fuera el paper del que está montado el enlace, dice «validado» sobre
-exactamente las partes que nadie tenía en duda.** El `__init__.py` lo decía con
-todas las letras —«anything reported as validated against Ntanos et al. traces
-to the assertions in `tests/channel/` and `tests/qkd/`, not to a row here»— y
-esta PR es la que lo cierra.
-
-### 2. Lo primero fue volver a medir, y una cifra estaba mal escrita
-
-`PENDING_DISAGREEMENTS` guardaba seis desacuerdos conocidos, cada uno en una
-línea, **descritos pero no alcanzables**: ningún caso los producía, así que
-ningún test podía comprobarlos en ninguna dirección. Antes de escribir nada se
-recorrieron los seis contra el árbol de hoy, que ha cambiado desde que se
-midieron: han entrado la extinción trazable (ADR 0023), el régimen saturado
-(0022) y el camino horizontal (0024).
-
-**Cinco reproducen exactamente lo que decían.** La Ec. (5) sigue siendo 8 veces
-mayor (ratio `8.000000000000`, 9.03 dB, transmitancia 1.358 con sus propios
-parámetros); el «4:1:16» contra «q = 2/5» sigue discrepando por 4.2 (0.09524
-contra 0.4); la luna llena sigue dando 76 385.6 cps donde el paper dice 10 kcps
-como mucho; los 20 dB de §4.2.1 siguen dando 19.0935 dB con 0.906 dB de residuo.
-
-**La sexta estaba escrita con un número que no es.** La entrada decía que la
-razón de aperturas de §4.3.2 —«about four times» entre Helmos (2.3 m) y Skinakas
-(1.3 m)— vale «3.06 **at every elevation tested**». Medido ahora, la razón es
-3.056 en el cenit y **3.249 a los 20°** que es su propio suelo de elevación:
-
-| elevación | razón Helmos/Skinakas |
-|---|---|
-| 90° | **3.056** |
-| 45° | 3.088 |
-| 20° | **3.249** |
-
-El 3.06 era el valor cenital leído como si fuera una meseta. La conclusión
-cualitativa no cambia —la afirmación falla en todo su rango, por entre el 19 % y
-el 24 %— pero **la cifra citada era una sola donde hay un intervalo**, que es
-exactamente el defecto de §14.1 y de §37 otra vez. Sube como fila con el
-intervalo medido y con el test que lo mide.
-
-### 3. Las trece filas nuevas, y por qué son tres fuentes en un módulo
-
-`ntanos2021.py` colecciona **tres** fuentes y no una, porque no son
-independientes: Ntanos et al. evalúan su enlace con las fórmulas de estado
-señuelo de **Ma et al. 2005** (su Apéndice A son las Ecs. (10)–(11) de Ma con
-otros símbolos) y este proyecto cobra el bloque finito de un pase con la cota de
-**Lim et al. 2014**. Separarlas en tres ficheros pondría la ganancia del mismo
-enlace en tres sitios.
-
-| fila | estado | qué dice |
-|---|---|---|
-| `divergence-full-angle` | reproducido | 13.157 µrad contra «about 13». El **ángulo completo**: leerlo como semiángulo borra 6 dB |
-| `eq5-printed-gain-product` | **no reproducido** | 1.358 contra 0.156. Factor 8 exacto, y una transmitancia de 1.358 es un receptor recogiendo un 36 % más luz de la emitida |
-| `eq18-scintillation-quantile` | reproducido | −1.28190 contra −1.28188 dB. Reproduce, y **el hallazgo es el signo** |
-| `best-case-total-loss` | compatible | 20 dB contra 19.0935. El residuo de 0.906 dB cabe en una extinción que el paper no declara |
-| `zenith-transmittance` | hueco | su Ec. (7) necesita `L_zen` y el paper no lo da en ninguna parte |
-| `eq20-background-click-probability` | **no reproducido** | 3.4153 contra 0.9671. La forma impresa **no es una probabilidad** |
-| `full-moon-background` | **no reproducido** | 76 385.6 cps contra «10 kcps at most» |
-| `protocol-efficiency-as-printed` | **no reproducido** | 0.09524 contra 0.4, factor 4.2, dentro de una sola frase suya |
-| `single-pass-peak-skr` | **no reproducido** | 1.053e-3 contra 3.33e-4 bits/pulso |
-| `aperture-ratio-helmos-skinakas` | **no reproducido** | 3.056 contra «about four times» |
-| `skinakas-latitude-as-printed` | **no reproducido** | 35.2118 contra los 24.8981 que el §2 etiqueta «latitude» |
-| `ma2005.eq10-gain-adds-instead-of-uniting` | compatible | el solape doblemente contado, calculado **exacto** |
-| `lim2014.printed-detection-rate` | reproducido | 5.010744e-4, la ancla de que la cota finita recibe el canal contra el que se publicó |
-
-### 4. El hallazgo de la ronda: dos afirmaciones suyas no son compatibles entre sí
-
-`single-pass-peak-skr` es la fila que no existía en ninguna forma, ni siquiera
-como línea en `PENDING_DISAGREEMENTS` medida. §4.3.1 imprime un pico de
-**3.33e-4 bits secretos por pulso**; con su protocolo, su ruido nocturno y su
-propia mejor geometría este proyecto da **1.053e-3**, 3.16 veces más.
-
-Eso por sí solo sería un desacuerdo más. Lo que lo convierte en un hallazgo
-**sobre el paper y no sobre este proyecto** es expresar la diferencia en la
-unidad en la que el paper también se pronuncia. Los bits secretos por pulso son
-monótonos en la pérdida total, así que hay **una sola** pérdida que aterriza en
-3.33e-4, y es de **24.074 dB** (raíz por `brentq`, no transcrita). Su §4.2.1
-declara el mejor caso en **20 dB**.
-
-**Ninguna pérdida compatible con su §4.2.1 produce el pico de su §4.3.1: las dos
-afirmaciones impresas están a 4.07 dB una de otra**, bajo cualquier análisis de
-señuelo que reproduzca su propio Apéndice A. Las dos entran en la tabla, y
-ninguna de las dos se usa como ancla.
-
-### 5. La otra mitad del patrón: una media no es una probabilidad, tres veces
-
-Tres de las filas son el mismo error hecho tres veces en dos papers, y merece
-nombrarse junto:
-
-- La Ec. (20) de Ntanos llama «probability» a `t_gate × cps`, que es el número
-  **esperado** de cuentas: con la luz solar brillante que tabula la UIT a 850 nm
-  y su telescopio de 2.3 m vale **3.42**, y **1.09** con el intermedio.
-- La Ec. (A6) suya escribe `Y_0 = P_dc + P_noise`, una suma donde la unión es
-  `1 − (1−P_dc)(1−P_noise)`.
-- La Ec. (10) de Ma et al. escribe la ganancia como `Y_0 + (1 − e^{−ηµ})`, que
-  dobla la cuenta de las puertas donde disparan los dos. Por encima de **7.152
-  cuentas por puerta** pasa de 1, y `KeyRate` la rechaza.
-
-La de Ma entra como **`COMPATIBLE`** y no como desacuerdo, y es la fila que mejor
-usa la maquinaria del ADR 0018: el residuo entre la forma impresa y la exacta
-**no se acota, se calcula** —es exactamente `Y_0 (1 − e^{−ηµ})`, el solape—, así
-que el `AccountedTerm` tiene intervalo degenerado y la tolerancia puede ser
-1e-12 relativo. Medido, la diferencia entre el residuo y el término es **4e-17
-absoluto**. De noche el solape son 6.2e-10 y nadie necesitaba la corrección; con
-el cielo modelado aquí la forma impresa va alta un 0.078 % y sigue subiendo.
-
-La regla de este proyecto, en una línea, y es la misma en los tres sitios: **las
-medias se suman y la exponencial se hace una vez, al final.**
-
-### 6. Las tolerancias, que es donde una tabla así se cae
-
-Ninguna fila que reproduce pasa por una anchura elegida. Dos de las tres son
-identidades y se pueden enseñar:
-
-- **`eq18-scintillation-quantile`, 1.3e-5 relativo.** No es un margen: el paper
-  imprime el factor néper-a-decibelio como `4.343` donde vale
-  `10/ln 10 = 4.342944819`, y `4.343 / (10/ln 10) − 1 = 1.2706e-5` **es el
-  residuo entero**. No queda nada más que separe las dos expresiones.
-- **`lim2014.printed-detection-rate`, 3e-7 relativo.** Derivada del truncamiento:
-  este proyecto calcula la unión exacta de dos detectores `(1 − p_dc)²` y el
-  paper imprime su primer orden `1 − 2 p_dc`, así que el valor publicado es mayor
-  en `p_dc² e^{−x}`, que relativo a `D_k` es como mucho `p_dc/2 = 3e-7`. Medido:
-  **7.2e-10**, tres órdenes por debajo de su propia cota.
-
-Y la de la Ec. (5), que es la que más trabajo costó defender, porque la fila
-**falla** y una tolerancia generosa ahí es conservadora: **10 % del valor
-publicado**, sacada de lo que la lectura *que sí conserva la energía* se separa
-de la integral gaussiana en las tres estaciones del paper — 0.94 %, 2.8 % y
-8.8 % a 0.75, 1.3 y 2.3 m, porque la forma de producto lineariza `1 − exp(−x)` y
-usa el radio de campo lejano `w_0 z` en vez del `W(z)` exacto. El 10 % cubre las
-tres y sigue dejando el factor 8 fuera por ochenta veces.
-
-### 7. `docs/validation.md` se commitea, y por qué eso necesita un test
-
-El fichero se genera con
-`uv run python -m quoss.validation --write docs/validation.md` y **entra en el
-repositorio**. Las dos audiencias son distintas y solo una puede ejecutar algo:
-el comando sirve a quien tiene checkout; el fichero commiteado sirve a quien lee
-el repositorio en una página web, a quien revisa una PR y —el caso que lo
-decide— a quien quiere saber **qué ha cambiado**. Un fichero generado que no se
-commitea no tiene diff, así que un refactor que moviera la varianza de la Tabla 2
-de la P.1622 a 1.55 µm de 0.0659 a 0.0759 cambiaría un estado y no dejaría
-rastro en el historial.
-
-Y commitearlo obliga al test, porque **un fichero generado commiteado es una
-afirmación sobre el código**. En cuanto el documento diga `reproduced` de un caso
-que el código ya llama `not reproduced`, es peor que si no existiera: es
-exactamente la insignia que el ADR 0018 existe para impedir, impresa en Markdown
-y con una tabla alrededor para parecer comprobada. `tests/validation/test_docs.py`
-lo compara **byte a byte** —el renderizador se escribió para eso: sin marcas de
-tiempo, sin tiempos de ejecución, cuatro cifras significativas y fuentes en orden
-de primera aparición— y el mensaje de fallo dice el comando que lo arregla y que
-el diff es la parte interesante.
-
-### 8. Lo que **no** entra, y su razón medida
-
-`lim2014.block-1e4-reach` se queda en `PENDING_DISAGREEMENTS`, ahora como única
-entrada y con la razón escrita. Lim et al. afirman que «even if we use a block
-size of 1e4, cryptographic keys can still be distributed over a fiber length of
-135 km», y este proyecto no lo reproduce: con un bloque de 1e4 detecciones en la
-base de clave no certifica **nada a ninguna distancia**, y la curva que sí llega
-a 135 km es la de una década más.
-
-Está medido y asertado en `tests/qkd/test_finite_key.py::TestLim2014Evaluation`.
-Lo que falta para convertirlo en fila es su optimización sobre cinco parámetros
-libres, unas **120 líneas** de transcripción que viven junto a ese test. Subirlas
-a `src/` para comprar una fila dejaría al proyecto con **dos implementaciones de
-una misma sección publicada**, y una fórmula en dos sitios es el defecto que el
-[ADR 0016](../docs/adr/0016-the-engine-adds-nothing-and-one-altitude.md) existe
-para evitar: se separan, y la que se separa es la que nadie ejecuta. Un hueco
-declarado con su medición nombrada es la respuesta honesta más barata, que es la
-misma regla que el ADR 0009 aplica a las citas.
-
-### 9. Dos citas rotas que aparecieron por el camino
-
-Las dos eran a tests que no existen, que es la clase de defecto que cerró la
-inconsistencia #17 para las citas a la guía:
-
-- `base.py` decía que el coste de `run_all` estaba medido en
-  `TestRunAll::test_the_whole_table_runs_in_under_ten_seconds`. **No existe ni
-  existió.** Sustituido por lo que sí hay y lo que sí se mide: las 35 filas
-  tardan unas **0.2 s** juntas, porque todas son formas cerradas o una sola
-  integral sobre la rejilla de 139 capas de la UIT.
-- `tests/validation/cases.py` decía que «the one file that does use the real
-  table is `test_table.py`». Tampoco existe; los que usan la tabla real son
-  `test_base.py::TestTheTableRuns` y, desde hoy, `test_docs.py`.
-
-Ninguna de las dos la caza `test_every_guide_section_cited_from_the_code_exists`,
-que solo recorre citas con número de apartado a los ficheros de `notes/`. Se
-anotan aquí en vez de abrir inconsistencia porque están arregladas, pero **la
-clase sigue abierta**: nada comprueba hoy que un identificador de nodo pytest
-citado en un docstring exista. Lo que sí se comprueba, desde §42, es que el
-*fichero* exista, que es la mitad barata.
-
-### 10. Verificación
-
-`uv run pytest`: **3 866 passed**, 0 fallos (3 853 antes). `ruff check`,
-`ruff format --check` y `mypy` limpios sobre **163 ficheros**. Cobertura de
-líneas **y ramas al 100 %** en todo `src/quoss` — 9 025 sentencias y 2 146 ramas,
-sin una sola sin cubrir —, incluido `validation/ntanos2021.py` (117 sentencias,
-0 ramas) y el paquete `validation/` entero (433 sentencias, 72 ramas).
-
-`uv run python -m quoss.validation --quiet` sale 0, que es lo que tiene que
-hacer con ocho desacuerdos en la tabla: **un desacuerdo publicado no es un fallo
-del generador**, y la puerta que sí falla ante uno inesperado es
-`tests/validation/test_base.py` contra `EXPECTED_DISAGREEMENTS`, en las dos
-direcciones.
-
-**El camino de lectura obligatorio sube otra vez**, y conviene decirlo en vez de
-redondearlo: de 1 578 a **1 725 líneas** (`LAST_CHANGES.md` 1 141 → 1 276 con §39
-archivado y §44 dentro, `ROADMAP.md` 351 → 363, `GUIA_REIMPLEMENTACION.md` 86).
-Archivar §39 quitó 143 líneas y esta entrada pone 273, así que el saldo es +147
-pese al archivo. **La cota que decide si eso está bien no es el total** —§41
-midió por qué no puede serlo— sino la estructural de `tests/unit/test_notes.py`,
-y se cumple con margen: cinco entradas vivas (§40–§44), la más larga 273 contra
-un techo de 320, cabecera en 67 contra `60 + 2 × 39 = 138`.
-
-### 11. Ficheros
-
-| Fichero | Qué |
-|---|---|
-| `src/quoss/validation/ntanos2021.py` | nuevo. Trece casos de tres fuentes, y las cuatro ecuaciones publicadas transcritas |
-| `src/quoss/validation/base.py` | `CASE_MODULES` vuelve a cuatro; `EXPECTED_DISAGREEMENTS` pasa de 1 a 8 y `PENDING_DISAGREEMENTS` de 6 a 1, con su razón; la cita rota del coste |
-| `src/quoss/validation/__init__.py` | el párrafo «lo que falta» pasa a ser el recuento de hoy, sin borrar por qué faltaba |
-| `docs/validation.md` | **nuevo y commiteado.** 207 líneas, 35 filas, generado |
-| `tests/validation/test_ntanos2021.py` | nuevo. Las dos afirmaciones de §4.3 que nadie había medido, el hueco asertado como hueco, y la mezcla de estados |
-| `tests/validation/test_docs.py` | nuevo. El fichero commiteado contra un render fresco, byte a byte |
-| `tests/validation/test_base.py` | el test de ausencia se invierte y dice que se invirtió; la entrada pendiente que queda |
-| `tests/validation/cases.py` | la cita a `test_table.py`, que no existe |
-| `notes/ROADMAP.md`, `README.md` | etapa 8 cerrada, hito B alcanzado y qué significa, 35 casos |
-| `notes/LAST_CHANGES.md`, `notes/archive/LAST_CHANGES-39.md` | §39 archivado con la comprobación de dónde vive cada cosa suya |
-| `pyproject.toml` | los «40 MB» de pyarrow, medidos: son **152 MiB** |
-
-### 12. Un número falso que defendía una dependencia, de paso
-
-El comentario del extra `export` en `pyproject.toml` decía que pyarrow «is 40 MB
-and not a physics dependency». Medido
-(`du -sh .venv/lib/python3.13/site-packages/pyarrow`, CPython 3.13, Linux
-x86-64): **152 MiB**, 3.8 veces lo que afirmaba, y **más que numpy y scipy
-juntos** (31.6 + 90.4 = 122 MB de bytes de fichero contra los 157 de pyarrow).
-
-Se arregla y se comprueba lo segundo, que es lo que pedía la regla: **la decisión
-que ese número defendía sigue en pie, y con la cifra real es la única lectura que
-queda.** Un extra, nunca un requisito del núcleo de física — porque este formato
-opcional resulta ser lo más grande que el proyecto puede arrastrar, más que toda
-la pila numérica sobre la que está construido. Un comentario que defiende una
-dependencia con un número que nadie comprobó es el mismo defecto que persigue el
-[ADR 0016](../docs/adr/0016-the-engine-adds-nothing-and-one-altitude.md), una
-capa fuera de la física.
 ---
 
 ## 45. El wheel lleva sus datos, y una cita a un fichero deja de poder envejecer sola
@@ -1066,3 +792,172 @@ Ninguna se hace en esta PR.
 | `notes/ROADMAP.md` | **etapa 2.5**; la puerta de regresión decidida en la 11; dos filas abiertas cerradas |
 | `README.md` | los cuatro directorios, los suelos probados, y `--all-extras` con su coste |
 | `notes/archive/LAST_CHANGES-43.md` | §43 archivada por la cota estructural, con su comprobación |
+
+---
+
+## 49. La puerta de entrada, una versión que se puede citar, y la cuarta clase de cita rota
+
+**Fecha:** 2026-09-19. **ADR nuevo:** el
+[0030](../docs/adr/0030-a-release-is-something-you-can-cite.md).
+
+**La cifra que resume la entrada: la cuarta auditoría de la puerta encontró
+cinco afirmaciones falsas, y las cinco son de una clase que los tres tests
+escritos para esto no pueden ver — no son citas, son cuentas.** «29 ADRs» no
+resuelve a nada: o es el número de ficheros de `docs/adr/` o es mentira, y
+distinguirlo exige contarlos.
+
+Esta PR no añade capacidad. Convierte el repositorio en algo que otra persona
+pueda usar y citar.
+
+### 1. La auditoría, y por qué la clase volvió a aparecer por una vía nueva
+
+Las tres rondas anteriores cerraron tres vías con tres tests: una cita a un
+apartado de la guía (§45), una cita a una ruta (§45), una cita a un nodo de
+pytest (§46). Las tres comparten una operación —**coger el identificador que la
+cita nombra y resolverlo**— y por eso son **totales**: un regex encuentra todas
+las citas de esa forma, así que una escrita mañana queda comprobada el día que
+se escribe, sin que nadie la registre.
+
+La cuarta ronda recorrió `README.md`, `CLAUDE.md` y `ROADMAP.md` afirmación por
+afirmación contra el árbol. Esto es lo que salió:
+
+| Afirmación | Dónde | El árbol | Qué se hizo |
+|---|---|---|---|
+| «`INCONSISTENCIAS.md` tiene **dos** entradas abiertas» | `CLAUDE.md` | El fichero dice **una**, y su tabla abierta tiene **una fila** | Corregida, y **asertada** |
+| «ninguna de las **quince** que ha tenido» | `CLAUDE.md` | **Diecinueve** filas con identificador distinto en el fichero (1–18 más C1) | Corregida, y asertada |
+| «Hoy son **910 y 321**» (líneas de `LAST_CHANGES.md` y `ROADMAP.md`) | `CLAUDE.md` | **1 068 y 401** | La columna pasa a ser **la cota, no la medida**: ≤ 500 y ≤ 1 732, que es lo que `test_the_other_notes_stay_readable` ya aserta y lo que de verdad hace falta saber antes de abrir un fichero |
+| Tabla de lectura: `~120`, `~1 140`, `~350`, `6 800` | `CLAUDE.md` | 130, 1 068, 401, 8 099 | Lo mismo: una bitácora crece en cada PR y un número copiado a mano no |
+| «las entradas **§1–§38** íntegras» en `archive/` | `CLAUDE.md` | §1–§43, y con esta PR §1–§44 | Corregida |
+| «**29 ADRs**» | `README.md` | 29 entonces, **30** al acabar esta PR | Corregida, y asertada |
+| «**7 huecos declarados**» (validación) y «**veintitrés** huecos declarados» (ADR 0009) | `README.md`, `ROADMAP.md` | Las dos ciertas, y **la misma frase para dos cosas distintas** | Desambiguadas: **huecos de fuente** (7, filas `gap` de la tabla) y **huecos de cita** (23, la lista numerada del ADR 0009) |
+| «`quoss run scenarios/…`, que es lo que instala `pip install quoss`» | `README.md` | El wheel **no lleva** `scenarios/`: son 102 entradas y ninguna es un `.yaml` de escenario | Reescrito: el arranque es un clon, y se dice por qué un escenario es una entrada y no un dato de paquete |
+| «`api/` y `kernels/` son paquetes vacíos» | `README.md` | Cuatro directorios con un `.gitkeep` y nada más —`src/quoss/api/`, `src/quoss/kernels/`, `tests/api/`, `tests/physics/`—, y **los dos primeros viajaban dentro del wheel** | **Borrados**, con los trece `.gitkeep` vestigiales que quedaban |
+| «**3 640 tests**, al 2026-09-15» | `README.md` | 3 968 entonces, **3 993** al acabar | Corregida, con su fecha |
+| «Verificación al 2026-09-15: 100 % de líneas y ramas» | `README.md` | Se sostiene | Sin cambio |
+| Las nueve cifras de física (433 442 bits, 3.78 Mbit, 4 pases, 11.637 dB, 253 934.98 bit/s, 0.230 dB, 22.7 %, 47.7 %, 0.1 s) | `README.md` | **Las nueve se reproducen** ejecutándolas hoy | Sin cambio |
+
+**Dos cosas de esa tabla merecen leerse dos veces.** La primera: las cifras de
+física, que son las difíciles, **están todas bien**; lo que estaba mal es la
+aritmética del documento sobre sí mismo. Es coherente con cómo se llenó
+`INCONSISTENCIAS.md` —los números tienen un test detrás porque el proyecto los
+persigue; los inventarios no tenían ninguno—. La segunda: los cuatro
+directorios vacíos son **el mismo defecto que la PR anterior cerró en la raíz**,
+un nivel más abajo, donde no se miró.
+
+### 2. La comprobación que la ronda pedía: se puede, y no es una de las tres
+
+La pregunta era si de las tres clases ya asertadas se podía sacar una sola
+comprobación que cubriera también ésta. **La respuesta es que se puede escribir
+la comprobación y no se puede fundir con las tres**, y el motivo es concreto:
+
+- Las tres resuelven un **identificador**. Eso las hace totales y sin registro.
+- Una cuenta no tiene identificador que resolver. Necesita una **receta** —código
+  que vuelva a contar la cosa— y sólo una persona puede escribir «esta frase va
+  de los ficheros de `docs/adr/`». El registro es inevitable.
+
+`test_every_inventory_claim_the_door_makes_matches_the_tree` es esa cuarta
+comprobación, y la debilidad del registro está acotada igual que `CITED_ROOTS`
+acota la de las rutas: **es total sobre un vocabulario**. No busca las frases que
+conoce; busca todo «*número* + *sustantivo contable*» sobre trece sustantivos, y
+falla ante cualquiera que no tenga receta. Añadir una decimoquinta frase sobre
+ADRs al README queda cubierta sin tocar el test; inventar una clase nueva de cosa
+contable, no — y ese residuo es el coste honesto de la forma.
+
+Se vacía por el otro lado también, como las dos listas de excepciones de §45
+y §46: `test_every_counted_noun_is_claimed_somewhere` falla cuando un sustantivo
+deja de usarse, porque una receta que ninguna frase ejercita es código que nada
+puede falsar.
+
+**Y dos cosas que deliberadamente no cubre.** El **número de tests** —contar la
+suite desde dentro de la suite es autorreferencial: añadir un test a ese módulo
+cambia el número que el módulo aserta—, y por eso el README lo da con la fecha
+en que se midió. Y las **cifras de física**, que no lo necesitan: cada una tiene
+ya el test que la mide, y el README cita ese test. Lo que no estaba asertado
+nunca fue la física de la puerta. Era su aritmética sobre sí misma.
+
+**Tres falsos positivos, los tres útiles.** Al escribirlo, el escaneo marcó «en
+los dos **casos**» de `CLAUDE.md` —castellano corriente, no la tabla de
+validación—, y se arregló pidiendo la cola que la frase real siempre lleva
+(«N casos de M fuentes»). Marcó los **dos huecos** de la fila de `satquma.py`,
+que son un subconjunto y no un total: el vocabulario cuenta totales de
+repositorio, así que una cuenta con alcance tiene que deletrear su alcance, y
+esa es la frase que un lector frío necesitaba de todos modos. Y marcó
+«cinco **escenarios de bajada**» partido por el salto de línea a ochenta
+columnas, de donde salió que un sustantivo de varias palabras tiene que
+sobrevivir al plegado.
+
+### 3. `README.md` deja de ser un informe de estado
+
+Antes empezaba con un bloque de cita de setenta y tres líneas titulado
+«**Estado, al 2026-09-19**». Eso se lee bien si ya sabes lo que hay dentro. Hoy
+la primera frase es la pregunta que el simulador contesta, con «enlace óptico
+cuántico», «QKD» y «certifica» definidos donde se usan; la segunda sección son
+**las cuatro respuestas** —los tres expedientes y `docs/validation.md`— antes
+que ningún proceso; la tercera, instalar y correr. El estado de etapas y la
+estructura bajan al final, y el resto se va al ROADMAP.
+
+**Las cinco líneas de arranque se ejecutaron en un clon limpio, no se
+escribieron de memoria**, y ejecutarlas es lo que destapó que el wheel no lleva
+los escenarios.
+
+### 4. Citable, y qué significa citar un programa
+
+`CITATION.cff` —el formato que GitHub y Zenodo leen sin intervención—, tag
+`v0.1.0` y `CHANGELOG.md`. El ADR 0030 separa las dos preguntas que se confunden
+aquí: «cómo nombro esto en una bibliografía» (una versión, estable, con DOI) y
+«con qué código se calculó esta cifra» (un commit, que una versión no da porque
+cubre muchos árboles).
+
+`quoss --version` pasa de imprimir `quoss 0.1.0` a imprimir los **cuatro campos
+que `Provenance` ya escribía en cada resultado** —versión, commit, intérprete,
+numpy y scipy— para que la pregunta tenga una sola respuesta tanto si se le hace
+a un fichero como al comando. Es una acción propia de `argparse` y no
+`action="version"` por dos razones medidas: la de serie reenvuelve el texto al
+ancho del terminal (cuatro líneas salen como dos), y toma la cadena al construir
+el parser, con lo que **cada `quoss run` pagaría el subproceso `git rev-parse`**.
+
+**Y el commit no entra en los cuatro documentos commiteados, por una razón que
+no es preferencia.** `docs/validation.md` gana la cabecera de versión que le
+faltaba —los tres expedientes ya la tenían—, y no gana el commit porque git no
+puede meter el hash de un commit dentro de ese commit: la línea nombraría el
+anterior y el test byte a byte quedaría rojo para siempre. Peor: `git_commit()`
+vale `None` sin repositorio, así que los bytes dependerían de si la máquina
+tiene un `.git` al lado — **un test que informa de su entorno en vez de del
+código**, que es exactamente el defecto de §32.
+
+### 5. El ROADMAP deja de listar trabajo
+
+Hito B marcado como **alcanzado y cerrado**. La sección «Etapas 9–11» y la tabla
+«Trabajo abierto» se funden en **§ Disparadores**: siete filas que dicen qué
+tendría que ocurrir para abrir cada etapa, no cuándo se abrirá. Para la 2.4, la
+condición ya está medida (paralelizar el bucle de `propagator.py:535` **primero**,
+ADR 0026); para las 9–11, el ADR 0027. Una lista de trabajo envejece hacia
+«pendiente desde hace ocho meses»; una lista de condiciones o se cumple —y
+entonces hay una PR que escribir— o no, y mientras tanto el silencio es correcto.
+
+### Verificación
+
+| | |
+|---|---|
+| Suite | **3 993 passed**, 0 fallos (eran 3 968) |
+| `ruff check` / `ruff format --check` / `mypy` | limpios |
+| Arranque de cinco líneas | ejecutado en un clon limpio con venv nuevo |
+| Y de ahí una medida que no se buscaba | `quoss run` sobre el enlace de referencia son **4.8 s** de reloj, de los cuales la física es **0.117 s**: 0.6 s de importar numpy y scipy y **3.9 s de escribir el directorio** (CSV, `.npz` y un SHA-256 por fichero). El README lo desglosa, porque «0.1 s» a secas al lado de una orden que tarda cinco segundos es una cifra cierta que se lee como falsa |
+| Wheel | 102 entradas → **93**: caen los nueve `.gitkeep` que viajaban dentro |
+
+### Ficheros
+
+| Fichero | Qué |
+|---|---|
+| `README.md` | Reescrito como puerta: pregunta, respuestas, arranque, límites, citación, estado al final |
+| `CITATION.cff`, `CHANGELOG.md` | Nuevos. El segundo lleva el procedimiento de la siguiente versión y el de Zenodo, no sólo el resultado de ésta |
+| `docs/adr/0030-…` | Nuevo: por qué se cita una versión y por qué el commit no cabe en los cuatro documentos |
+| `src/quoss/cli/main.py` | `version_report()` y `_VersionAction` |
+| `src/quoss/validation/base.py` | Cabecera de versión en `docs/validation.md`, y la razón de que no lleve commit |
+| `tests/unit/test_notes.py` | La cuarta comprobación, su vocabulario, y su vaciado por el otro lado |
+| `tests/unit/test_project_config.py` | `CITATION.cff` contra `pyproject.toml` y `__init__.py`; el `CHANGELOG` tiene entrada para la versión que el paquete reporta |
+| `tests/cli/test_main.py` | `TestWhatVersionAnswers`, incluido el reenvuelto que sólo se ve como subproceso |
+| `CLAUDE.md` | Las cinco afirmaciones falsas de la tabla de arriba, y la columna de coste pasa a ser cota |
+| `notes/ROADMAP.md` | Hito B cerrado; § Disparadores; ADR 0030 en la tabla de numeración |
+| `notes/archive/LAST_CHANGES-44.md` | §44 archivada por la cota estructural |
+| 17 `.gitkeep` | Borrados, y con ellos cuatro directorios que prometían etapas |
