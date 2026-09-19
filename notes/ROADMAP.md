@@ -35,14 +35,14 @@ propia — y **V4 no es validación**.
 | 2.1 | `orbits/` | ✅ |
 | 2.2 | `channel/` | ✅ (9 módulos) |
 | 2.3 | `qkd/` | ✅ (un protocolo, por decisión) |
-| 2.4 | `kernels/` | ⬜ solo cuando el profiler lo pida |
+| 2.4 | `kernels/` | ⬜ solo cuando el profiler lo pida → [0026](../docs/adr/0026-the-language-ladder.md) |
 | 3 | `system/` | ✅ |
 | 4 | `scenario/` | ✅ |
 | 5 | `engine/` | ✅ |
 | 6 | `io/` | ✅ |
 | 7 | `cli/` + `viz/` | 🟨 `viz/` sí, `cli/` no |
 | 8 | `validation/` | 🟨 falta la fila de Ntanos y la tabla commiteada |
-| 9–11 | `api/`, `web/`, `deploy/` | ⬜ distribución, no ciencia |
+| 9–11 | `api/`, `web/`, `deploy/` | ⬜ distribución, no ciencia → [0027](../docs/adr/0027-four-levels-of-distribution.md) |
 
 **Hito A (fin de etapa 5):** simulador completo en Python, sin red y sin web.
 **Alcanzado.** **Hito B (fin de etapa 8):** resultados validados contra
@@ -133,7 +133,12 @@ algo que está terminado. Volver cuesta **un fichero** —una clase que implemen
 ### 2.4 `kernels/` — ⬜ solo cuando el profiler lo pida
 
 `base.py` (interfaz), `numpy_backend.py` (referencia, siempre existe),
-`numba_backend.py` (con golden test contra la de referencia).
+`numba_backend.py` (con golden test contra la de referencia). La escalera de
+lenguajes y las tres condiciones de entrada están en el
+[ADR 0026](../docs/adr/0026-the-language-ladder.md), que además mide por qué
+**hoy no toca**: el día de referencia entero tarda 121 ms, y en el caso grande
+—60 satélites, un día a 1 s— el factor 19 entre `ZONAL_NUMERIC` (55.6 s) y
+`TWO_BODY` (2.9 s) mide un bucle en serie, no la velocidad de la aritmética.
 
 ---
 
@@ -254,7 +259,9 @@ compatible, 1 no reproducido, 6 huecos. `tests/validation/` cubre el paquete al
 ## Etapas 9–11 — distribución, no ciencia ⬜
 
 **No se tocan antes de tiempo: hacerlas pronto es exactamente lo que acopló
-SimulCTTC.**
+SimulCTTC.** Los cuatro niveles de entrega —CLI, `serve`, Docker, cloud—, el
+orden en que se construyen y por qué la web es un **cliente** y no el simulador
+están en el [ADR 0027](../docs/adr/0027-four-levels-of-distribution.md).
 
 - **9. `api/`** — routers finos que traducen HTTP ↔ engine y nada más:
   `settings.py`, `deps.py`, `app.py`, `routes/{simulate,jobs,catalog}.py`,
@@ -293,7 +300,7 @@ SimulCTTC.**
 ## Numeración de ADRs
 
 Un ADR por decisión no obvia, numerado al escribirse y **nunca renumerado**. A
-2026-09-19 hay **veintitrés escritos** (0001–0016, 0019–0025) y **dos
+2026-09-19 hay **veinticinco escritos** (0001–0016, 0019–0027) y **dos
 reservados** por código que ya los cita por nombre:
 
 | Nº | Etapa | Estado |
@@ -302,6 +309,13 @@ reservados** por código que ya los cita por nombre:
 | **0017** | 7 (`viz/`) | **reservado**. `src/quoss/viz/plots.py` lo cita como `0017-publication-figures.md` |
 | **0018** | 8 (`validation/`) | **reservado**. `src/quoss/validation/__init__.py` lo cita como `0018-validation-is-a-table-not-a-badge.md` |
 | 0019–0025 | 3, 5, 2.2, 4 | escritos |
+| **0026** | 2.4 (`kernels/`) | escrito. La **escalera de lenguajes**, que gobierna una etapa que aún no existe |
+| **0027** | 7, 9–11 (`cli/`, `api/`, `web/`, `deploy/`) | escrito. Los **cuatro niveles de distribución** |
+
+Los dos últimos son el caso que conviene tener presente: **un ADR registra una
+decisión, no una implementación**, así que una etapa sin escribir no es objeción
+a que su decisión tenga dueño. Los dos estaban tomados desde el 2026-07-31 y
+vivían en `GUIA_REIMPLEMENTACION.md`, que no es donde se buscan las decisiones.
 
 Las dos citas dicen **en el propio código** que el fichero está pendiente, porque
 citar un fichero que no existe es la misma clase de afirmación sin cumplir que el

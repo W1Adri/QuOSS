@@ -162,7 +162,7 @@ scenarios/     ✅ siete escenarios versionados y reproducibles (.yaml): cinco d
 data/          ✅ catálogo de estaciones + snapshots offline con manifiesto
 tests/         ✅ unit · orbits · channel · qkd · system · scenario · engine
                   · io · viz · e2e · golden      ⬜ physics · api · validation
-docs/          ✅ 23 ADRs                        ⬜ manual de física autogenerado
+docs/          ✅ 25 ADRs                        ⬜ manual de física autogenerado
 benchmarks/    ⬜ puerta de regresión de rendimiento
 web/           ⬜ frontend (TS + Vite + Svelte), deps vendorizadas
 deploy/        ⬜ Dockerfile y compose — la imagen funciona offline
