@@ -112,7 +112,7 @@ alternativas descartadas de abajo.
 
 | Artefacto | Tamaño |
 |---|---|
-| `quoss-0.1.0-py3-none-any.whl` (`uv build`) | **644 KB**, 85 ficheros |
+| `quoss-0.1.0-py3-none-any.whl` (`uv build`) | **644 KB**, 85 ficheros al medir (2026-09-19); **648 KB y 90** con `cli/` dentro, desde el mismo día |
 | `quoss-0.1.0.tar.gz` (sdist) | 1.66 MB |
 | `numpy` instalado | 33 MB |
 | `scipy` instalado | 91 MB |
@@ -129,17 +129,28 @@ razón de que `pyarrow` y `numba` sean **extras** y no dependencias: el comentar
 de `pyproject.toml:48` («pyarrow, que son 40 MB y no es una dependencia de
 física») tenía la idea correcta y la cifra corta por un factor de casi cuatro.
 
-### Dos defectos del nivel 0 que esta medición destapa, y no cierra
+### Dos defectos del nivel 0 que esta medición destapa; uno ya está cerrado
 
-1. **`[project.scripts]` apunta a `quoss.cli.main:main` desde la etapa 0 y ese
-   módulo no existe.** Instalar el wheel deja un comando que arranca y revienta
-   con `ModuleNotFoundError`. Lo cierra la etapa 7.
-2. **El wheel no lleva `data/`.** Los 85 ficheros del wheel son `quoss/**/*.py` y
-   nada más: `data/ogs.yaml` y `data/snapshots/` se resuelven hoy relativos al
-   checkout, así que un `quoss run` desde una instalación no encontraría ni las
-   estaciones ni los snapshots. Es un defecto del **nivel 0**, el único nivel del
-   que depende todo lo demás, y por eso conviene que esté escrito aquí y no solo
-   en la etapa que lo arregle.
+1. **~~`[project.scripts]` apunta a `quoss.cli.main:main` desde la etapa 0 y ese
+   módulo no existe.~~ Cerrado el 2026-09-19** por el
+   [ADR 0028](0028-the-cli-computes-nothing.md), que escribe `cli/`. Medido
+   después: instalado el wheel en un `.venv` limpio **fuera del checkout**, el
+   comando `quoss` responde a `--version` y corre `quoss run` sobre los tres
+   escenarios probados —horizontal, bajada y TLE—, saliendo 0 y escribiendo su
+   directorio. El test que lo guarda ejecuta el script de consola **como
+   subproceso**, porque un `import` no ve una cadena de entry point equivocada.
+2. **El wheel no lleva `data/`, y esto sigue abierto.** Las 90 entradas del
+   wheel son `quoss/**/*.py`, los `.gitkeep` de los paquetes vacíos y el
+   `dist-info`: `data/ogs.yaml` y
+   `data/snapshots/` no viajan, y se resuelven relativos al fichero fuente. Con
+   el defecto 1 cerrado, esto **ya es alcanzable**, y se midió: desde la
+   instalación, `load_station_catalogue()` resuelve su ruta por defecto a
+   `<venv>/lib/python3.13/data/ogs.yaml` —un nivel por encima de
+   `site-packages`— y levanta `DataError: Station catalogue not found at …`. Es
+   un defecto del **nivel 0**, el único nivel del que depende todo lo demás, y
+   por eso está escrito aquí y en
+   [`INCONSISTENCIAS.md`](../../notes/INCONSISTENCIAS.md) #18, y no solo en la
+   etapa que lo arregle.
 
 ---
 

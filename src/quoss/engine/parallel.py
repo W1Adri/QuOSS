@@ -14,7 +14,7 @@ Python's global interpreter lock lets one thread execute Python bytecode at a
 time. The stages here are mostly NumPy calls that release it, but between
 those calls sit Pydantic properties, dataclass validation and SGP4 bookkeeping
 that do not, so threads would serialise exactly the part that is not already
-vectorised. ``notes/GUIA_REIMPLEMENTACION.md`` §2.2 names the defect this
+vectorised. ``notes/archive/GUIA_REIMPLEMENTACION-v3.md`` §2.2 names the defect this
 replaces: SimulCTTC's ``run_in_threadpool`` "sobre Python escalar no paraleliza
 nada (GIL)".
 

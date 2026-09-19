@@ -8,7 +8,7 @@ Both are slow to fetch compared with the physics that consumes them, both are
 rate-limited, and both change: a TLE is re-fitted several times a day, a
 reanalysis is re-issued. A cache turns "fetch it" into "fetch it once, then
 reuse the copy until it is too old", which is level (a) of the three-level
-cache in ``notes/GUIA_REIMPLEMENTACION.md`` §2.2.
+cache in ``notes/archive/GUIA_REIMPLEMENTACION-v3.md`` §2.2.
 
 Three decisions, each with its reason
 -------------------------------------

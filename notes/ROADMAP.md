@@ -35,12 +35,12 @@ propia — y **V4 no es validación**.
 | 2.1 | `orbits/` | ✅ |
 | 2.2 | `channel/` | ✅ (9 módulos) |
 | 2.3 | `qkd/` | ✅ (un protocolo, por decisión) |
-| 2.4 | `kernels/` | ⬜ solo cuando el profiler lo pida → [0026](../docs/adr/0026-the-language-ladder.md) |
+| 2.4 | `kernels/` | ⬜ **no justificada por ninguna medida de hoy** → [0026](../docs/adr/0026-the-language-ladder.md) |
 | 3 | `system/` | ✅ |
 | 4 | `scenario/` | ✅ |
 | 5 | `engine/` | ✅ |
 | 6 | `io/` | ✅ |
-| 7 | `cli/` + `viz/` | 🟨 `viz/` sí, `cli/` no |
+| 7 | `cli/` + `viz/` | ✅ |
 | 8 | `validation/` | 🟨 falta la fila de Ntanos y la tabla commiteada |
 | 9–11 | `api/`, `web/`, `deploy/` | ⬜ distribución, no ciencia → [0027](../docs/adr/0027-four-levels-of-distribution.md) |
 
@@ -130,15 +130,27 @@ algo que está terminado. Volver cuesta **un fichero** —una clase que implemen
 `LinkConditions` → `KeyRate`. Los controles negativos de `tests/qkd/test_base.py`
 (ocho deletreos que el registro rechaza) se quedan donde están.
 
-### 2.4 `kernels/` — ⬜ solo cuando el profiler lo pida
+### 2.4 `kernels/` — ⬜ **no justificada por ninguna medida de hoy**
 
 `base.py` (interfaz), `numpy_backend.py` (referencia, siempre existe),
 `numba_backend.py` (con golden test contra la de referencia). La escalera de
 lenguajes y las tres condiciones de entrada están en el
-[ADR 0026](../docs/adr/0026-the-language-ladder.md), que además mide por qué
-**hoy no toca**: el día de referencia entero tarda 121 ms, y en el caso grande
-—60 satélites, un día a 1 s— el factor 19 entre `ZONAL_NUMERIC` (55.6 s) y
-`TWO_BODY` (2.9 s) mide un bucle en serie, no la velocidad de la aritmética.
+[ADR 0026](../docs/adr/0026-the-language-ladder.md).
+
+**Estado reclasificado el 2026-09-19.** Esta etapa se citaba como justificada por
+los 55.6 s que tardan 60 satélites un día a 1 s. Esa cifra es correcta y está
+**atribuida al mecanismo equivocado**: 927 ms por satélite con S = 60 y 934 ms
+con S = 1 —menos del 1 % de dispersión— son la firma de un bucle estrictamente
+en serie (`orbits/propagator.py:535`), no de aritmética lenta. Para justificar la
+2.4 haría falta **volver a medir después de arreglar el bucle**; hasta entonces
+cualquier perfil del caso grande mide el serialismo.
+
+Y el arreglo es **paralelizar, no vectorizar**: cada satélite lleva su propia
+secuencia de pasos adaptativos dentro de DOP853, y vectorizar entre satélites
+exigiría renunciar al paso adaptativo por satélite, que es lo que hace fiable al
+integrador cerca de perigeo. La distinción, con lo que cuesta cada una, está en
+el ADR 0026 («El bucle no se puede vectorizar; lo que admite es paralelizar»), y
+el trabajo pertenece a `engine/parallel.py`, etapa 11.
 
 ---
 
@@ -213,32 +225,36 @@ todos los caminos con `fetch` falsos. Decisiones en el
 
 ---
 
-## Etapa 7 — `cli/` + `viz/`: ya es un simulador usable 🟨
+## Etapa 7 — `cli/` + `viz/`: ya es un simulador usable ✅
 
 Con esto ya puedes escribir el paper. **La web todavía no existe, y no pasa nada.**
 
-| Fichero | Qué | Estado |
+| Fichero | Qué | ADR |
 |---|---|---|
-| `cli/main.py` | entrada, subcomandos | ⬜ |
-| `cli/run.py` | `quoss run <escenario.yaml> --out <dir>`, despachando sobre el tag `link` | ⬜ |
-| `cli/sweep.py` | `quoss sweep <escenario.yaml> <spec>` | ⬜ |
-| `cli/validate.py` | `quoss validate` → corre `quoss.validation` | ⬜ |
-| `viz/style.py` | style sheet de publicación | ✅ |
-| `viz/plots.py` | SKR(t) con bandas, key volume, cobertura, barridos, clave horizontal contra distancia | ✅ |
-| `viz/figures.py` | figuras del paper, cada una desde un escenario versionado | ✅ |
-| `io/export.py` para `HorizontalResult` | hoy levanta `AttributeError` | ⬜ [INCONSISTENCIAS #15](INCONSISTENCIAS.md) |
-| `docs/adr/0017-publication-figures.md` | **reservado**, citado desde `viz/plots.py` | ⬜ |
+| ✅ `cli/main.py` | entrada, subcomandos, `argparse`. Un `QuossError` sale como mensaje, no como traceback | [0028](../docs/adr/0028-the-cli-computes-nothing.md) |
+| ✅ `cli/run.py` | `quoss run <escenario.yaml> --out <dir>`, despachando sobre el tag `link` sin opción que lo repita | [0028](../docs/adr/0028-the-cli-computes-nothing.md) |
+| ✅ `cli/sweep.py` | `quoss sweep <escenario.yaml> <spec.yaml>`; el spec es un **fichero** | [0028](../docs/adr/0028-the-cli-computes-nothing.md) |
+| ✅ `cli/validate.py` | `quoss validate` → corre `quoss.validation`; un desacuerdo publicado sale 0 | [0018](../docs/adr/0018-validation-is-a-table-not-a-badge.md) |
+| ✅ `cli/report.py` | los `warnings[]` **enteros**, y el estado de salida sobre el `DEGRADED` que el escenario no declara | [0028](../docs/adr/0028-the-cli-computes-nothing.md) |
+| ✅ `viz/style.py` | style sheet de publicación | [0017](../docs/adr/0017-publication-figures.md) |
+| ✅ `viz/plots.py` | SKR(t) con bandas, key volume, cobertura, barridos, clave horizontal contra distancia | [0017](../docs/adr/0017-publication-figures.md) |
+| ✅ `viz/figures.py` | figuras del paper, cada una desde un escenario versionado | [0017](../docs/adr/0017-publication-figures.md) |
+| ✅ `io/export.py`, forma `horizontal` | `budget.csv` + `session.csv`, sin `arrays.npz`, con la forma nombrada en `manifest.json` | [0028](../docs/adr/0028-the-cli-computes-nothing.md) |
+| ✅ `scenarios/sweeps/*.yaml` | specs de barrido versionados, porque una figura se reproduce desde algo commiteado | [0028](../docs/adr/0028-the-cli-computes-nothing.md) |
 
-**Defecto abierto que esta etapa cierra:** `[project.scripts]` apunta a
-`quoss.cli.main:main` desde la etapa 0 y ese módulo no existe, así que **instalar
-el paquete deja un comando roto**.
+**Los dos defectos que esta etapa cerró**, los dos abiertos desde antes de
+existir la etapa: `[project.scripts]` apuntaba a `quoss.cli.main:main` desde la
+etapa 0 y ese módulo no existía, así que **instalar el paquete dejaba un comando
+roto** —hay ahora un test que lo ejecuta como subproceso, porque un `import` no
+ve un entry point equivocado—; y `export_result` sobre un resultado horizontal
+levantaba `AttributeError` ([INCONSISTENCIAS #15](INCONSISTENCIAS.md), cerrada).
 
 ---
 
 ## Etapa 8 — `validation/`: credibilidad 🟨
 
 Barato y el mayor multiplicador de confianza que hay. Se ejecuta en CI. ADR de la
-etapa: el **0018**, reservado y citado desde `validation/__init__.py`.
+etapa: el [**0018**](../docs/adr/0018-validation-is-a-table-not-a-badge.md).
 
 | Fichero | Qué | Estado |
 |---|---|---|
@@ -246,9 +262,9 @@ etapa: el **0018**, reservado y citado desde `validation/__init__.py`.
 | `channel.py` | ITU-R P.1621-2, P.1622, y Farid & Hranilovic | ✅ |
 | `satquma.py` | dos identidades reproducidas y **dos huecos declarados** | ✅ |
 | `micius.py` | datos de misión real; el único `not_reproduced` que hay | ✅ |
+| `tests/validation/` | `cases.py`, `test_base.py`, `test_main.py`, `test_micius.py`, `test_satquma.py` | ✅ |
 | `ntanos2021.py` | la fuente del enlace de referencia entero. **La fila que falta** | ⬜ |
 | `docs/validation.md` | autogenerado, commiteado, y con un test que lo compara | ⬜ |
-| `docs/adr/0018-validation-is-a-table-not-a-badge.md` | **reservado** | ⬜ |
 
 **Estado al 2026-09-14:** 22 casos de tres fuentes — 14 reproducidos, 1
 compatible, 1 no reproducido, 6 huecos. `tests/validation/` cubre el paquete al
@@ -286,7 +302,7 @@ están en el [ADR 0027](../docs/adr/0027-four-levels-of-distribution.md).
 | etapa 8 | **Transcribir Vallado §9.6** (tasas seculares) como V2, comprobando primero si el libro imprime elementos medios u osculadores | sin transcribir |
 | etapa 8 | Reactivar `warn_unused_configs = true` en mypy | hoy `false` en `pyproject.toml:175` |
 | etapa 8 | ¿Reducción completa GCRF ↔ ITRF? El enum deja la puerta abierta; hoy no cambia ningún número publicable | no existe |
-| etapa 11 | **Paralelismo del bucle sobre satélites.** `ZONAL_NUMERIC` integra las S órbitas en serie. Pertenece a `engine/parallel.py`, no a la física. Medir antes: constelación de 60 y un día de rejilla | en serie |
+| etapa 11 | **Paralelismo del bucle sobre satélites.** `ZONAL_NUMERIC` integra las S órbitas en serie (`propagator.py:535`): 927 ms/satélite con S = 60 y 934 con S = 1. **Paralelizar, no vectorizar** — cada satélite lleva su propia secuencia de pasos adaptativos en DOP853 ([ADR 0026](../docs/adr/0026-the-language-ladder.md)). Pertenece a `engine/parallel.py`, no a la física, y es lo que hay que hacer **antes** de volver a medir la etapa 2.4 | en serie |
 | etapa 11 | `uv sync --all-extras` en CI arrastra `numba` en los tres jobs. Los grupos PEP 735 no se ven afectados | `ci.yml` líneas 40, 68, 112 |
 | etapa 11 | El suelo `numpy>=1.26` no está testeado: CI corre con la versión resuelta, no con la mínima declarada | sin job de mínimos |
 | cuando duela | **Coste de la suite.** Casi todo integraciones DOP853 de `test_perturbations.py`. Recortar revoluciones antes que tolerancias | ver §41 |
@@ -300,27 +316,27 @@ están en el [ADR 0027](../docs/adr/0027-four-levels-of-distribution.md).
 ## Numeración de ADRs
 
 Un ADR por decisión no obvia, numerado al escribirse y **nunca renumerado**. A
-2026-09-19 hay **veinticinco escritos** (0001–0016, 0019–0027) y **dos
-reservados** por código que ya los cita por nombre:
+2026-09-19 hay **veintiocho escritos** (0001–0028) y **ninguno reservado**.
 
-| Nº | Etapa | Estado |
+| Nº | Etapa | Qué gobierna |
 |---|---|---|
 | 0001–0016 | 0–5 | escritos |
-| **0017** | 7 (`viz/`) | **reservado**. `src/quoss/viz/plots.py` lo cita como `0017-publication-figures.md` |
-| **0018** | 8 (`validation/`) | **reservado**. `src/quoss/validation/__init__.py` lo cita como `0018-validation-is-a-table-not-a-badge.md` |
+| **0017** | 7 (`viz/`) | Las **figuras de publicación**: los dos paneles, la banda plana-a-esférica que no es una barra de error, y la región de Rayleigh que se estrecha por la razón equivocada |
+| **0018** | 8 (`validation/`) | **«Validado» es una tabla que se recalcula**, no una insignia: el estado derivado, los cuatro valores, y por qué un desacuerdo publicado sale 0 |
 | 0019–0025 | 3, 5, 2.2, 4 | escritos |
-| **0026** | 2.4 (`kernels/`) | escrito. La **escalera de lenguajes**, que gobierna una etapa que aún no existe |
-| **0027** | 7, 9–11 (`cli/`, `api/`, `web/`, `deploy/`) | escrito. Los **cuatro niveles de distribución** |
+| **0026** | 2.4 (`kernels/`) | La **escalera de lenguajes**, que gobierna una etapa que aún no existe |
+| **0027** | 7, 9–11 (`cli/`, `api/`, `web/`, `deploy/`) | Los **cuatro niveles de distribución** |
+| **0028** | 7 (`cli/`) + 6 (`io/export.py`) | **La CLI no calcula nada**, y un resultado horizontal tiene su propia forma de directorio |
 
-Los dos últimos son el caso que conviene tener presente: **un ADR registra una
-decisión, no una implementación**, así que una etapa sin escribir no es objeción
-a que su decisión tenga dueño. Los dos estaban tomados desde el 2026-07-31 y
-vivían en `GUIA_REIMPLEMENTACION.md`, que no es donde se buscan las decisiones.
+**Los 0017 y 0018 estuvieron reservados cinco días**, del 2026-09-14 al
+2026-09-19, porque `viz/plots.py` y `validation/__init__.py` ya los citaban por
+su nombre exacto. Quien escribió las etapas usó **esos** números y no el
+siguiente libre, que es de lo que sirve reservar. El 0028 es el primer número
+nuevo desde entonces.
 
-Las dos citas dicen **en el propio código** que el fichero está pendiente, porque
-citar un fichero que no existe es la misma clase de afirmación sin cumplir que el
-ADR 0016 corrige. Quien escriba la etapa 7 o la 8 usa **ese** número, no el
-siguiente libre.
+Y el 0026 y el 0027 siguen siendo el caso que conviene tener presente: **un ADR
+registra una decisión, no una implementación**, así que una etapa sin escribir no
+es objeción a que su decisión tenga dueño.
 
 ---
 

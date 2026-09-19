@@ -2,7 +2,8 @@
 
 Why a simulator ships copies of somebody else's data
 ----------------------------------------------------
-``notes/GUIA_REIMPLEMENTACION.md`` §5 sets the requirement in one line: *the
+``notes/archive/GUIA_REIMPLEMENTACION-v3.md``
+§5 sets the requirement in one line: *the
 demo cannot depend on CelesTrak or Open-Meteo answering*. A conference demo,
 a CI job and a reviewer re-running a figure all need the same TLE and the
 same cloud series the paper used, on a machine that may have no network and

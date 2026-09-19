@@ -6,7 +6,7 @@ A run is a pure function of three things: the scenario's physics, the code that
 evaluated it, and — for a Monte Carlo — the seed. :class:`ResultCache` stores a
 :class:`~quoss.scenario.result.SimulationResult` under a key built from exactly
 those three, and hands it back when the same three come again.
-``notes/GUIA_REIMPLEMENTACION.md`` §2.2 asks for this third cache level
+``notes/archive/GUIA_REIMPLEMENTACION-v3.md`` §2.2 asks for this third cache level
 ("caché de resultados *content-addressed* por hash de escenario. Re-ejecutar
 una figura debe ser gratis").
 

@@ -12,9 +12,14 @@ first. That is what "canonical" means here: one byte string per physics.
 
 What goes in, and what is left out
 ----------------------------------
-``name`` and ``description`` are **excluded**. They are labels for humans; two
-scenarios that differ only in them describe the same run and must share a
-cache entry, otherwise renaming a file would re-run a day of Monte Carlo.
+:data:`~quoss.scenario.models.HASH_EXCLUDED_FIELDS` is **excluded**, and it is
+three fields. ``name`` and ``description`` are labels for humans; two scenarios
+that differ only in them describe the same run and must share a cache entry,
+otherwise renaming a file would re-run a day of Monte Carlo.
+``expected_degradations`` is excluded for a related but distinct reason: it
+lists the substituted models the author has already accepted, which changes
+what ``quoss run`` *exits with* and nothing about what it *computes*. Accepting
+a warning must not invalidate a cached day of Monte Carlo.
 Everything else is included, options too: a scenario with 200 realisations is
 a different computation from one with 2000, and ``schema_version`` is
 included because the same numbers under a different schema mean different
@@ -65,12 +70,9 @@ from __future__ import annotations
 import hashlib
 import json
 
-from quoss.scenario.models import AnyScenario
+from quoss.scenario.models import HASH_EXCLUDED_FIELDS, AnyScenario
 
 __all__ = ["HASH_EXCLUDED_FIELDS", "canonical_json", "scenario_hash"]
-
-HASH_EXCLUDED_FIELDS: frozenset[str] = frozenset({"name", "description"})
-"""Top-level fields that are labels, not physics, and stay out of the digest."""
 
 
 def canonical_json(scenario: AnyScenario) -> str:

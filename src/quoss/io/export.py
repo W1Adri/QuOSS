@@ -11,8 +11,28 @@ memory. This module writes both from the same object, and adds a
 ``manifest.json`` that lists every file it wrote with its SHA-256, so the
 directory can be checked for completeness and for silent edits.
 
-What is written
----------------
+Two shapes, because there are two results
+-----------------------------------------
+Since ADR 0024 a run returns one of two containers, and they have nothing in
+common below the provenance: a :class:`~quoss.scenario.result.SimulationResult`
+is tables over passes and days plus per-station time series, and a
+:class:`~quoss.scenario.result.HorizontalResult` is one loss budget and one
+measurement session, a few dozen scalars, with no pass, no day and no array.
+So this module writes **two directory shapes**, ``"downlink"`` and
+``"horizontal"``, and ``manifest.json`` names which one under ``export.shape``.
+
+The alternative -- one shape with the inapplicable tables left out -- was
+rejected for the reason ADR 0024 rejected zero-length arrays: a consumer cannot
+tell "does not apply" from "came out empty". A missing ``passes.csv`` reads as
+"the export failed", or "CSV was not requested", exactly as readily as "this
+link has no passes", and the reader who picks wrong gets no error. The shape
+name answers that before a single file is opened. ADR 0028 records the
+decision, including why the two results are told apart by which method they
+offer (:class:`ExportableResult` versus :class:`ScalarBlockResult`) rather than
+by an import of their classes.
+
+What is written, ``downlink`` shape
+------------------------------------
 Given ``formats``, a subset of ``("json", "csv", "npz", "parquet")``:
 
 ``manifest.json`` (always)
@@ -42,6 +62,30 @@ Given ``formats``, a subset of ``("json", "csv", "npz", "parquet")``:
     :class:`~quoss.core.errors.ConfigurationError` and writes nothing for
     that format. It does not skip: a caller who asked for Parquet and got a
     directory without it would read the absence as "no data".
+
+What is written, ``horizontal`` shape
+-------------------------------------
+``manifest.json`` and ``README.txt`` as above, plus:
+
+``budget.csv`` (``"csv"``), ``budget.parquet`` (``"parquet"``)
+    One row, one column per term of the loss budget, in dB and linear as the
+    result stores them.
+``session.csv`` (``"session"`` block; ``"csv"``/``"parquet"``)
+    One row: the declared block length, the pulses, the finite and asymptotic
+    bits, the two error rates, the noise per gate, the two failure
+    probabilities, plus the three derived columns
+    ``finite_bit_s``, ``asymptotic_bit_s`` and ``has_key``.
+``result.json`` (``"json"``)
+    The same envelope as the downlink shape, ``{"manifest": ..., "arrays": {}}``,
+    so one parser reads both. ``HorizontalResult.from_dict(doc["manifest"])``
+    rebuilds the result exactly; ``tests/io/test_export.py`` asserts it
+    field by field.
+
+**One row and not one row per term**, so that N exported runs concatenate into
+an N-row table -- which is what a sweep over distance looks like on disk. And
+**no ``arrays.npz``**: asking for ``"npz"`` here records an ``INFO``
+``io.export-no-arrays`` and writes nothing, because an empty archive is
+indistinguishable from an export whose arrays came out empty.
 
 The tables, and the columns that are derived
 ---------------------------------------------
@@ -122,7 +166,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
 import numpy as np
 
@@ -134,19 +178,48 @@ from quoss.orbits.frames import jd_to_calendar
 __all__ = [
     "ARRAY_MARKER",
     "FORMATS",
+    "SHAPES",
+    "AnyExportable",
     "ExportManifest",
     "ExportableResult",
     "ExportedFile",
+    "ScalarBlockResult",
     "export_result",
 ]
 
 FORMATS = ("json", "csv", "npz", "parquet")
 """Every format string :func:`export_result` accepts."""
 
+SHAPES = ("downlink", "horizontal")
+"""The two directory shapes, named in ``manifest.json`` under ``export.shape``.
+
+Not a cosmetic label. The two directories hold different files -- one has
+``passes.csv``, ``daily.csv``, ``series_<station>.csv`` and ``arrays.npz``, the
+other has ``budget.csv`` and ``session.csv`` -- and without a name for which is
+which, a consumer would have to infer it from what is *missing*. An absent file
+reads as "the export failed" or "that format was not requested" just as easily
+as "this geometry has no passes", and picking the wrong reading is a silent
+error. With the name, the question is answered by one string before any file is
+opened. ADR 0028.
+"""
+
 ARRAY_MARKER = "$array"
 """Key of the placeholder a manifest holds where an array was pulled out (``scenario/result.py``)."""
 
 _WHERE = "quoss.io.export.export_result"
+
+_SHAPE_NOTE = {
+    "downlink": (
+        "A satellite run: tables over passes and days, per-station time series, and every "
+        "array at full precision in arrays.npz."
+    ),
+    "horizontal": (
+        "A horizontal run: one loss budget and one measurement session, one row each. There "
+        "is no pass axis, no day axis and no array, so passes.csv, daily.csv, series_*.csv "
+        "and arrays.npz are absent because they do not apply -- not because they came out "
+        "empty."
+    ),
+}
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9_.-]+")
 _SECONDS_PER_DAY = 86_400.0
 
@@ -154,12 +227,49 @@ Table = tuple[tuple[str, ...], list[list[Any]]]
 """``(columns, rows)`` with every row the length of ``columns``."""
 
 
+@runtime_checkable
 class ExportableResult(Protocol):
-    """The one method a result needs for :func:`export_result`."""
+    """A result with arrays: the ``downlink`` shape.
+
+    Satisfied by :class:`~quoss.scenario.result.SimulationResult`, and by
+    anything else that can hand over a manifest with ``{"$array": key}`` markers
+    plus the arrays those keys name.
+    """
 
     def to_manifest_and_arrays(self) -> tuple[dict[str, Any], dict[str, np.ndarray[Any, Any]]]:
         """Return a JSON-serialisable manifest and a flat dict of arrays."""
         ...
+
+
+@runtime_checkable
+class ScalarBlockResult(Protocol):
+    """A result with no arrays at all: the ``horizontal`` shape.
+
+    Satisfied by :class:`~quoss.scenario.result.HorizontalResult`. A *block* is
+    one row -- a mapping of column name to scalar -- and a result of this kind
+    is a few dozen of them, so there is no ``.npz`` to write and no table over a
+    pass axis to write it from.
+
+    Why two protocols and not one method with an empty arrays dict
+    ---------------------------------------------------------------
+    Because the empty dict is exactly what must never happen quietly. A
+    horizontal result that satisfied :class:`ExportableResult` would export
+    through the downlink path, find no ``passes`` and no ``daily`` in its
+    manifest, record two ``INFO`` lines and write an ``arrays.npz`` holding
+    nothing -- a directory that looks like a downlink export of a link that
+    certified nothing. The two protocols have **no method in common**, so the
+    type checker refuses that path before it can be taken, and
+    :func:`export_result` narrows on the method that is present rather than on a
+    class it would have to import. ADR 0028.
+    """
+
+    def to_manifest_and_blocks(self) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+        """Return a JSON-serialisable manifest and the named one-row blocks."""
+        ...
+
+
+AnyExportable = ExportableResult | ScalarBlockResult
+"""Either shape of result. :func:`export_result` narrows it by ``isinstance``."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -201,12 +311,15 @@ class ExportManifest:
         The formats requested, deduplicated, in request order.
     created_utc : str
         ISO-8601 UTC time of the export.
+    shape : str
+        One of :data:`SHAPES`: which directory was written.
     """
 
     directory: Path
     files: tuple[ExportedFile, ...]
     formats: tuple[str, ...]
     created_utc: str
+    shape: str = "downlink"
 
     @property
     def manifest_path(self) -> Path:
@@ -215,7 +328,7 @@ class ExportManifest:
 
 
 def export_result(
-    result: ExportableResult,
+    result: AnyExportable,
     directory: Path,
     *,
     formats: Sequence[str] = ("json", "csv", "npz"),
@@ -223,10 +336,25 @@ def export_result(
 ) -> ExportManifest:
     """Write ``result`` to ``directory`` in the requested formats.
 
+    Two directory shapes, chosen by the result and named in ``manifest.json``
+    ----------------------------------------------------------------------------
+    A result that offers ``to_manifest_and_arrays()``
+    (:class:`ExportableResult`, which is what a
+    :class:`~quoss.scenario.result.SimulationResult` is) gets the ``downlink``
+    shape: ``passes.csv``, ``daily.csv``, ``series_<station>.csv``,
+    ``arrays.npz``. A result that offers ``to_manifest_and_blocks()``
+    (:class:`ScalarBlockResult`, which is what a
+    :class:`~quoss.scenario.result.HorizontalResult` is) gets the ``horizontal``
+    shape: ``budget.csv`` and ``session.csv``, one row each, and **no**
+    ``arrays.npz``, because there are no arrays. Asking for ``"npz"`` on that
+    shape records an ``INFO`` ``io.export-no-arrays`` and writes nothing rather
+    than writing an empty archive; an empty ``.npz`` is the file-level version
+    of the zero-length array that ADR 0024 refused.
+
     Parameters
     ----------
-    result : ExportableResult
-        Anything with ``to_manifest_and_arrays()``.
+    result : ExportableResult or ScalarBlockResult
+        Narrowed by which of the two methods it has; the protocols share none.
     directory : Path
         Created if absent. Existing files with the same names are overwritten;
         other files are left alone and are *not* listed in the manifest.
@@ -234,30 +362,52 @@ def export_result(
         Subset of :data:`FORMATS`; ``("json", "csv", "npz")`` by default.
         The groups are written CSV, npz, Parquet, JSON regardless of order.
     degradations : DegradationLog
-        Required; receives ``io.export-table-absent`` (INFO) for every table
-        the result does not carry.
+        Required; receives ``io.export-table-absent`` (INFO) for every table the
+        downlink shape does not carry, and ``io.export-no-arrays`` (INFO) when
+        ``"npz"`` is asked of the horizontal shape.
 
     Returns
     -------
     ExportManifest
-        The files written, with hashes.
+        The files written, with hashes, and the shape they are in.
 
     Raises
     ------
     DomainError
         On an unknown or empty ``formats``; on a manifest marker whose array is
         missing; on a station name that collides with another after being
-        made filesystem-safe; on table columns of unequal length.
+        made filesystem-safe; on table columns of unequal length; on a block
+        that is not a flat mapping of scalars.
     ConfigurationError
         If ``"parquet"`` is requested and ``pyarrow`` cannot be imported.
     """
     chosen = _validate_formats(formats)
-    manifest, arrays = result.to_manifest_and_arrays()
     out_dir = Path(directory)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    tables = _collect_tables(manifest, arrays, degradations=degradations)
-    series = _collect_series(manifest, arrays, degradations=degradations)
+    arrays: dict[str, np.ndarray[Any, Any]]
+    series: dict[str, Table]
+    if isinstance(result, ScalarBlockResult):
+        shape = "horizontal"
+        manifest, blocks = result.to_manifest_and_blocks()
+        arrays, series = {}, {}
+        tables = _tables_from_blocks(blocks)
+        if "npz" in chosen:
+            degradations.info(
+                "io.export-no-arrays",
+                "this result holds no arrays -- it is a few dozen scalars -- so arrays.npz is "
+                "not written. An empty archive would be indistinguishable from an export whose "
+                "arrays came out empty, which is the reading ADR 0024 refused for zero-length "
+                "arrays and this refuses for zero-length files. The whole result is in "
+                "result.json and in manifest.json.",
+                where=_WHERE,
+                shape=shape,
+            )
+    else:
+        shape = "downlink"
+        manifest, arrays = result.to_manifest_and_arrays()
+        tables = _collect_tables(manifest, arrays, degradations=degradations)
+        series = _collect_series(manifest, arrays, degradations=degradations)
     written: list[ExportedFile] = []
 
     if "csv" in chosen:
@@ -265,7 +415,7 @@ def export_result(
             written.append(_write_csv(out_dir / f"{name}.csv", columns, rows))
         for station, (columns, rows) in series.items():
             written.append(_write_csv(out_dir / f"series_{station}.csv", columns, rows))
-    if "npz" in chosen:
+    if "npz" in chosen and shape == "downlink":
         written.append(_write_npz(out_dir / "arrays.npz", arrays))
     if "parquet" in chosen:
         pyarrow = _import_pyarrow()
@@ -283,6 +433,7 @@ def export_result(
         "export": {
             "created_utc": created_utc,
             "formats": list(chosen),
+            "shape": shape,
             "quoss_version": quoss.__version__,
         },
         "files": [f.to_dict() for f in written],
@@ -290,11 +441,16 @@ def export_result(
     }
     manifest_file = _write_bytes(out_dir / "manifest.json", _json_bytes(document, indent=2))
     _write_bytes(
-        out_dir / "README.txt", _readme([*written, manifest_file], created_utc).encode("utf-8")
+        out_dir / "README.txt",
+        _readme([*written, manifest_file], created_utc, shape).encode("utf-8"),
     )
 
     return ExportManifest(
-        directory=out_dir, files=tuple(written), formats=chosen, created_utc=created_utc
+        directory=out_dir,
+        files=tuple(written),
+        formats=chosen,
+        created_utc=created_utc,
+        shape=shape,
     )
 
 
@@ -361,6 +517,36 @@ def _table_from_rows(rows: Sequence[Mapping[str, Any]]) -> Table:
             if key not in columns:
                 columns.append(str(key))
     return tuple(columns), [[row.get(c) for c in columns] for row in rows]
+
+
+def _tables_from_blocks(blocks: Mapping[str, Mapping[str, Any]]) -> dict[str, Table]:
+    """Turn ``{block: {column: scalar}}`` into one one-row table per block.
+
+    No ``degradations`` argument and no "table absent" path, unlike
+    :func:`_collect_tables`: a scalar-block result declares its blocks by
+    returning them, and a block it did not return is not a table that came out
+    empty. The failure this *does* have to catch is a block that is not flat --
+    a nested mapping or a list would silently become a JSON string in a cell,
+    which reads as data and is not.
+
+    Raises
+    ------
+    DomainError
+        If a block is not a mapping, is empty, or holds anything but a scalar.
+    """
+    out: dict[str, Table] = {}
+    for name, block in blocks.items():
+        if not isinstance(block, Mapping) or not block:
+            raise DomainError(f"Block {name!r} must be a non-empty mapping, got {block!r}.")
+        for column, value in block.items():
+            if isinstance(value, Mapping | list | tuple | np.ndarray):
+                raise DomainError(
+                    f"Block {name!r} column {column!r} holds {type(value).__name__}, not a "
+                    f"scalar. A block is one row; nested data belongs in the manifest."
+                )
+        columns = tuple(str(c) for c in block)
+        out[str(name)] = (columns, [[block[c] for c in block]])
+    return out
 
 
 def _collect_tables(
@@ -602,9 +788,10 @@ def _describe(path: Path) -> ExportedFile:
     )
 
 
-def _readme(files: Sequence[ExportedFile], created_utc: str) -> str:
+def _readme(files: Sequence[ExportedFile], created_utc: str, shape: str) -> str:
     lines = [
-        f"QuOSS {quoss.__version__} result export, {created_utc}.",
+        f"QuOSS {quoss.__version__} result export, {created_utc}, shape {shape!r}.",
+        _SHAPE_NOTE[shape],
         "Every file written by this export, with its SHA-256 (README.txt itself excluded):",
         "",
     ]

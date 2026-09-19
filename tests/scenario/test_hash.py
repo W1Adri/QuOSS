@@ -199,7 +199,26 @@ class TestLabelsAreNotPhysics:
         renamed = base.model_copy(update={"name": "something else", "description": "and more"})
         assert renamed != base
         assert scenario_hash(renamed) == scenario_hash(base)
-        assert HASH_EXCLUDED_FIELDS == {"name", "description"}
+
+    def test_the_exclusion_list_is_exactly_these_three(self) -> None:
+        """Three, and the third is not a label. Spelled out so a fourth cannot be quiet.
+
+        ``expected_degradations`` (ADR 0028) lists the substituted models the
+        author has already accepted. It changes what ``quoss run`` *exits with*
+        and nothing about what it *computes*, so accepting a warning must not
+        invalidate a cached day of Monte Carlo. Every other field is physics and
+        belongs in the digest; adding one here without a reason of that kind is
+        how two runs that differ start sharing an entry.
+        """
+        assert HASH_EXCLUDED_FIELDS == {"name", "description", "expected_degradations"}
+
+    def test_accepting_a_degradation_does_not_move_the_digest(self) -> None:
+        base = reference_castelldefels()
+        accepting = base.model_copy(
+            update={"expected_degradations": ("background.sky-radiance-interpolated",)}
+        )
+        assert accepting != base
+        assert scenario_hash(accepting) == scenario_hash(base)
 
     def test_the_label_text_is_absent_from_the_canonical_form(self) -> None:
         text = canonical_json(reference_castelldefels())

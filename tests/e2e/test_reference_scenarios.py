@@ -2229,8 +2229,9 @@ class TestTheMaskSweepInBothRegimes:
         """No tolerance: the difference is an identity, cell by cell.
 
         A tolerance chosen to cover 786 bits would also cover a real 700-bit
-        change in the physics, which is the failure mode
-        ``notes/GUIA_REIMPLEMENTACION.md`` calls a tolerance that cannot fail.
+        change in the physics, which is the failure mode ``CLAUDE.md``
+        ("Tolerancias derivadas, no ajustadas") calls a tolerance that cannot
+        fail. The guide was cited here and never held that rule.
         This asserts the residual **equals** what one argument is worth.
         """
         residuals: dict[tuple[float, ScintillationRegime], float] = {}

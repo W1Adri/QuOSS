@@ -284,7 +284,7 @@ conservador.
 **Por qué.** Lo contrario pondría doce argumentos de presupuesto óptico en esta
 firma y haría que `quoss.system` dependiera de cada perilla de `quoss.channel`,
 rompiendo el `core ← física ← system` de la
-[guía](../../notes/GUIA_REIMPLEMENTACION.md). El contrato se comprueba por
+[regla de oro del orden](../../notes/ROADMAP.md). El contrato se comprueba por
 longitud, y el docstring dice explícitamente que el **orden** es parte del
 contrato y no una convención: una longitud correcta en otro orden atribuiría cada
 transmitancia al instante equivocado y nada aguas abajo podría notarlo.

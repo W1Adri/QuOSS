@@ -239,20 +239,70 @@ absorbidos en una tolerancia:
    0.1 m — lo que localiza los 25 m en la rotación, donde el libro arrastra menos
    cifras de las que imprime.
 
-Una cuarta observación ya no queda como hallazgo abierto: la fuente de la que se
-transcribieron los ejemplos daba también `u = 145.60549°` como argumento de
-latitud del 2-5. La página escaneada (Vallado, p. 116) confirma ese número
-impreso y revela **dos errores en la propia página**:
+### La errata de la p. 116, y por qué es una **exclusión** de V2
 
-1. `|r|` se usa como `11456.67 km` en la sustitución, cuando el valor correcto
-   calculado antes en el mismo ejemplo es `11456.57 km` (transposición 57 → 67).
-2. Evaluando la expresión impresa con ese `|r|` erróneo se obtiene `145.7194°`,
-   no `145.60549°`. No existe ninguna definición de `u` que recupere el número
-   impreso.
+Esto vivía como comentario dentro de `tests/orbits/test_kepler.py`. Sube aquí
+porque es una **exclusión del conjunto V2 de este ADR** —un número publicado que
+este proyecto declara no utilizable— y una exclusión que vive en un comentario
+de un test se pierde en el primer refactor de ese test, mientras el número sigue
+impreso en el libro esperando a que alguien lo vuelva a transcribir. El test la
+**cita** ahora en lugar de contenerla.
 
-El valor correcto es `u = 145.720087380597°`, confirmado por `ω + ν` y por la
-fórmula vectorial. `u = 145.60549°` queda registrado como errata documentada de
-Vallado 4.ª ed., y el test `test_argument_of_latitude_errata` lo afirma.
+**Qué es un «argumento de latitud», primero, porque el resto no se lee sin
+eso.** `u` es cuánto ha avanzado el satélite desde que cruzó el ecuador hacia el
+norte, medido sobre el plano de su propia órbita. Para una órbita que no es
+circular vale `u = ω + ν`: el argumento del perigeo (dónde está el punto más
+bajo) más la anomalía verdadera (cuánto se ha alejado el satélite de ese punto).
+Vallado lo calcula además por la fórmula vectorial
+`u = arccos(n·r / (|n| |r|))`, donde `n` es el vector nodal —el que apunta al
+cruce ascendente del ecuador—. Las dos rutas tienen que dar lo mismo, y es lo
+que hace útil el ejemplo: son dos caminos independientes al mismo número.
+
+**Qué imprime la página.** `u = 145.60549°`, con los operandos
+`|n| = 66374.17`, `|r| = 11456.67` y
+`n·r = (−44500.5)(6524.834) + (−49246.7)(6862.875)`.
+
+**Los dos errores, y el tercer hecho, que es el que cierra la exclusión:**
+
+1. **`|r|` lleva una transposición.** El propio ejemplo calcula antes
+   `|r| = 11456.57 km`; la sustitución usa `11456.67` (57 → 67).
+2. **Con los operandos de la página, la fórmula de la página da `145.7193795°`**,
+   no `145.60549°`. Es decir: la fórmula está bien transcrita —esto se reproduce,
+   no se afirma— y el resultado impreso no se sigue de ella.
+3. **Y no hay ningún `|r|` que lo arregle, que es lo que convierte «está mal» en
+   «no es utilizable».** Despejando `|r|` de la propia expresión de la página
+   para que devuelva el número impreso:
+
+   ```
+   |r| = n·r / (|n| · cos 145.60549°) = 11472.237 km
+   ```
+
+   Ese valor **no aparece en ningún sitio de la página**, y está a **15.57 km**
+   del `|r|` que la página sí imprime y a **15.67 km** del correcto: un 0.136 %,
+   contra el 8.7e-4 % que vale la transposición. No es un redondeo ni una cifra
+   perdida al copiar. La conclusión, entonces, no es «el número impreso sale de
+   otro `|r|`»: es que **no sale de ninguno**, y por eso no se puede reconciliar.
+
+**El valor correcto es `u = 145.720087380597°`**, confirmado por dos rutas
+independientes que coinciden a precisión de máquina: `ω + ν` con los elementos
+reconstruidos, y la fórmula vectorial con los `r` y `v` publicados. El hueco
+contra el número impreso son **0.1146°**, **160 veces** los 7.1e-4° que vale la
+transposición de `|r|` — y ese factor 160 es la medida de que el typo no explica
+la errata.
+
+**Qué significa como política, que es para lo que está esto aquí.**
+`145.60549°` **no entra en el conjunto V2**: no se usa como referencia, no se
+usa como cota, y no se «cubre» ensanchando una tolerancia. Una tolerancia de
+0.12° pasaría también por encima de un error real de 0.1° en
+`ClassicalElements.argument_of_latitude_rad`, que es exactamente la regla de
+tolerancias derivadas de `CLAUDE.md`: una cota elegida para que pase el
+resultado de hoy no puede fallar nunca. Queda registrado como errata documentada
+de Vallado 4.ª ed., y se aserta como tal en
+`tests/orbits/test_kepler.py::TestPublishedVallado25`:
+`test_argument_of_latitude_errata` reproduce la aritmética de la página y mide
+el factor 160, y `test_no_printed_radius_recovers_the_printed_angle` despeja el
+`|r|` del punto 3 y comprueba que está a quince kilómetros de los dos únicos que
+la página conoce.
 
 ### El oráculo V3, y por qué no está congelado
 

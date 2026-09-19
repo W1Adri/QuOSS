@@ -4,7 +4,8 @@ What a sweep is, for someone arriving new
 -----------------------------------------
 A figure in a paper is almost always a sweep: the same simulation run at
 several values of one or two parameters, and one number read off each run.
-``notes/GUIA_REIMPLEMENTACION.md`` §5 names the symptom of not having them in the
+``notes/archive/GUIA_REIMPLEMENTACION-v3.md``
+§5 names the symptom of not having them in the
 engine — a 544-line ``routers/paper.py`` in SimulCTTC. :func:`run_sweep` takes
 a base :class:`~quoss.scenario.models.Scenario`, a :class:`SweepSpec` naming
 **dotted paths** into it (``passes.minimum_elevation_deg``,

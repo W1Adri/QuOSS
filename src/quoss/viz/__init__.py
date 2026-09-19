@@ -3,7 +3,8 @@
 A figure is the last place a number can be misread, so this package draws only
 what a :class:`~quoss.scenario.result.SimulationResult` (or a sweep's records)
 already contains and computes no physics of its own — one formula, one place
-(``notes/GUIA_REIMPLEMENTACION.md`` §1). What it does add is the visual
+(``notes/archive/GUIA_REIMPLEMENTACION-v3.md`` §1,
+principle 4). What it does add is the visual
 vocabulary the project's rules need: finite key solid, asymptotic key hatched
 and labelled "asymptotic (not certified)", and a visible ``DEGRADED`` footnote
 on any figure whose result recorded a substituted model.

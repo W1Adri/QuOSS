@@ -6,19 +6,20 @@ protocolo QKD → métricas de sistema (SKR, volumen de clave, outage).
 Núcleo Python puro y **vectorizado sobre el eje temporal**, sin dependencias web. La
 CLI, la API y el frontend son *consumidores* del mismo motor, no parte de él.
 
-> **Estado, al 2026-09-14.** Las etapas **0 a 6 están cerradas**: `core/`,
-> `orbits/`, `channel/`, `qkd/`, `system/`, `scenario/`, `engine/` e `io/`. Eso
-> significa que `run(scenario) → result` funciona de punta a punta desde un YAML
-> versionado: un día del enlace de referencia son **0.1 s** y 4 pases. De la
-> etapa 7 hay `viz/` y **no** hay `cli/`; de la 8, `validation/` está a medias.
+> **Estado, al 2026-09-19.** Las etapas **0 a 7 están cerradas**: `core/`,
+> `orbits/`, `channel/`, `qkd/`, `system/`, `scenario/`, `engine/`, `io/`,
+> `viz/` y `cli/`. Eso significa que `quoss run escenario.yaml --out dir/`
+> funciona de punta a punta desde un YAML versionado, para las dos geometrías:
+> un día del enlace de referencia son **0.1 s** y 4 pases. De la 8,
+> `validation/` está a medias.
 >
 > **Qué hay y qué no, sin rodeos:**
 >
 > | | |
 > |---|---|
-> | **Existe y está cerrado** | `core/` · `orbits/` · `channel/` · `qkd/` · `system/` · `scenario/` · `engine/` · `io/` |
-> | **Existe a medias** | `viz/` (style, plots, figures; sin el ADR 0017 que su propio código cita) · `validation/` (base, channel, micius, satquma; **falta `ntanos2021.py`, y `run_all()` lo importa, así que hoy levanta `ModuleNotFoundError`**; no hay `tests/validation/`) |
-> | **No existe: solo un `.gitkeep`** | `cli/` · `api/` · `kernels/` · `web/` · `deploy/` · `benchmarks/` |
+> | **Existe y está cerrado** | `core/` · `orbits/` · `channel/` · `qkd/` · `system/` · `scenario/` · `engine/` · `io/` · `viz/` · `cli/` |
+> | **Existe a medias** | `validation/` (base, channel, micius, satquma: 22 casos de tres fuentes, con `tests/validation/` cubriendo el paquete al 100 %; **falta `ntanos2021.py`**, la fuente del enlace de referencia entero, que es la etapa 8.1) |
+> | **No existe: solo un `.gitkeep`** | `api/` · `kernels/` · `web/` · `deploy/` |
 >
 > **Y un defecto conocido de la suite**, que no es del paquete:
 > `tests/viz/test_plots.py` importa matplotlib arriba del fichero, así que sin el
@@ -98,10 +99,19 @@ pendiente arriba; para correr la suite entera, `uv sync --all-extras`.
 uv run pytest           # suite de tests
 uv run ruff check .     # lint
 uv run ruff format .    # formato
-uv run mypy             # tipos (estricto en core/ y física)
+uv run mypy             # tipos (estricto en core/, física y cli/)
 ```
 
-Un escenario versionado, de fichero a resultado:
+Desde la línea de órdenes, que es lo que instala `pip install quoss`:
+
+```bash
+quoss run scenarios/reference_castelldefels.yaml --out out/reference
+quoss run scenarios/ge1_1km.yaml --out out/ge1     # misma orden, otra geometría
+quoss sweep scenarios/ge1_1km.yaml scenarios/sweeps/ge1_distance.yaml
+quoss validate
+```
+
+O el mismo escenario versionado desde Python, de fichero a resultado:
 
 ```python
 from quoss.engine.pipeline import run
@@ -138,16 +148,30 @@ la cota sea válida, y por eso cada ejecución lo dice en `warnings[]`.
 Los mismos números salen de `quoss.scenario.defaults.reference_castelldefels()`,
 sin tocar el disco. `quoss.engine.sweep` corre barridos de parámetros como una
 ejecución de primera clase —de los dos tipos de escenario—, y
-`quoss.io.export.export_result` escribe un **resultado de bajada** a un directorio
-que se describe a sí mismo (manifiesto con SHA-256 por fichero, CSV, `arrays.npz`
-y, con el extra, Parquet). Un resultado horizontal todavía **no**: no tiene arrays
-y decidir qué ficheros escribe es trabajo de la etapa 7
-([`notes/INCONSISTENCIAS.md`](notes/INCONSISTENCIAS.md) #15); hasta entonces se
-serializa con `to_dict()`, que es completo.
+`quoss.io.export.export_result` escribe **los dos resultados** a un directorio que
+se describe a sí mismo (manifiesto con SHA-256 por fichero, CSV, y con el extra
+Parquet), en **dos formas** que el manifiesto nombra: la de bajada lleva
+`passes.csv`, `daily.csv`, `series_<estación>.csv` y `arrays.npz`; la horizontal
+lleva `budget.csv` y `session.csv`, una fila cada uno, y **ningún** `arrays.npz`,
+porque no hay arrays y un archivo vacío no se distingue de uno cuyos arrays
+salieron vacíos ([ADR 0028](docs/adr/0028-the-cli-computes-nothing.md)).
 
-**La CLI (`quoss run scenario.yaml`, `quoss sweep`, `quoss validate`) todavía no
-existe**: `src/quoss/cli/` está vacío y el `project.scripts` del `pyproject.toml`
-apunta a un módulo que aún no hay. Es la etapa 7.
+**La CLI existe desde el 2026-09-19:**
+
+```bash
+uv run quoss run scenarios/ge1_1km.yaml --out out/ge1
+uv run quoss sweep scenarios/ge1_1km.yaml scenarios/sweeps/ge1_distance.yaml
+uv run quoss validate
+```
+
+`quoss run` despacha sobre el tag `link` del fichero sin que haya que decírselo,
+y **no calcula nada**: lo que escribe reconstruye un resultado igual, término a
+término, a `run()` llamado a mano sobre el mismo fichero — la afirmación del
+[ADR 0016](docs/adr/0016-the-engine-adds-nothing-and-one-altitude.md) una capa
+más arriba. Los `warnings[]` se imprimen **enteros** en `stderr`, nunca
+resumidos ni contados, y la salida es distinta de cero cuando aparece un
+`DEGRADED` que el escenario no declaró en `expected_degradations`
+([ADR 0028](docs/adr/0028-the-cli-computes-nothing.md)).
 
 ## Estructura
 
@@ -155,14 +179,15 @@ Lo que hay, marcado por lo que hay de verdad:
 
 ```
 src/quoss/     core ✅  orbits ✅  channel ✅  qkd ✅  system ✅
-               scenario ✅  engine ✅  io ✅  viz 🚧  validation 🚧
-               cli ⬜  api ⬜  kernels ⬜
+               scenario ✅  engine ✅  io ✅  viz ✅  cli ✅  validation 🚧
+               api ⬜  kernels ⬜
 scenarios/     ✅ siete escenarios versionados y reproducibles (.yaml): cinco de
-                  bajada (link: downlink) y dos de tierra (link: horizontal)
+                  bajada (link: downlink) y dos de tierra (link: horizontal),
+                  más sweeps/ con los specs de barrido
 data/          ✅ catálogo de estaciones + snapshots offline con manifiesto
 tests/         ✅ unit · orbits · channel · qkd · system · scenario · engine
-                  · io · viz · e2e · golden      ⬜ physics · api · validation
-docs/          ✅ 25 ADRs                        ⬜ manual de física autogenerado
+                  · io · viz · cli · validation · e2e · golden   ⬜ physics · api
+docs/          ✅ 28 ADRs                        ⬜ manual de física autogenerado
 benchmarks/    ⬜ puerta de regresión de rendimiento
 web/           ⬜ frontend (TS + Vite + Svelte), deps vendorizadas
 deploy/        ⬜ Dockerfile y compose — la imagen funciona offline
@@ -170,7 +195,8 @@ deploy/        ⬜ Dockerfile y compose — la imagen funciona offline
 
 `✅` cerrado · `🚧` empezado y con huecos declarados arriba · `⬜` solo un
 `.gitkeep`. El `validation/` de la raíz del repo es un `.gitkeep`; el código de
-validación vive en `src/quoss/validation/`.
+validación vive en `src/quoss/validation/` y sus tests en `tests/validation/`
+(cinco ficheros, cobertura del 100 % del paquete en líneas y ramas).
 
 Regla de dependencia: `core ← orbits/channel/qkd ← system ← engine ← {cli, api, viz}`.
 Las flechas nunca van al revés.
