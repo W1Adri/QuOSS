@@ -32,6 +32,12 @@ sweep
     ``quoss sweep <scenario.yaml> <spec.yaml>``: a sweep as a table.
 validate
     ``quoss validate``: recompute the validation table.
+dossier
+    ``quoss dossier <scenario.yaml> --out <document.md>``: the experiment
+    dossier of a scenario -- the document somebody outside the code reads to
+    decide. Same rule as the rest of this package, one step further out: it
+    computes nothing, and a figure the result does not carry goes **up** into
+    the result rather than down into the report (:mod:`quoss.dossier`).
 report
     What every subcommand shares: printing the warnings **whole**, and deciding
     the exit status from them.

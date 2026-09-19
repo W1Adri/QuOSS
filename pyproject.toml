@@ -212,6 +212,7 @@ module = [
     "quoss.engine.*",
     "quoss.validation.*",
     "quoss.cli.*",
+    "quoss.dossier.*",
 ]
 # `quoss.kernels.*` was in this list from stage 0 and left it on 2026-09-19.
 # Stage 2.4 is not written and ADR 0026 says no measurement of today justifies

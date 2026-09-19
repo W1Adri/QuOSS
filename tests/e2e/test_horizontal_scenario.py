@@ -57,13 +57,16 @@ from typing import Any
 import numpy as np
 import pytest
 
+from quoss.channel.beam import rayleigh_range_km
 from quoss.channel.horizontal import (
     PathWave,
     equivalent_bench_cn2_m23,
+    horizontal_aperture_averaging_factor,
     plane_wave_rytov_variance,
     weak_theory_path_limit_m,
 )
 from quoss.core.errors import DegradationLog, Severity
+from quoss.core.units import km_to_m
 from quoss.engine.horizontal import HORIZONTAL_STAGES, simulate_horizontal
 from quoss.engine.pipeline import run as _run
 from quoss.engine.sweep import SweepSpec, apply_point, run_sweep
@@ -190,6 +193,64 @@ class TestTheHorizontalEngineAddsNothing:
         assert engine.result.budget.log_irradiance_variance_np2 == by_hand.variance_np2
         assert engine.result.budget.rytov_variance_np2 == by_hand.rytov_np2
         assert engine.result.budget.beam_to_jitter_ratio == by_hand.gamma
+
+    def test_the_three_marks_the_result_carries_are_the_physics_functions_values(self) -> None:
+        """`A`, the Rayleigh range and the weak-theory limit, against a direct call each.
+
+        These three joined the result so that the layers that *print* them --
+        `viz/plots.py`'s two marks, `docs/experiments/GE-1.md`'s band table --
+        would stop having to call `quoss.channel` themselves. That move is only
+        an improvement if the engine's copy is the function's answer and not a
+        reimplementation of it, which is what this asserts: exact float
+        equality, the same standard `test_every_loss_term_matches_the_hand_chain`
+        holds the budget to.
+
+        `A` is the one worth having as a field of its own, and the reason is
+        that it is **not** the ratio of the two variances already reported.
+        `rytov_variance_np2` is the *plane-wave* value -- the reference figure
+        the weak-theory limit is defined against, which is why GE-0b can be
+        tuned to match GE-1's -- while the log-variance is `A` times the point
+        variance of the *declared* wave. GE-1 declares `spherical`, so the two
+        differ by the 2.46 between the two closed forms on top of `A`, and in
+        the moderate-to-strong regime they differ again because the saturated
+        model replaces the weak one. Anything trying to recover `A` by dividing
+        one reported number by the other would get the right answer only on a
+        plane-wave link in the weak regime, which is the worst kind of wrong:
+        correct on the bench and silently off by a factor of 2.46 in the field.
+        """
+        scenario = ge1_two_terminals()
+        budget = simulate_horizontal(scenario, degradations=DegradationLog()).result.budget
+        assert budget.aperture_averaging == float(
+            horizontal_aperture_averaging_factor(
+                scenario.path.path_length_m,
+                aperture_diameter_m=scenario.path.receive_aperture_m,
+                wavelength_m=scenario.transmitter.wavelength_m,
+                wave=scenario.path.wave,
+            )
+        )
+        assert budget.rayleigh_range_m == float(
+            km_to_m(
+                rayleigh_range_km(
+                    wavelength_m=scenario.transmitter.wavelength_m,
+                    transmit_aperture_m=scenario.transmitter.aperture_m,
+                )
+            )
+        )
+        assert budget.weak_theory_path_limit_m == weak_theory_path_limit_m(
+            cn2_m23=scenario.path.cn2_m23, wavelength_m=scenario.transmitter.wavelength_m
+        )
+        # And the claim in the docstring, asserted rather than asserted-about: the
+        # product of the two reported fields is NOT the third one on this link, and
+        # the gap between them is exactly the plane-to-spherical factor.
+        product = budget.aperture_averaging * budget.rytov_variance_np2
+        assert product != budget.log_irradiance_variance_np2
+        assert product / budget.log_irradiance_variance_np2 == pytest.approx(2.457, abs=0.005)
+        # On a link that declares `plane`, the same product IS the log-variance. GE-0b is
+        # that link, which is why its dossier can print the three as one multiplication.
+        bench = simulate_horizontal(ge0b_bench(), degradations=DegradationLog()).result.budget
+        assert bench.log_irradiance_variance_np2 == pytest.approx(
+            bench.aperture_averaging * bench.rytov_variance_np2, rel=1e-12
+        )
 
     def test_the_session_totals_match_and_are_the_pinned_integer(self) -> None:
         result = run_horizontal(ge1_two_terminals())

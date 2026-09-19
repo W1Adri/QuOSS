@@ -1,8 +1,8 @@
 # QuOSS — Últimos cambios
 
 > **Bitácora viva. Se actualiza al cerrar cada etapa del [`ROADMAP.md`](ROADMAP.md).**
-> Última entrada: **§46, 2026-09-19** — una cita a un nodo de test tampoco puede
-> envejecer sola, y una configuración de mypy deja de excusarse sola.
+> Última entrada: **§47, 2026-09-19** — los tres expedientes: el simulador deja
+> de ser código y pasa a ser respuesta.
 >
 > **Qué hay aquí y qué no.** Este fichero guarda **las cinco últimas entradas
 > completas**. Todo lo anterior está en [`archive/`](archive/), íntegro y sin
@@ -22,7 +22,7 @@
 
 ---
 
-## Índice de lo archivado (§1–§41)
+## Índice de lo archivado (§1–§42)
 
 | § | Fecha | La cifra o la regla que la resume | Dónde |
 |---|---|---|---|
@@ -67,192 +67,7 @@
 | §39 | 2026-09-15 | El **régimen de escintilación pasa a ser un campo** del escenario, y con ello entra en el hash. Los 30 m de la estación valen **+457 bits en régimen débil y −206 en saturado**: el cruce está en 27.02° y el día pasa el 67.7 % de sus segundos por debajo | [archivo](archive/LAST_CHANGES-39.md) |
 | §40 | 2026-09-17 | El **camino horizontal pasa de biblioteca a escenario** → [ADR 0024](../docs/adr/0024-the-horizontal-scenario.md), [0025](../docs/adr/0025-two-terminals-one-way.md). GE-1 a 1 km certifica **253 935 bit/s** en una sesión de 60 s, y el **acantilado de los 5 km** es lo que impide dimensionar con el número asintótico | [archivo](archive/LAST_CHANGES-40.md) |
 | §41 | 2026-09-19 | **Las notas dejan de caber en la sesión que las tiene que leer.** `LAST_CHANGES.md` llegó a **6 834 líneas**; la regla de las cinco entradas vivas y sus dos cotas derivadas se asertan en `tests/unit/test_notes.py`. **240 de los 241 números** del ROADMAP ya vivían en un ADR, un test o un docstring | [archivo](archive/LAST_CHANGES-41.md) |
-
----
-
-## 42. Las tres decisiones que la ronda anterior dejó abiertas
-
-**Fecha:** 2026-09-19. **ADRs nuevos:**
-[0026](../docs/adr/0026-the-language-ladder.md) (la escalera de lenguajes) y
-[0027](../docs/adr/0027-four-levels-of-distribution.md) (los cuatro niveles de
-distribución). **Ningún `.py` tocado.**
-
-**La cifra que resume la entrada: el camino de lectura obligatorio baja de 1 623
-a 1 288 líneas, y las dos decisiones que llevaban cincuenta días sin dueño ya lo
-tienen.** §41 dejó tres cosas escritas y sin cerrar; esta entrada las cierra las
-tres, que es todo lo que hace.
-
-### 1. §37 y §38 se archivan, y se volvió a medir en vez de darlo por bueno
-
-§41 midió que las dos son archivables **hoy** —§37 está entero en el
-[ADR 0022](../docs/adr/0022-the-strong-regime.md) y §38 en el
-[ADR 0023](../docs/adr/0023-traceable-extinction.md)— y dejó la decisión al
-lector. Tomada.
-
-**Y la medición se rehízo**, con el mismo extractor de §41, porque «§41 ya lo
-dijo» es exactamente la clase de afirmación heredada que este proyecto pide
-comprobar:
-
-| | Números distintos | Con dueño en un ADR, en `src/` o en un test | Huérfanos |
-|---|---|---|---|
-| §37 | 103 | **100** (97.1 %) | 3 |
-| §38 | 77 | **76** (98.7 %) | 1 |
-
-Los cuatro huérfanos son de la clase que §41 ya había clasificado como
-archivable sin migrar: **tres recuentos de la suite** (3 478, 3 541 y 3 640
-`passed`) y **un identificador de run de CI** (34988518923). Son el estado de un
-día. El recuento de hoy lo imprime `uv run pytest`, que es un sitio que no
-envejece, y por eso no hace falta migrarlos a ninguna parte.
-
-Van a [`archive/LAST_CHANGES-37-38.md`](archive/LAST_CHANGES-37-38.md), íntegras
-y sin editar, con sus dos filas en el índice.
-
-### 2. El objetivo de 900 líneas queda retirado, no aplazado
-
-§41 se escribió contra un objetivo de **menos de 900 líneas con las cinco
-últimas entradas completas**, midió que las dos cosas no caben —las cuatro
-entradas anteriores, solas y sin cabecera, ya eran 847— y lo dejó declarado como
-hueco.
-
-**Retirado.** No porque sea difícil de cumplir, sino porque **es un número
-elegido a mano**, y este proyecto ya tiene escrita la regla que lo descalifica:
-una cota elegida para que salga el resultado de hoy no puede fallar nunca, así
-que no prueba nada. Lo que lo sustituye no es otro número: es la **cota
-estructural** que la propia §41 dejó asertada en `tests/unit/test_notes.py`
-—como mucho cinco entradas, cabecera bajo `60 + 2 × archivadas`, ninguna entrada
-sobre 320 líneas—, que acota el total **por construcción** en
-`132 + 5 × 320 = 1 732` sin que nadie elija la cifra.
-
-Borrado de donde estaba escrito, que era el único sitio: la sección de §41 que
-lo declaraba abierto. La aritmética sigue en el historial de git; lo que no
-sigue es un objetivo que alguien pudiera perseguir. `tests/unit/test_notes.py`
-ya lo citaba **como ejemplo de cota inalcanzable**, que es el uso correcto y el
-único que se queda.
-
-### 3. Las dos decisiones sin ADR: 0026 y 0027
-
-Es el hallazgo con el que §41 terminó, y no lo pudo cerrar por una razón que
-sigue siendo buena: un ADR se numera al escribirse, y eso es una decisión de
-quien lo vaya a mantener, no un efecto secundario de reordenar notas.
-
-**Un ADR registra una decisión, no una implementación.** Que `kernels/` y
-`deploy/` no existan no es objeción: las dos decisiones están **tomadas desde el
-2026-07-31** y han gobernado el proyecto desde entonces desde un fichero de
-notas, que no es donde se buscan las decisiones.
-
-Y los dos traen la medición que el texto original no tenía, porque un ADR de
-este proyecto trae sus cifras:
-
-**[ADR 0026 — la escalera de lenguajes](../docs/adr/0026-the-language-ladder.md).**
-Python → Numba → Rust → C++, con las tres condiciones de entrada (perfil que
-nombre la función, contrato numérico estable, referencia NumPy con golden test).
-Lo que se midió aquí para escribirlo:
-
-| Qué | Medida |
-|---|---|
-| El día de referencia completo | **121 ms**, del que `orbit` son 52.4 (43 %) |
-| `ZONAL_NUMERIC`, 1 satélite, un día a 1 s (86 401 muestras) | 0.934 s |
-| `ZONAL_NUMERIC`, 10 satélites | 9.306 s (931 ms/sat) |
-| `ZONAL_NUMERIC`, 60 satélites | **55.6 s** (927 ms/sat) |
-| `TWO_BODY`, 60 satélites | **2.9 s** (48 ms/sat) |
-
-**El hallazgo, que cambia a qué etapa pertenece el trabajo.** Las tres filas de
-`ZONAL_NUMERIC` dan la misma cifra por satélite con menos del 1 % de dispersión
-entre S = 1 y S = 60: eso es la firma de un bucle estrictamente en serie, y está
-a la vista en `propagator.py:535`. **El factor 19 contra `TWO_BODY` no mide la
-velocidad de la aritmética, mide que una rama recorre los satélites de uno en
-uno y la otra no.** La lectura ingenua de «55 segundos» es «hace falta Numba»;
-la correcta es que el escalón 1 —vectorizar y paralelizar— no está agotado, y
-que lo que falta es de `engine/parallel.py`, etapa 11. Numba aquí aceleraría la
-evaluación del campo dentro de cada paso de DOP853 y dejaría intacto el 100 %
-del serialismo.
-
-**[ADR 0027 — los cuatro niveles de distribución](../docs/adr/0027-four-levels-of-distribution.md).**
-CLI → `serve` en `localhost` → imagen Docker offline → servicio cloud opcional,
-con la web como **cliente** y no como el simulador. La decisión no es la tabla:
-es que el nivel 0 va primero y que los otros tres son clientes suyos, que es lo
-que hace verificable la frase «el frontend no calcula física». Lo medido:
-
-| Artefacto | Tamaño |
-|---|---|
-| `quoss-0.1.0-py3-none-any.whl` | **644 KB**, 85 ficheros |
-| `numpy` + `scipy` instalados | 33 + 91 = **124 MB** |
-| `pyarrow` (extra `export`) | **152 MB** |
-| `numba` + `llvmlite` (extra `accel`) | 17 + 172 = **189 MB** |
-| `.venv` de desarrollo completo | **742 MB** |
-
-**El código de QuOSS es el 0.09 % de su propio entorno**, y esa asimetría es lo
-que descarta el binario descargable: empaquetar el stack numérico mueve 124 MB
-como suelo para acompañar 644 KB de física, uno por sistema operativo y sin ser
-scriptable. De paso corrige una cifra del propio `pyproject.toml:48`, que llama
-a `pyarrow` «40 MB»: son **152**, casi cuatro veces más — y el comentario tenía
-razón en la conclusión, que es por lo que `pyarrow` es un extra.
-
-**Y los 85 ficheros del wheel son el defecto que esto destapa:** son
-`quoss/**/*.py` y nada más. `data/ogs.yaml` y `data/snapshots/` **no viajan**, y
-se resuelven relativos al checkout, así que un `quoss run` desde una instalación
-no encontraría ni las estaciones ni los snapshots. Queda escrito en el ADR 0027
-y abierto en [`INCONSISTENCIAS.md`](INCONSISTENCIAS.md) #18, porque cerrarlo es
-tocar el empaquetado y esta entrada no toca `.py`.
-
-### La guía deja de ser la tercera fuente de verdad
-
-`GUIA_REIMPLEMENTACION.md` pierde sus apartados 2 y 3 —que son justamente los
-dos ADRs— y queda en **86 líneas** con lo único que sigue sin otro dueño: el
-diagnóstico de SimulCTTC, que es lo que sostiene «SimulCTTC no es un oráculo»
-(citada en el README, en `ROADMAP.md` y en `tests/golden/README.md`, los tres sin
-su defensa) y el «la web es un cliente» del ADR 0027.
-
-**No están en los dos sitios**, que es el punto entero: una justificación
-duplicada es una que se queda quieta en una de las dos copias.
-
-### Lo que no se pudo cerrar, con su medida
-
-**Once de las catorce citas a `GUIA_REIMPLEMENTACION.md` apuntan a secciones que
-ese fichero no tiene.** El recorte de §41 renumeró el documento (el v3 tenía
-§0–§5; el recortado tenía §1–§3) sin tocar quién lo citaba, así que
-`src/quoss/viz/style.py` cita un §4 que ya no existe, tres ficheros citan un
-§2.2 que tampoco, y cinco citan un §5. Peor que no resolver: **`viz/__init__.py`
-cita un §1 que sí existe y ahora dice otra cosa** —«qué era SimulCTTC» donde el
-v3 tenía la estructura de directorios—, que es una cita que resuelve al sitio
-equivocado en silencio. Va a [`INCONSISTENCIAS.md`](INCONSISTENCIAS.md) #17 con
-el recuento; se cierra en la PR que toque `.py`.
-
-### Verificación
-
-`uv run pytest`: **3 773 passed**, 0 fallos — los mismos que §41, porque esta
-entrada no toca `.py`. `tests/unit/test_notes.py` es el que importa aquí: 10
-passed sobre el fichero recortado, incluido el índice, que ahora cubre §1–§38
-sin huecos ni duplicados. `ruff check`, `ruff format --check` y `mypy`: limpios.
-
-**El camino de lectura obligatorio**, que es la cifra que §41 introdujo:
-
-| Fichero | §41 | Hoy |
-|---|---|---|
-| `LAST_CHANGES.md` | 1 170 | **867** |
-| `ROADMAP.md` | 321 | 335 |
-| `GUIA_REIMPLEMENTACION.md` | 130 | **86** |
-| **Total** | **1 623** | **1 288** |
-
-**Y conviene leer el 864 con cuidado, porque no es lo que parece.** Archivar §37
-y §38 quitó 455 líneas y dejó el fichero en 683; esta entrada añade 184. El
-balance neto es −303, no −487, y el que sube es el `ROADMAP.md`: catorce líneas,
-por las dos filas nuevas de su tabla de ADRs y los dos enlaces desde las etapas
-2.4 y 9–11. Es estado nuevo, no justificación repetida — que es el criterio, y
-no el signo del número.
-
-### Ficheros
-
-| Fichero | Qué |
-|---|---|
-| `docs/adr/0026-the-language-ladder.md` | nuevo. La escalera, sus tres condiciones de entrada, y el perfil que dice que hoy no toca |
-| `docs/adr/0027-four-levels-of-distribution.md` | nuevo. Los cuatro niveles, y los dos defectos del nivel 0 que medirlos destapó |
-| `notes/archive/LAST_CHANGES-37-38.md` | nuevo; §37 y §38 íntegras, con la medición que las autoriza a estar ahí |
-| `notes/LAST_CHANGES.md` | 1 170 → 683; índice a §38, el objetivo de 900 retirado |
-| `notes/GUIA_REIMPLEMENTACION.md` | 130 → 86; los apartados 2 y 3 se fueron con sus ADRs |
-| `notes/ROADMAP.md` | tabla de ADRs a veinticinco, y las etapas 2.4 y 9–11 enlazan el suyo |
-| `notes/INCONSISTENCIAS.md` | #17 (las citas a secciones que no existen) y #18 (`data/` fuera del wheel) |
-| `README.md` | 23 → 25 ADRs |
+| §42 | 2026-09-19 | **Las dos decisiones que llevaban cincuenta días sin dueño lo tienen**: los ADR [0026](../docs/adr/0026-the-language-ladder.md) y [0027](../docs/adr/0027-four-levels-of-distribution.md). Y los **55.6 s** de sesenta satélites resultaron medir un bucle en serie, no la aritmética | [archivo](archive/LAST_CHANGES-42.md) |
 
 ---
 
@@ -1148,3 +963,221 @@ parece que sí.
 | ADRs 0013, 0014 y 0022 | citas arregladas; la del 0014 además dice que desde el ADR 0023 lo que se aserta es el par |
 | `notes/ROADMAP.md` | la fila de `warn_unused_configs`, cerrada; las de numpy y los extras, con su medida |
 
+---
+
+## 47. Los tres expedientes: el simulador deja de ser código y pasa a ser respuesta
+
+**Fecha:** 2026-09-19. **ADR nuevo:**
+[0029](../docs/adr/0029-a-dossier-is-generated.md). **Física tocada: ninguna** —
+ni un modelo, ni una constante, ni una tolerancia.
+
+**La cifra que resume la entrada: tres documentos de 382 líneas que nadie
+escribió a mano, y tres cifras que el resultado no llevaba y que subieron al
+resultado en vez de bajar al informe.**
+
+### Qué es un expediente, y por qué no lo cubría nada de lo que ya había
+
+Hasta hoy este proyecto producía **números**: un objeto resultado, un CSV, una
+fila de `docs/validation.md`. Lo que no producía es el documento con el que
+alguien **decide** — si comprar una lente de 10 cm, si prestar un banco óptico,
+si una estación de montaña vale su carretera.
+
+Un **expediente** es ese documento. No es un artículo y no es un ADR: un ADR
+registra una decisión que este proyecto ya tomó, y un expediente dice lo que el
+modelo afirma sobre un experimento **que todavía no existe**, con cada cifra
+llevando su unidad y la decisión que cambia. Son tres, en `docs/experiments/`,
+generados desde los escenarios por `quoss dossier`:
+
+| Documento | Desde | Líneas | Qué decide |
+|---|---|---|---|
+| [`GE-1.md`](../docs/experiments/GE-1.md) | `scenarios/ge1_1km.yaml` | 157 | arquitectura, presupuesto, lente, distancia, bloque |
+| [`GE-0b.md`](../docs/experiments/GE-0b.md) | `scenarios/ge0b_bench.yaml` | 87 | qué pregunta de GE-1 contesta el banco y cuál no |
+| [`reference-link.md`](../docs/experiments/reference-link.md) | `scenarios/reference_castelldefels.yaml` | 138 | qué pases programar, dónde la máscara, cuál enlace de Ntanos |
+
+### Por qué se generan y se commitean, que es la decisión entera
+
+**Porque el modo de fallo contrario está medido dos veces en este repositorio.**
+Los «219 km» vivieron en quince sitios, defendidos en prosa cada vez, y eran
+**5.9 veces menores** que la respuesta (§14). §46 cerró la misma familia en los
+docstrings. Nada lo cazó porque nada podía: **la prosa no corre**.
+
+**Y un expediente es peor que un docstring en exactamente una cosa: se lleva a
+una reunión.** Un docstring rancio engaña a quien abre el fichero, que tiene el
+código delante. Un expediente rancio engaña a una orden de compra, y su lector
+**no tiene checkout ni motivo para tenerlo**. Para ese lector el fichero
+commiteado *es* el artefacto.
+
+Así que el arreglo es el de tres piezas que `docs/validation.md` tiene desde la
+etapa 8: se genera, se commitea, y `tests/dossier/test_docs.py` lo vuelve a
+renderizar y compara **byte a byte**. El renderizado está hecho para permitirlo:
+sin marcas de tiempo, sin tiempos de etapa, sin el commit de git, cuatro cifras
+significativas. Lo único volátil de la cabecera es la versión de QuOSS, y está a
+propósito.
+
+**El ejemplo que lo hace no hipotético:** `GE-1.md` dice que a **5 km el enlace
+certifica cero bits mientras el cálculo asintótico sigue reclamando 267 678** en
+la misma sesión. Si un cambio movía ese acantilado a 3 km y el documento seguía
+diciendo 5, el documento sería peor que no existir: un argumento con fuentes y
+con hash a favor de montar un enlace que no cierra.
+
+### La mitad de la regla que es fácil saltarse, y lo que costó
+
+**Un constructor puede pedirle corridas al motor y no puede evaluar física.** El
+[ADR 0028](../docs/adr/0028-the-cli-computes-nothing.md) lo dice de la CLI; un
+generador de informes es esa capa un paso más afuera, y el fallo sería peor,
+porque un número calculado en la capa de presentación es un número que **ningún
+test de la física cubre**, impreso para quien no puede comprobarlo.
+
+Escribir `GE-1.md` pidió tres cifras que el resultado no llevaba: el promediado
+de apertura `A`, el rango de Rayleigh del transmisor, y la longitud a la que
+deja de valer la teoría débil. Las tres son **una llamada** a
+`quoss.channel`, y hacerla en el informe habría costado una línea. Subieron a
+`HorizontalBudgetResults`, donde las rellena el motor y las comprueba
+`tests/e2e/test_horizontal_scenario.py` contra la cadena escrita a mano. **La
+línea que se habría ahorrado era una línea de física que ningún test de extremo
+a extremo alcanza.**
+
+Y las tres tenían ya razón independiente para estar ahí: el
+[ADR 0017 §4](../docs/adr/0017-publication-figures.md) prohíbe que
+`plot_horizontal_key_against_distance` **adivine** sus dos marcas —«una marca
+adivinada parece medida»— y las exige como argumentos; antes de estos campos, la
+única forma de dárselas era que el llamante importara `quoss.channel`.
+
+La regla se comprueba leyendo el AST del paquete:
+`tests/dossier/test_docs.py::TestTheGeneratorEvaluatesNoPhysics` falla si
+aparece un import de `quoss.channel`, `quoss.qkd`, `quoss.system` o
+`quoss.orbits`.
+
+### El número que el test cazó, que es el argumento de la ronda en miniatura
+
+El primer borrador de `GE-0b.md` decía que la varianza log-irradiancia del
+receptor es «la fila de arriba por la de más arriba» — `A` por la varianza de
+Rytov. **Es falso, y de la peor manera: cierto en el banco y falso en el
+campo.** La Rytov que el resultado reporta es la de **onda plana** —la cifra de
+referencia contra la que los dos enlaces se afinaron—, y lo que ve el detector
+es `A` por la varianza puntual de la onda **declarada**:
+
+| | declarada | `A` × `σ_R²` | lo que reporta | factor |
+|---|---|---|---|---|
+| GE-0b | `plane` | 8.849e-06 | 8.849e-06 | **1, exacto** |
+| GE-1 | `spherical` | 0.04745 | 0.01931 | **2.457** |
+
+Ese 2.457 es la razón entre las dos formas cerradas. Lo cazó el test que aserta
+los tres campos nuevos, no la lectura del documento — que es exactamente lo que
+esta entrada sostiene que pasa cuando una cifra se escribe a mano. El documento
+lleva hoy la nota que lo explica, y `A` es un campo propio precisamente porque
+dividir una varianza por la otra acierta en el banco y falla por 2.46 en el
+campo.
+
+### Lo que los tres documentos dicen, que es lo que se pidió que dijeran
+
+**GE-1.** La arquitectura de dos terminales y su razón (ADR 0025); el
+presupuesto término a término; la clave certificada contra distancia con la
+banda plana-esférica y la convención del [ADR 0017](../docs/adr/0017-publication-figures.md)
+en el texto —**no es una barra de error**, y no está ordenada igual en las dos
+lentes—; el acantilado de los 5 km con la cifra asintótica **al lado**; el bloque
+declarado a 15/30/60/120 s, que es decisión del operador y no de la geometría
+(ADR 0024); y qué compra la apertura, con el factor medido:
+
+| | 25 mm | 100 mm | factor |
+|---|---|---|---|
+| certificado, `plane` | 882 428 | 16 546 391 | 18.75 |
+| certificado, `spherical` | 1 190 150 | 15 236 099 | 12.8 |
+| asintótico, `plane` | 3 415 647 | 38 243 273 | **11.2** |
+| asintótico, `spherical` | 4 216 914 | 35 461 378 | **8.409** |
+
+Las dos últimas filas **reproducen el intervalo 8.4–11.2** que §37 publicó, sin
+haberlo transcrito: salen del barrido. Y el orden se invierte entre lentes, que
+es lo que impide tratar la banda como «centro ± anchura».
+
+**Y el cierre obligatorio, con los huecos 20, 21, 22 y 23 y su coste.** El
+documento incluye una sección cuyo único propósito es **poner precio a un
+decibelio**, porque una salvedad sin magnitud no se puede usar: medido en el
+barrido, **un decibelio no modelado cuesta 3 435 865 bits, el 22.6 % de la
+sesión**. El hueco 22 —la altura de escala del aerosol, factor 1.67 en
+profundidad óptica— vale en GE-1 **exactamente cero bits**, medido de 1200 a
+2000 m, porque el escenario declara la visibilidad a la altura a la que corre el
+enlace; el documento dice también la condición bajo la que ese cero deja de
+valer. El 21 va con su medida de §44: **el término de altitud saturado aterriza
+en +4 bits de 449 308** bajo el otro convenio, o sea entero dentro del hueco.
+
+**GE-0b.** Lo de §40, generado en vez de citado: el banco iguala la varianza de
+Rytov a precisión de máquina (0.1988 los dos) y deja **2 183 veces menos
+varianza en el receptor y 1.416 dB menos de margen**. Y la pregunta al
+fabricante escrita para copiar y pegar —qué `D/r_0`, qué número de Rytov y con
+cuántas pantallas, **no** si llega a 8.874e-10—, con el criterio de aceptación
+que el proveedor no puede adivinar.
+
+**reference-link.** El día (433 442 bits certificados contra 3 779 462
+asintóticos), los **dos pases de cuatro que no certifican nada** mientras el
+asintótico reclama 520 538 sobre ellos, la máscara con óptimo interior **y en qué
+régimen** —8° en `weak`, 5° en `moderate-to-strong` sobre diez ángulos
+muestreados, y el documento dice que es una muestra y no una optimización—, y
+las tres estaciones con su término de altitud:
+
+| Estación | Altitud (m) | Apertura (m) | Término de altitud (bits/día) |
+|---|---|---|---|
+| castelldefels | 30 | 0.75 | +490 |
+| cholomondas | 850 | 0.75 | +6 193 |
+| skinakas | 1 750 | 1.3 | +19 360 |
+| helmos | 2 340 | 2.3 | **−25 310** |
+
+**La cuarta fila cambia de signo**, que es el hallazgo: en la estación más alta
+de las tres, estar alto **cuesta** clave certificada. El documento pone el aviso
+del hueco 21 justo al lado, porque ese hueco decide el signo de esa columna, y
+advierte de que lo que la tabla mide no es la cifra publicada que se le parece:
+mover una estación al nivel del mar mueve **el arranque del integral de
+turbulencia y además su posición geodésica**, mientras los +457 bits publicados
+mueven solo lo primero; las dos concuerdan en un ~7 %, que es el tamaño de la
+mitad geométrica.
+
+**Y el apartado que esta ronda volvió obligatorio: cuál de los dos enlaces de
+referencia de Ntanos se usa.** Su §4.2.1 declara 20 dB de mejor caso y su §4.3.1
+imprime un pico que exige 24.07 dB; están **a 4.07 dB**, las dos están impresas,
+y no pueden ser ciertas las dos bajo ningún análisis decoy que reproduzca su
+Apéndice A. El documento enlaza las dos filas de `docs/validation.md`
+—`ntanos2021.best-case-total-loss` (compatible) y
+`ntanos2021.single-pass-peak-skr` (no reproducida)— y dice que **ninguna es
+ancla**.
+
+### Y los `warnings[]` entran en el documento, no solo en la consola
+
+Los tres llevan una sección con cada código que la física registró al calcular
+sus cifras, deduplicado y contado, con el mensaje **entero**. `quoss.cli.report`
+ya los imprime en `stderr`, y eso sirve a quien corrió la orden; no sirve a quien
+lee el documento, que nunca la correrá. Un `DEGRADED` significa que se
+**sustituyó** un modelo, y esa es una frase que quien decide una compra tiene que
+poder encontrar sin un terminal. GE-1 registra 169 entradas, el de referencia
+329, el banco 8.
+
+### Verificación
+
+| | |
+|---|---|
+| Suite | **3 952 passed**, 0 fallos (eran 3 904) |
+| Coste añadido | **158 s** contra 138 s de base, medido en esta máquina: **+20 s**, el 14 % |
+| Generar los tres | **3.65 s**, de los cuales casi todo son las cuatro corridas de día completo |
+| `ruff check` / `ruff format --check` / `mypy` | limpios; `quoss.dossier.*` entra en la lista estricta de mypy |
+
+**El coste de los 20 s merece su línea**, porque es lo que este arreglo cuesta
+de verdad: el test byte a byte tiene que **correr la física otra vez**, y no hay
+forma de que no la corra. Lo que sí se hizo es que no la corra de más —
+`tests/dossier/test_main.py` tiene tres tests y no seis, cada uno haciendo todas
+las aserciones que puede desde **una** llamada, porque cada llamada regenera los
+tres documentos y CI corre la suite cinco veces.
+
+### Ficheros
+
+| Fichero | Qué |
+|---|---|
+| `docs/adr/0029-a-dossier-is-generated.md` | nuevo. Las cuatro decisiones y lo que costó la segunda |
+| `docs/experiments/{GE-1,GE-0b,reference-link}.md` | nuevos, generados y commiteados |
+| `src/quoss/dossier/` | nuevo: `base.py`, un constructor por experimento, `__main__.py` |
+| `src/quoss/cli/dossier.py` | nuevo. `quoss dossier <escenario> --out <doc.md>`; `--out` obligatorio a propósito |
+| `src/quoss/scenario/result.py` | `HorizontalBudgetResults` gana `aperture_averaging`, `rayleigh_range_m` y `weak_theory_path_limit_m` |
+| `src/quoss/engine/horizontal.py` | los rellena, con la razón escrita donde se calculan |
+| `tests/dossier/` | `test_docs.py` (byte a byte, el cierre obligatorio, el AST) y `test_main.py` |
+| `tests/cli/test_dossier.py` | el subcomando escribe exactamente lo que el generador produce |
+| `tests/e2e/test_horizontal_scenario.py` | los tres campos nuevos contra una llamada directa, y el 2.457 que el borrador negaba |
+| `notes/archive/LAST_CHANGES-42.md` | §42 archivada por la cota estructural, con su comprobación |
+| `notes/ROADMAP.md`, `README.md` | la etapa 7 incluye `dossier/`; ADRs a veintinueve |

@@ -49,14 +49,18 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from quoss.channel.beam import rayleigh_range_km
 from quoss.channel.horizontal import (
+    horizontal_aperture_averaging_factor,
     horizontal_log_irradiance_variance,
     horizontal_loss_budget,
     plane_wave_rytov_variance,
+    weak_theory_path_limit_m,
 )
 from quoss.channel.link_budget import LossBudget, NoiseBudget, downlink_noise_budget
 from quoss.channel.pointing import beam_to_jitter_ratio
 from quoss.core.errors import DegradationLog, ScenarioError
+from quoss.core.units import km_to_m
 from quoss.qkd.base import KeyRate, LinkConditions
 from quoss.qkd.finite_key import FiniteKeyResult, expected_block_counts, secret_key_length
 from quoss.scenario.models import HorizontalScenario
@@ -307,6 +311,32 @@ def simulate_horizontal(
                 wavelength_m=transmitter.wavelength_m,
             )
         )
+        # The three below are pure functions of inputs this scenario already carries, and
+        # that is exactly why they are computed here and not by whoever prints them. A
+        # report or a plot that called `horizontal_aperture_averaging_factor` itself would
+        # be a second place where physics is evaluated -- and ADR 0017 4 already forbids
+        # the version of that defect it could see, a Rayleigh mark guessed from the rows
+        # of a sweep. The rule of ADR 0028, that the CLI computes nothing, is only keepable
+        # if the result carries what the report has to print.
+        averaging = float(
+            horizontal_aperture_averaging_factor(
+                path.path_length_m,
+                aperture_diameter_m=path.receive_aperture_m,
+                wavelength_m=transmitter.wavelength_m,
+                wave=path.wave,
+            )
+        )
+        rayleigh_m = float(
+            km_to_m(
+                rayleigh_range_km(
+                    wavelength_m=transmitter.wavelength_m,
+                    transmit_aperture_m=transmitter.aperture_m,
+                )
+            )
+        )
+        weak_limit_m = weak_theory_path_limit_m(
+            cn2_m23=path.cn2_m23, wavelength_m=transmitter.wavelength_m
+        )
         budget = HorizontalBudgetResults(
             geometric_db=float(np.asarray(loss.geometric_db)),
             atmospheric_db=float(np.asarray(loss.atmospheric_db)),
@@ -321,6 +351,9 @@ def simulate_horizontal(
             log_irradiance_variance_np2=variance,
             rytov_variance_np2=rytov,
             beam_to_jitter_ratio=gamma,
+            aperture_averaging=averaging,
+            rayleigh_range_m=rayleigh_m,
+            weak_theory_path_limit_m=weak_limit_m,
         )
         session = HorizontalSessionResults(
             duration_s=scenario.session.duration_s,

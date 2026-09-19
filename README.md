@@ -19,6 +19,7 @@ CLI, la API y el frontend son *consumidores* del mismo motor, no parte de él.
 > |---|---|
 > | **Existe y está cerrado** | `core/` · `orbits/` · `channel/` · `qkd/` · `system/` · `scenario/` · `engine/` · `io/` · `viz/` · `cli/` · `validation/` |
 > | **La tabla de validación** | [`docs/validation.md`](docs/validation.md), generada y commiteada: **35 casos de ocho fuentes** — 17 reproducidos, 3 compatibles, **8 no reproducidos** y 7 huecos declarados. Un test la compara byte a byte con lo que la CLI produce hoy |
+> | **Los tres expedientes** | [`docs/experiments/`](docs/experiments/): [GE-1](docs/experiments/GE-1.md), [GE-0b](docs/experiments/GE-0b.md) y el [enlace de referencia](docs/experiments/reference-link.md). Son los documentos con los que se decide qué comprar, **generados por `quoss dossier`** desde los escenarios y con el mismo test byte a byte detrás. Ninguna cifra está transcrita a mano |
 > | **No existe: solo un `.gitkeep`** | `api/` · `kernels/` · `web/` · `deploy/` |
 >
 > **Y un defecto conocido de la suite**, que no es del paquete:
@@ -112,6 +113,7 @@ quoss run scenarios/reference_castelldefels.yaml --out out/reference
 quoss run scenarios/ge1_1km.yaml --out out/ge1     # misma orden, otra geometría
 quoss sweep scenarios/ge1_1km.yaml scenarios/sweeps/ge1_distance.yaml
 quoss validate
+quoss dossier scenarios/ge1_1km.yaml --out docs/experiments/GE-1.md
 ```
 
 O el mismo escenario versionado desde Python, de fichero a resultado:
@@ -165,6 +167,8 @@ salieron vacíos ([ADR 0028](docs/adr/0028-the-cli-computes-nothing.md)).
 uv run quoss run scenarios/ge1_1km.yaml --out out/ge1
 uv run quoss sweep scenarios/ge1_1km.yaml scenarios/sweeps/ge1_distance.yaml
 uv run quoss validate
+uv run quoss dossier scenarios/ge1_1km.yaml --out docs/experiments/GE-1.md
+uv run python -m quoss.dossier          # los tres a la vez
 ```
 
 `quoss run` despacha sobre el tag `link` del fichero sin que haya que decírselo,
@@ -176,6 +180,18 @@ resumidos ni contados, y la salida es distinta de cero cuando aparece un
 `DEGRADED` que el escenario no declaró en `expected_degradations`
 ([ADR 0028](docs/adr/0028-the-cli-computes-nothing.md)).
 
+**Y `quoss dossier` es esa misma regla una capa más afuera.** Un expediente de
+[`docs/experiments/`](docs/experiments/) es el documento que alguien lee para
+**decidir** —comprar una lente, prestar un banco óptico, valorar si una estación
+de montaña vale su carretera—, y el lector no tiene checkout ni motivo para
+tenerlo. Así que ninguna cifra se transcribe: las tres salen de corridas que el
+generador hace, los ficheros están commiteados, y `tests/dossier/test_docs.py`
+los vuelve a renderizar y falla si difieren. La mitad de la regla que es fácil
+saltarse: **un generador puede pedirle corridas al motor y no puede evaluar
+física**. Una cifra que el resultado no lleva sube al resultado, no baja al
+informe — escribir `GE-1.md` movió tres así, y el test lo aserta leyendo los
+imports del paquete.
+
 ## Estructura
 
 Lo que hay, marcado por lo que hay de verdad:
@@ -183,14 +199,17 @@ Lo que hay, marcado por lo que hay de verdad:
 ```
 src/quoss/     core ✅  orbits ✅  channel ✅  qkd ✅  system ✅
                scenario ✅  engine ✅  io ✅  viz ✅  cli ✅  validation ✅
+               dossier ✅
                api ⬜  kernels ⬜
 scenarios/     ✅ siete escenarios versionados y reproducibles (.yaml): cinco de
                   bajada (link: downlink) y dos de tierra (link: horizontal),
                   más sweeps/ con los specs de barrido
 data/          ✅ catálogo de estaciones + snapshots offline con manifiesto
 tests/         ✅ unit · orbits · channel · qkd · system · scenario · engine
-                  · io · viz · cli · validation · e2e · golden   ⬜ physics · api
+                  · io · viz · cli · validation · dossier · packaging · e2e
+                  · golden   ⬜ physics · api
 docs/          ✅ 28 ADRs + validation.md (35 casos, generado y commiteado)
+                  + experiments/ (los tres expedientes, generados y commiteados)
                   ⬜ manual de física autogenerado
 benchmarks/    ⬜ puerta de regresión de rendimiento
 web/           ⬜ frontend (TS + Vite + Svelte), deps vendorizadas

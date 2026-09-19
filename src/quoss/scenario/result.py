@@ -1243,6 +1243,36 @@ class HorizontalBudgetResults:
         weak theory applied at all: above 1 it did not.
     beam_to_jitter_ratio : float
         ``gamma``, the beam radius measured in pointing jitters.
+    aperture_averaging : float
+        ``A``, the factor by which the receiving lens suppresses scintillation
+        (:func:`~quoss.channel.horizontal.horizontal_aperture_averaging_factor`),
+        in ``(0, 1]``. It is the whole of the difference between the two
+        variances above, and it is here because that difference is a finding
+        and not an intermediate: a bench tuned to match a field link's
+        ``rytov_variance_np2`` exactly can leave its receiver seeing **2 183
+        times less** variance, which is invisible in any field this result
+        carried before (ADR 0009 gap 20).
+    rayleigh_range_m, weak_theory_path_limit_m : float
+        The two path lengths that say where this budget's closed forms apply:
+        the distance at which the transmitter's beam starts to spread
+        appreciably (:func:`~quoss.channel.beam.rayleigh_range_km`), and the
+        distance at which the plane-wave Rytov variance of this air reaches
+        1 Np^2 (:func:`~quoss.channel.horizontal.weak_theory_path_limit_m`).
+        Both are properties of the transmitter and the air, not of the run's
+        outputs, so nothing downstream can derive them from the other fields.
+
+    Why those last three are result fields and not a caller's own call
+    ------------------------------------------------------------------
+    Because every consumer that needs them is a **presentation** layer, and a
+    presentation layer that calls a physics function has become a second place
+    where physics is evaluated. ADR 0017 §4 already states the rule for the two
+    marks: ``plot_horizontal_key_against_distance`` takes ``rayleigh_range_m``
+    and ``weak_limit_m`` as arguments and refuses to guess them from the rows,
+    because a guessed mark looks measured. Before these fields existed the only
+    way to honour that was for the caller to import
+    :mod:`quoss.channel.horizontal` and call it -- which is the same defect one
+    step further out. ADR 0028's rule ("the CLI computes nothing") only holds
+    if the result carries what the report has to print.
 
     Raises
     ------
@@ -1263,6 +1293,9 @@ class HorizontalBudgetResults:
     log_irradiance_variance_np2: float
     rytov_variance_np2: float
     beam_to_jitter_ratio: float
+    aperture_averaging: float
+    rayleigh_range_m: float
+    weak_theory_path_limit_m: float
 
     def __post_init__(self) -> None:
         """Check every term is a finite number and the losses are losses."""

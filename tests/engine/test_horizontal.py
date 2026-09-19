@@ -174,6 +174,9 @@ class TestTheBudgetContainerRefuses:
             "log_irradiance_variance_np2": 0.2,
             "rytov_variance_np2": 0.2,
             "beam_to_jitter_ratio": 1200.0,
+            "aperture_averaging": 0.2386,
+            "rayleigh_range_m": 316.7,
+            "weak_theory_path_limit_m": 2413.4,
         }
         base.update(overrides)
         return base

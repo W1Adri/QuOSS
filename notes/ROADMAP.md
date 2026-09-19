@@ -40,7 +40,7 @@ propia — y **V4 no es validación**.
 | 4 | `scenario/` | ✅ |
 | 5 | `engine/` | ✅ |
 | 6 | `io/` | ✅ |
-| 7 | `cli/` + `viz/` | ✅ |
+| 7 | `cli/` + `viz/` + `dossier/` | ✅ (cuatro subcomandos; `docs/experiments/` commiteado) |
 | 8 | `validation/` | ✅ (35 casos de ocho fuentes; `docs/validation.md` commiteado) |
 | 9–11 | `api/`, `web/`, `deploy/` | ⬜ distribución, no ciencia → [0027](../docs/adr/0027-four-levels-of-distribution.md) |
 
@@ -246,6 +246,17 @@ Con esto ya puedes escribir el paper. **La web todavía no existe, y no pasa nad
 | ✅ `viz/figures.py` | figuras del paper, cada una desde un escenario versionado | [0017](../docs/adr/0017-publication-figures.md) |
 | ✅ `io/export.py`, forma `horizontal` | `budget.csv` + `session.csv`, sin `arrays.npz`, con la forma nombrada en `manifest.json` | [0028](../docs/adr/0028-the-cli-computes-nothing.md) |
 | ✅ `scenarios/sweeps/*.yaml` | specs de barrido versionados, porque una figura se reproduce desde algo commiteado | [0028](../docs/adr/0028-the-cli-computes-nothing.md) |
+| ✅ `cli/dossier.py` | `quoss dossier <escenario.yaml> --out <doc.md>`; sin plantilla y sin `--kind`, porque un expediente es prosa de **un** experimento | [0029](../docs/adr/0029-a-dossier-is-generated.md) |
+| ✅ `dossier/` | `base.py` + un constructor por experimento + `__main__`. Genera los tres `docs/experiments/*.md`; **no evalúa física**, y el test lo aserta leyendo sus imports | [0029](../docs/adr/0029-a-dossier-is-generated.md) |
+| ✅ `docs/experiments/*.md` | los tres expedientes, **commiteados**, con el hash del escenario y la versión en cabecera y un test byte a byte | [0029](../docs/adr/0029-a-dossier-is-generated.md) |
+
+**Y los tres expedientes, que es donde el simulador deja de ser código.**
+`docs/experiments/` tiene GE-1, GE-0b y el enlace de referencia: los documentos
+con los que se decide una compra o se pide un banco óptico. Salen de la CLI
+desde los escenarios y ninguna cifra está transcrita. La regla que los gobierna
+y lo que costó mantenerla —tres cifras que subieron a
+`HorizontalBudgetResults` en vez de bajar al informe— están en el
+[ADR 0029](../docs/adr/0029-a-dossier-is-generated.md).
 
 **Los dos defectos que esta etapa cerró**, los dos abiertos desde antes de
 existir la etapa: `[project.scripts]` apuntaba a `quoss.cli.main:main` desde la
@@ -329,7 +340,7 @@ están en el [ADR 0027](../docs/adr/0027-four-levels-of-distribution.md).
 ## Numeración de ADRs
 
 Un ADR por decisión no obvia, numerado al escribirse y **nunca renumerado**. A
-2026-09-19 hay **veintiocho escritos** (0001–0028) y **ninguno reservado**.
+2026-09-19 hay **veintinueve escritos** (0001–0029) y **ninguno reservado**.
 
 | Nº | Etapa | Qué gobierna |
 |---|---|---|
@@ -337,6 +348,7 @@ Un ADR por decisión no obvia, numerado al escribirse y **nunca renumerado**. A
 | **0017** | 7 (`viz/`) | Las **figuras de publicación**: los dos paneles, la banda plana-a-esférica que no es una barra de error, y la región de Rayleigh que se estrecha por la razón equivocada |
 | **0018** | 8 (`validation/`) | **«Validado» es una tabla que se recalcula**, no una insignia: el estado derivado, los cuatro valores, y por qué un desacuerdo publicado sale 0 |
 | 0019–0025 | 3, 5, 2.2, 4 | escritos |
+| **0029** | 7 (`dossier/`) | **Un expediente se genera y nunca se transcribe**, va commiteado, y su generador puede pedir corridas al motor y no puede evaluar física |
 | **0026** | 2.4 (`kernels/`) | La **escalera de lenguajes**, que gobierna una etapa que aún no existe |
 | **0027** | 7, 9–11 (`cli/`, `api/`, `web/`, `deploy/`) | Los **cuatro niveles de distribución** |
 | **0028** | 7 (`cli/`) + 6 (`io/export.py`) | **La CLI no calcula nada**, y un resultado horizontal tiene su propia forma de directorio |
