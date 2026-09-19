@@ -31,6 +31,7 @@ from quoss.validation.base import (
     render_markdown,
     run_all,
 )
+from quoss.validation.ntanos2021 import NTANOS_2021
 
 from .cases import ACCOUNTED, VALID, case
 
@@ -285,11 +286,13 @@ class TestTheTableRuns:
         `CASE_MODULES` listed `quoss.validation.ntanos2021`, which was never
         written, so the package's only entry point raised `ModuleNotFoundError`
         on every call — the table that exists to stop "validated" from being a
-        badge could not be produced at all. This asserts the weaker, checkable
-        thing: every name in the tuple imports and returns at least one case.
+        badge could not be produced at all. The name is back in the tuple and
+        the module exists now, so what this asserts is the weaker, checkable
+        thing that would have caught it either way: every name in the tuple
+        imports and returns at least one case.
         """
         assert cases
-        assert len(CASE_MODULES) == 3
+        assert len(CASE_MODULES) == 4
         collected = 0
         for name in CASE_MODULES:
             module = import_module(name)
@@ -325,23 +328,43 @@ class TestTheTableRuns:
         """If one starts being produced, it belongs in EXPECTED_DISAGREEMENTS instead."""
         assert not {c.identifier for c in cases} & set(PENDING_DISAGREEMENTS)
 
-    def test_the_paper_the_reference_link_is_built_on_is_not_in_the_table(
+    def test_the_paper_the_reference_link_is_built_on_is_in_the_table(
         self, cases: tuple[ValidationCase, ...]
     ) -> None:
-        """Asserted by absence, on purpose, and it is the honest headline of stage 8.
+        """Asserted the opposite until stage 8.1, and that inversion is the point of it.
 
         Ntanos et al. 2021 supplies the receiver, the transmitter, the protocol
-        and the study-night radiance of the reference link, and it has **no row
-        here**: `quoss.validation.ntanos2021` is stage 8.1 and is not written.
-        Anything reported as validated against that paper traces to assertions
-        in `tests/channel/` and `tests/qkd/`, not to this table. The day the
-        module lands, this test fails and says so.
+        parameters and the study-night radiance of the reference link, and for
+        as long as this package existed it had **no row here**. The assertion
+        was written as an absence — `not [c for c in cases if ...]` — with a
+        docstring saying "the day the module lands, this test fails and says
+        so". It did, and this is the inversion.
+
+        What is asserted now is what the absence was standing in for: the paper
+        that supplies the link is covered, with more than a token row, and every
+        one of its identifiers is namespaced to it so that
+        `EXPECTED_DISAGREEMENTS` stays readable by source.
         """
-        assert not [c for c in cases if c.identifier.startswith("ntanos2021.")]
-        assert set(PENDING_DISAGREEMENTS) >= {
-            "ntanos2021.eq5-printed-gain-product",
-            "lim2014.block-1e4-reach",
-        }
+        own = [c for c in cases if c.identifier.startswith("ntanos2021.")]
+        assert len(own) == 11
+        assert {c.source for c in own} == {NTANOS_2021}
+        assert not set(PENDING_DISAGREEMENTS) & {c.identifier for c in cases}
+
+    def test_the_one_disagreement_still_without_a_row_says_why(self) -> None:
+        """`PENDING_DISAGREEMENTS` is down to one entry, and it is a decision.
+
+        Five of the six entries were Ntanos et al. findings that became rows in
+        stage 8.1. The sixth — Lim et al.'s 1e4 block reaching 135 km — stays,
+        because reproducing it needs their optimisation over five free
+        parameters, and lifting that into `src/` to buy one row would leave this
+        project carrying two implementations of one published Evaluation
+        section. The entry has to keep saying that: a pending disagreement whose
+        note does not name where it *is* measured is indistinguishable from one
+        nobody got round to.
+        """
+        assert set(PENDING_DISAGREEMENTS) == {"lim2014.block-1e4-reach"}
+        note = PENDING_DISAGREEMENTS["lim2014.block-1e4-reach"]
+        assert "tests/qkd/test_finite_key.py" in note
 
     def test_every_case_names_a_test_file_that_exists(
         self, cases: tuple[ValidationCase, ...], project_root: Path

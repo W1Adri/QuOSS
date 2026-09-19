@@ -7,8 +7,10 @@ one that matters, so this builds a valid case and takes overrides.
 
 The values are deliberately not physics. A machinery test that used the real
 ITU-R numbers would fail for two reasons at once the day the physics moved, and
-the reader would have to work out which. The one file that does use the real
-table is `test_table.py`, which is about the table and not about the machinery.
+the reader would have to work out which. The two places that do use the real
+table are `test_base.py::TestTheTableRuns`, which is about the table and not
+about the machinery, and `test_docs.py`, which compares the committed document
+with a fresh render.
 """
 
 from __future__ import annotations

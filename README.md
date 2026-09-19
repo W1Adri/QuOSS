@@ -6,19 +6,19 @@ protocolo QKD → métricas de sistema (SKR, volumen de clave, outage).
 Núcleo Python puro y **vectorizado sobre el eje temporal**, sin dependencias web. La
 CLI, la API y el frontend son *consumidores* del mismo motor, no parte de él.
 
-> **Estado, al 2026-09-19.** Las etapas **0 a 7 están cerradas**: `core/`,
+> **Estado, al 2026-09-19.** Las etapas **0 a 8 están cerradas**: `core/`,
 > `orbits/`, `channel/`, `qkd/`, `system/`, `scenario/`, `engine/`, `io/`,
-> `viz/` y `cli/`. Eso significa que `quoss run escenario.yaml --out dir/`
-> funciona de punta a punta desde un YAML versionado, para las dos geometrías:
-> un día del enlace de referencia son **0.1 s** y 4 pases. De la 8,
-> `validation/` está a medias.
+> `viz/`, `cli/` y `validation/`. Eso significa que
+> `quoss run escenario.yaml --out dir/` funciona de punta a punta desde un YAML
+> versionado, para las dos geometrías —un día del enlace de referencia son
+> **0.1 s** y 4 pases—, y que `quoss validate` tiene detrás la tabla entera.
 >
 > **Qué hay y qué no, sin rodeos:**
 >
 > | | |
 > |---|---|
-> | **Existe y está cerrado** | `core/` · `orbits/` · `channel/` · `qkd/` · `system/` · `scenario/` · `engine/` · `io/` · `viz/` · `cli/` |
-> | **Existe a medias** | `validation/` (base, channel, micius, satquma: 22 casos de tres fuentes, con `tests/validation/` cubriendo el paquete al 100 %; **falta `ntanos2021.py`**, la fuente del enlace de referencia entero, que es la etapa 8.1) |
+> | **Existe y está cerrado** | `core/` · `orbits/` · `channel/` · `qkd/` · `system/` · `scenario/` · `engine/` · `io/` · `viz/` · `cli/` · `validation/` |
+> | **La tabla de validación** | [`docs/validation.md`](docs/validation.md), generada y commiteada: **35 casos de ocho fuentes** — 17 reproducidos, 3 compatibles, **8 no reproducidos** y 7 huecos declarados. Un test la compara byte a byte con lo que la CLI produce hoy |
 > | **No existe: solo un `.gitkeep`** | `api/` · `kernels/` · `web/` · `deploy/` |
 >
 > **Y un defecto conocido de la suite**, que no es del paquete:
@@ -31,9 +31,12 @@ CLI, la API y el frontend son *consumidores* del mismo motor, no parte de él.
 > clave por pase y por día con la cota finite-key aplicada al bloque que el pase
 > realmente es ([ADR 0011](docs/adr/0011-the-block-is-the-pass.md)), y que el
 > motor no añade ni pierde nada al orquestarlo
-> ([ADR 0016](docs/adr/0016-the-engine-adds-nothing-and-one-altitude.md)). Lo que
-> **no** se puede afirmar todavía es que los números estén validados contra la
-> literatura: eso es la etapa 8, y es exactamente la parte que está a medias.
+> ([ADR 0016](docs/adr/0016-the-engine-adds-nothing-and-one-altitude.md)). Y
+> desde la etapa 8, **contra qué literatura se comparó cada número y qué salió**:
+> eso es [`docs/validation.md`](docs/validation.md), y lo honesto de esa tabla
+> son sus ocho filas que no reproducen. «Validado» aquí no significa «coincide»,
+> significa «se comparó, con una tolerancia derivada, y el resultado está escrito»
+> ([ADR 0018](docs/adr/0018-validation-is-a-table-not-a-badge.md)).
 >
 > **La cifra que resume el proyecto.** En un día del enlace de referencia
 > (Castelldefels, 0.75 m, SSO a 700 km, noche clara, máscara de 10°) la tasa
@@ -179,7 +182,7 @@ Lo que hay, marcado por lo que hay de verdad:
 
 ```
 src/quoss/     core ✅  orbits ✅  channel ✅  qkd ✅  system ✅
-               scenario ✅  engine ✅  io ✅  viz ✅  cli ✅  validation 🚧
+               scenario ✅  engine ✅  io ✅  viz ✅  cli ✅  validation ✅
                api ⬜  kernels ⬜
 scenarios/     ✅ siete escenarios versionados y reproducibles (.yaml): cinco de
                   bajada (link: downlink) y dos de tierra (link: horizontal),
@@ -187,7 +190,8 @@ scenarios/     ✅ siete escenarios versionados y reproducibles (.yaml): cinco d
 data/          ✅ catálogo de estaciones + snapshots offline con manifiesto
 tests/         ✅ unit · orbits · channel · qkd · system · scenario · engine
                   · io · viz · cli · validation · e2e · golden   ⬜ physics · api
-docs/          ✅ 28 ADRs                        ⬜ manual de física autogenerado
+docs/          ✅ 28 ADRs + validation.md (35 casos, generado y commiteado)
+                  ⬜ manual de física autogenerado
 benchmarks/    ⬜ puerta de regresión de rendimiento
 web/           ⬜ frontend (TS + Vite + Svelte), deps vendorizadas
 deploy/        ⬜ Dockerfile y compose — la imagen funciona offline
@@ -196,7 +200,7 @@ deploy/        ⬜ Dockerfile y compose — la imagen funciona offline
 `✅` cerrado · `🚧` empezado y con huecos declarados arriba · `⬜` solo un
 `.gitkeep`. El `validation/` de la raíz del repo es un `.gitkeep`; el código de
 validación vive en `src/quoss/validation/` y sus tests en `tests/validation/`
-(cinco ficheros, cobertura del 100 % del paquete en líneas y ramas).
+(siete ficheros, cobertura del 100 % del paquete en líneas y ramas).
 
 Regla de dependencia: `core ← orbits/channel/qkd ← system ← engine ← {cli, api, viz}`.
 Las flechas nunca van al revés.
