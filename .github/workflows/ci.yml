@@ -30,6 +30,27 @@ env:
   # It costs ~16 s, 15 of them physics, so it runs in every job rather than in
   # one of its own.
   QUOSS_REQUIRE_PACKAGING_TESTS: "1"
+  # The extras every job needs, and no more. `--all-extras` was here until
+  # 2026-09-19 and dragged `numba` and `fastapi` into all five jobs, neither of
+  # which is imported by anything the suite touches (stage 2.4 and stage 9 are
+  # not written). Measured before removing it, because "it must be slow" is the
+  # kind of claim this project asks people to check:
+  #
+  #   --all-extras              709 MiB of uv cache, 708 MiB installed
+  #   --extra viz --extra export  499 MiB of uv cache, 497 MiB installed
+  #
+  # So the cost is **210 MiB, 30 %**, and it is almost entirely llvmlite
+  # (172 MiB) -- the `web` extra is about 5 MiB. The cost is NOT time: with a
+  # warm cache the two syncs are 0.56 s and 0.17 s, and cold on this machine
+  # 4.44 s against 3.88 s. The reason to cut it is therefore not the seconds; it
+  # is that `--all-extras` reads as a claim that the suite exercises every extra,
+  # and it does not.
+  #
+  # `viz` is required: tests/viz imports matplotlib at module scope, so without
+  # it collection fails rather than skipping. `export` is not required -- the
+  # Parquet tests skip without pyarrow -- and is synced anyway, because a test
+  # that skips in every environment is a test nobody runs.
+  QUOSS_CI_EXTRAS: "--extra viz --extra export"
 
 jobs:
   lint:
@@ -44,7 +65,7 @@ jobs:
           enable-cache: true
 
       - name: Sync environment
-        run: uv sync --all-extras
+        run: uv sync $QUOSS_CI_EXTRAS
 
       - name: ruff check
         run: uv run ruff check .
@@ -72,7 +93,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Sync environment
-        run: uv sync --all-extras
+        run: uv sync $QUOSS_CI_EXTRAS
 
       - name: pytest
         run: uv run pytest --cov --cov-report=term-missing
@@ -116,7 +137,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Sync environment
-        run: uv sync --all-extras
+        run: uv sync $QUOSS_CI_EXTRAS
 
       - name: pytest (locked numpy)
         if: matrix.numpy == ''
@@ -125,3 +146,55 @@ jobs:
       - name: pytest (${{ matrix.numpy }})
         if: matrix.numpy != ''
         run: uv run --with "${{ matrix.numpy }}" pytest
+
+  # The floors in pyproject.toml, built and run. Before this job existed they
+  # were never constructed by anything, and two of them were false rather than
+  # merely unverified: `numpy>=1.26` (the repository uses `np.trapezoid` and
+  # numpy 2's scalar repr) and `scipy>=1.11` (pins `numpy<2`, and 1.11.0 is
+  # yanked from PyPI). A `>=` that no environment ever builds is not a floor, it
+  # is a hope published in the wheel's metadata.
+  #
+  # Every pin below is exactly the floor pyproject.toml declares, and
+  # `tests/unit/test_project_config.py` fails when the two disagree -- so this
+  # job cannot quietly test something other than what the package promises.
+  #
+  # `--isolated --no-project` and `--with-editable .` rather than `uv sync`,
+  # because `uv sync` resolves against uv.lock and the whole point is to build
+  # the environment the lock does *not* describe. The editable install is what
+  # keeps `tests/io` resolving package data to the checkout.
+  #
+  # Python 3.11, the oldest supported: a floor that only holds on the newest
+  # interpreter is not the floor the classifiers claim.
+  minimums:
+    name: pytest (declared floors, py3.11)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+          python-version: "3.11"
+
+      - name: pytest at the declared floors
+        env:
+          # `--no-project` means there is no lock to be locked to, and uv says so
+          # as a warning on every run. Overridden here rather than left to print,
+          # because a warning that is expected forever trains people to skim the
+          # log this job exists to make them read.
+          UV_LOCKED: "0"
+        run: >
+          uv run --python 3.11 --isolated --no-project
+          --with "numpy==2.0.2"
+          --with "scipy==1.13.0"
+          --with "pydantic==2.7.0"
+          --with "sgp4==2.23"
+          --with "pyyaml==6.0"
+          --with "matplotlib==3.11.0"
+          --with "pyarrow==16.0.0"
+          --with "pytest>=8.0"
+          --with "pytest-cov>=5.0"
+          --with "hypothesis>=6.100"
+          --with-editable .
+          pytest

@@ -126,8 +126,12 @@ entorno: cualquier forma de entrega que empaquete el stack numérico entero
 mueve 124 MB como mínimo —numpy más scipy— para acompañar a 644 KB de física.
 Esa asimetría es la razón de las tres alternativas descartadas, y es también la
 razón de que `pyarrow` y `numba` sean **extras** y no dependencias: el comentario
-de `pyproject.toml:48` («pyarrow, que son 40 MB y no es una dependencia de
-física») tenía la idea correcta y la cifra corta por un factor de casi cuatro.
+del extra `export` en `pyproject.toml` («pyarrow, que son 40 MB y no es una
+dependencia de física») tenía la idea correcta y la cifra corta por un factor de
+casi cuatro. Hoy dice 152 MiB, con la orden que lo mide al lado. *(Citado por el
+extra y no por `pyproject.toml:48`, que es donde estaba el 2026-09-19: un número
+de línea es una cita que envejece sin que nada lo note, y en este fichero ya se
+había movido.)*
 
 ### Dos defectos del nivel 0 que esta medición destapó; los dos están cerrados
 

@@ -29,6 +29,7 @@ distribution is one this project declares somewhere.
 
 from __future__ import annotations
 
+import re
 import tomllib
 from pathlib import Path
 
@@ -118,4 +119,158 @@ def test_every_third_party_mypy_override_is_a_dependency_this_project_declares(
         f"pyproject.toml has a mypy override for {pattern}, and {distribution} is not in "
         f"[project.dependencies], any extra, or any dependency group. An override for a "
         f"library the project does not pull in cannot be doing anything."
+    )
+
+
+def _per_file_ignore_patterns() -> list[str]:
+    return list(_config()["tool"]["ruff"]["lint"]["per-file-ignores"])
+
+
+@pytest.mark.parametrize("pattern", sorted(_per_file_ignore_patterns()))
+def test_every_ruff_per_file_ignore_names_something_that_exists(pattern: str) -> None:
+    """The same defect as a dead mypy override, one config further out.
+
+    ``benchmarks/**`` and ``validation/**`` sat in this table from stage 0 until
+    2026-09-19, aimed at two directories that held a ``.gitkeep`` and nothing
+    else. A lint exception for a directory with no code in it cannot be doing
+    anything, and — this is the part that makes it worth a test — **cannot be
+    told apart from one that is**. ``ruff`` says nothing about it: unlike mypy's
+    ``warn_unused_configs``, there is no flag that reports an ignore that never
+    fires, not even as a note. So this assertion is the only thing that can.
+
+    The root ``validation/**`` was the worse of the two, because it read as
+    covering the validation code. It did not: that lives in
+    ``src/quoss/validation/`` and is matched by no entry here, so the ignore
+    would have had no effect even if the directory had ever been filled — the
+    exception and the code it appeared to excuse were never in the same place.
+
+    The pattern is resolved to the part before the first glob, which is all this
+    can check without reimplementing ruff's matcher, and is exactly what catches
+    a top-level directory that is not there.
+    """
+    prefix = pattern.split("*", 1)[0].rstrip("/")
+    if not prefix:  # a pattern that is glob from the first character matches anywhere
+        return
+    target = PROJECT_ROOT / prefix
+    assert target.exists(), (
+        f"pyproject.toml has a ruff per-file-ignore for {pattern!r}, and {prefix} does not "
+        f"exist. Either it moved, or the exception outlived the code it excused — and ruff "
+        f"will never say so, because it has no equivalent of mypy's warn_unused_configs."
+    )
+
+
+# --------------------------------------------------------------------------- #
+# The declared floors, and the job that builds them
+# --------------------------------------------------------------------------- #
+WORKFLOW = PROJECT_ROOT / ".github" / "workflows" / "ci.yml"
+
+#: Requirements whose floor is deliberately absent, each with its reason. They
+#: are asserted *floorless* as well, so the day one gets a floor this list has
+#: to shrink: an exception that can only grow is one that outlives its reason.
+FLOORLESS = {
+    "numba": "stage 2.4 is not written (ADR 0026), so nothing imports it and no job can pin it",
+    "fastapi": "stage 9 is not written (ADR 0027), so nothing imports it and no job can pin it",
+    "uvicorn": "stage 9 is not written (ADR 0027), so nothing imports it and no job can pin it",
+    "pydantic-settings": "stage 9 is not written (ADR 0027), so nothing imports it",
+}
+
+
+def _distribution(requirement: str) -> str:
+    for separator in (">=", "==", "["):
+        requirement = requirement.split(separator)[0]
+    return requirement.strip().lower()
+
+
+def _shipped_requirements() -> dict[str, str]:
+    """Return ``{distribution: requirement}`` for everything an installer resolves.
+
+    The runtime dependencies and the extras — what `pip install quoss[viz]`
+    pulls in. Not `[dependency-groups]`: those are tooling, never shipped, and
+    their versions are the lock's business.
+    """
+    project = _config()["project"]
+    requirements = list(project["dependencies"])
+    for group in project["optional-dependencies"].values():
+        requirements.extend(group)
+    return {_distribution(r): r for r in requirements}
+
+
+def _minimums_pins() -> dict[str, str]:
+    """Return ``{distribution: pinned version}`` from the ``minimums`` CI job.
+
+    Parsed out of the raw text rather than through a YAML round trip: the job's
+    body is a folded scalar of shell, so YAML gives back one string either way,
+    and a regex over it is honest about that instead of pretending to be
+    structured.
+    """
+    text = WORKFLOW.read_text(encoding="utf-8")
+    body = text.split("  minimums:", 1)
+    assert len(body) == 2, "ci.yml has no `minimums` job; the floors would be untested again"
+    return {
+        _distribution(match): match.split("==")[1]
+        for match in re.findall(r'--with "([^"]+==[^"]+)"', body[1])
+    }
+
+
+@pytest.mark.parametrize("distribution", sorted(_shipped_requirements()))
+def test_every_shipped_requirement_is_either_floored_and_pinned_or_neither(
+    distribution: str,
+) -> None:
+    """A floor nobody builds is a hope published in the wheel's metadata.
+
+    This is the rule the round of 2026-09-19 settled, and it is two-sided on
+    purpose. A requirement may declare a floor **only if** the ``minimums`` job
+    pins that exact version and runs the suite against it; a requirement no job
+    can pin declares no floor and says why in ``FLOORLESS``. There is no third
+    state, because the third state is what was there before: ``numpy>=1.26``
+    and ``scipy>=1.11``, neither of which any environment ever constructed, and
+    **both of which were false** — the repository uses ``np.trapezoid`` and
+    numpy 2's scalar repr, and scipy 1.11 pins ``numpy<2`` besides being yanked
+    from PyPI.
+
+    Pinning the floor and asserting the pin here are two different jobs and both
+    are needed: the CI job answers "does it work", and this answers "is it the
+    version we promised". Without the second, the job could drift upwards one
+    dependency at a time and go on being green while the metadata went on being
+    a claim about something else.
+    """
+    requirement = _shipped_requirements()[distribution]
+    pins = _minimums_pins()
+    if distribution in FLOORLESS:
+        assert ">=" not in requirement, (
+            f"{requirement!r} declares a floor, and {distribution} is listed in FLOORLESS as "
+            f"untestable ({FLOORLESS[distribution]}). If it can be pinned now, pin it in the "
+            f"minimums job and take it out of FLOORLESS in the same commit."
+        )
+        assert distribution not in pins, (
+            f"the minimums job pins {distribution}, which FLOORLESS says nothing can pin. "
+            f"One of the two is out of date."
+        )
+        return
+    assert ">=" in requirement, (
+        f"{requirement!r} declares no floor and is not in FLOORLESS. Either give it one and "
+        f"pin it in the minimums job, or add it to FLOORLESS with the reason no job can."
+    )
+    floor = requirement.split(">=", 1)[1].strip()
+    assert distribution in pins, (
+        f"pyproject.toml declares {requirement!r} and the minimums job of ci.yml does not pin "
+        f"{distribution}. A floor no environment builds is not a floor."
+    )
+    pinned = pins[distribution]
+    assert pinned.startswith(floor), (
+        f"pyproject.toml declares {requirement!r} and the minimums job pins "
+        f"{distribution}=={pinned}. The job has to build the floor the package promises, or "
+        f"the promise is about a version nothing tests."
+    )
+
+
+@pytest.mark.parametrize("distribution", sorted(FLOORLESS))
+def test_a_requirement_declared_floorless_is_still_shipped(distribution: str) -> None:
+    """FLOORLESS may not outlive the requirement it excuses.
+
+    Same shape as ``PATHS_DECLARED_ABSENT`` in ``tests/unit/test_notes.py``: an
+    allowlist that can only grow is an exception nobody can date.
+    """
+    assert distribution in _shipped_requirements(), (
+        f"FLOORLESS names {distribution}, which pyproject.toml no longer ships. Remove the row."
     )

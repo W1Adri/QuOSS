@@ -213,9 +213,11 @@ class TestRealResultAllFormats:
     ``ConfigurationError`` without ``pyarrow``, so the whole class errored — six
     tests that have nothing to do with Parquet included. A skip guard has to sit
     upstream of the thing that needs the dependency, not next to it. ``quoss``
-    installs without ``quoss[export]`` on purpose (pyarrow is 40 MB and not a
-    physics dependency), so a suite that errors without it is telling the truth
-    about the extra and a lie about the core.
+    installs without ``quoss[export]`` on purpose (pyarrow is **152 MiB installed**
+    and not a physics dependency -- the "40 MB" this line said until 2026-09-19
+    was never measured, and the figure in ``pyproject.toml`` is the one that
+    was), so a suite that errors without it is telling the truth about the extra
+    and a lie about the core.
     """
 
     @pytest.fixture
