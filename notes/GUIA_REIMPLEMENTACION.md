@@ -8,10 +8,20 @@
 > `notes/ROADMAP.md`, `CLAUDE.md` y `docs/adr/` ya dicen del presente. Está
 > íntegro en [`archive/GUIA_REIMPLEMENTACION-v3.md`](archive/GUIA_REIMPLEMENTACION-v3.md).
 >
-> Lo que sigue son las **dos cosas que no tienen otro dueño**: el diagnóstico de
-> SimulCTTC, que es lo que sostiene la regla «SimulCTTC no es un oráculo», y la
-> escalera de lenguajes, que es una decisión no obvia, todavía vigente, y
-> **sin ADR** — ver «Lo que esto deja abierto» al final.
+> **Y desde el 2026-09-19 queda menos todavía, que era el objetivo.** Las dos
+> decisiones que este fichero sostenía sin ser su dueño —la escalera de lenguajes
+> y los cuatro niveles de distribución— **ya tienen ADR**:
+> [0026](../docs/adr/0026-the-language-ladder.md) y
+> [0027](../docs/adr/0027-four-levels-of-distribution.md). Estaban aquí porque un
+> ADR se numera al escribirse y eso es una decisión de quien lo mantiene, no un
+> efecto secundario de reordenar notas; escritos los dos, esas secciones se
+> fueron con ellos y no se han duplicado.
+>
+> Lo que queda es **lo único que no tiene otro dueño**: el diagnóstico de
+> SimulCTTC, que es lo que sostiene la regla «SimulCTTC no es un oráculo» —hoy
+> citada en el README, en `ROADMAP.md` y en `tests/golden/README.md`, los tres
+> sin su defensa— y lo que sostiene el «la web es un cliente» del ADR 0027. El
+> día que ese diagnóstico tenga dueño, este fichero desaparece.
 
 ---
 
@@ -55,76 +65,22 @@ completo, con su tabla de costes, está en el archivo.
 
 ---
 
-## 2. La escalera de lenguajes
+## 2 y 3 — se fueron a `docs/adr/`
 
-**Python se queda como lenguaje de la física y la orquestación.** El valor del
-proyecto es corrección física e iteración rápida, el ecosistema está ahí
-(scipy, sgp4, astropy, matplotlib), y un revisor puede leerlo.
+Este fichero llevaba dos apartados más: **la escalera de lenguajes** (Python →
+Numba → Rust → C++, con «MATLAB no» y su regla de entrada) y **los cuatro
+niveles de distribución** (CLI → `serve` → Docker → cloud, con la web como
+cliente). `LAST_CHANGES.md` §41 los señaló como decisiones con forma de ADR y
+sin ADR, y §42 los escribió:
 
-**No saltes un escalón sin datos de profiler:**
-
-1. **NumPy vectorizado** — cubre el 90 % del problema. El cuello no era Python:
-   era que la física era escalar.
-2. **Numba** (`@njit`) para los bucles irreducibles. Mismo fichero, un decorador,
-   cero sistema de build. Segundo escalón por defecto.
-3. **Rust (PyO3 + maturin)** para un kernel realmente caliente y con contrato
-   numérico estable. **Rust antes que C++**: `maturin` produce wheels
-   multiplataforma de forma reproducible, seguridad de memoria, y paralelismo
-   trivial con `rayon`.
-4. **C++** solo si hay que reutilizar una librería C++ existente. Si no, no
-   aporta sobre Rust y sí añade fricción de build.
-
-**MATLAB: no.** No es libre ni redistribuible, lo que rompe Docker, el servicio
-público y la reproducibilidad por terceros — un revisor no debería necesitar una
-licencia. Su única ventaja real es la calidad de las gráficas, y eso lo replica
-`viz/style.py`.
-
-**Binario descargable (PyInstaller/Nuitka): no.** Empaquetar numpy/scipy da
-artefactos de 200–400 MB, frágiles, uno por SO, con notarización en macOS y
-Windows, y **no scriptables** — un investigador no puede meterlos en un bucle de
-barrido. Un wheel + `uvx quoss` da el mismo «descarga y ejecuta» sin perder nada.
-
-**WASM/Pyodide: descartado por ahora.** El stack numérico en WASM es lento y
-pesado.
-
-**Frontend: TypeScript, no JS plano**, con Vite + Svelte y deps **vendorizadas**
-(sin CDN). Las figuras del paper salen de Python, no del navegador.
-
-**La regla que gobierna los cuatro escalones:** se cambia de lenguaje solo tras
-medir, solo para un kernel con contrato numérico estable, y **siempre** con una
-implementación de referencia en NumPy puro contra la que un golden test
-demuestre equivalencia. *Un kernel acelerado sin su referencia es deuda, no
-optimización.*
-
----
-
-## 3. Los cuatro niveles de distribución
-
-El mismo motor en los cuatro, y la web como **cliente** y no como simulador.
-
-| Nivel | Qué es | Para quién |
+| Apartado | Dónde está hoy | Qué gobierna |
 |---|---|---|
-| 0 | `uv run quoss run scenario.yaml` | El día a día. Reproducible, scriptable, sin servidor. **Aquí salen las figuras del paper** |
-| 1 | `quoss serve` → UI en localhost | Exploración interactiva, cero infra |
-| 2 | Imagen Docker publicada | Cualquiera: `docker run …`. **Funciona offline** |
-| 3 | Servicio cloud público | Opcional, y con condiciones: cola de jobs, límites de escenario, rate limiting |
+| La escalera de lenguajes | [**ADR 0026**](../docs/adr/0026-the-language-ladder.md) | `kernels/`, etapa 2.4 |
+| Los cuatro niveles de distribución | [**ADR 0027**](../docs/adr/0027-four-levels-of-distribution.md) | `cli/`, `api/`, `web/`, `deploy/`; etapas 7 y 9–11 |
 
-**La inversión de jerarquía es la decisión**, no la tabla: en SimulCTTC la web
-*era* el simulador, y por eso no había CLI, ni notebook, ni test de extremo a
-extremo limpio. Qué fichero va en qué etapa está en
-[`ROADMAP.md`](ROADMAP.md) 9–11.
-
----
-
-## Lo que esto deja abierto
-
-**Los apartados 2 y 3 son decisiones con forma de ADR y no tienen ADR.** Son no
-obvias, siguen vigentes, gobiernan trabajo futuro (`kernels/` de la etapa 2.4,
-`deploy/` de la 11) y están escritas en un fichero de notas en vez de en
-`docs/adr/`, que es donde este proyecto dice que viven las decisiones no obvias.
-
-**No se ha inventado un ADR para ellas aquí**, porque un ADR se numera al
-escribirse y escribirlo es una decisión de quien vaya a mantenerlo, no un efecto
-secundario de reordenar notas. Queda dicho, que es lo que se puede hacer sin
-tomarla: cuando se escriba la etapa 2.4 o la 11, estos dos apartados son el
-borrador de sus ADRs y este fichero desaparece.
+**No están aquí *y* allí**, que es el punto: este fichero era la tercera fuente
+de verdad de `ROADMAP.md` y de `CLAUDE.md`, y una justificación en dos sitios es
+una que se queda quieta en uno de los dos. Los dos ADRs llevan además la
+medición que aquí no había —los tiempos por etapa y el coste del bucle en serie
+en el 0026, los tamaños del wheel y de lo que arrastra en el 0027—, porque un
+ADR de este proyecto trae sus cifras.
