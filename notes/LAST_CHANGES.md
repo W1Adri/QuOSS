@@ -1234,12 +1234,12 @@ del generador**, y la puerta que sí falla ante uno inesperado es
 direcciones.
 
 **El camino de lectura obligatorio sube otra vez**, y conviene decirlo en vez de
-redondearlo: de 1 578 a **1 707 líneas** (`LAST_CHANGES.md` 1 141 → 1 258 con §39
+redondearlo: de 1 578 a **1 725 líneas** (`LAST_CHANGES.md` 1 141 → 1 276 con §39
 archivado y §44 dentro, `ROADMAP.md` 351 → 363, `GUIA_REIMPLEMENTACION.md` 86).
-Archivar §39 quitó 143 líneas y esta entrada pone 255, así que el saldo es +129
+Archivar §39 quitó 143 líneas y esta entrada pone 273, así que el saldo es +147
 pese al archivo. **La cota que decide si eso está bien no es el total** —§41
 midió por qué no puede serlo— sino la estructural de `tests/unit/test_notes.py`,
-y se cumple con margen: cinco entradas vivas (§40–§44), la más larga 255 contra
+y se cumple con margen: cinco entradas vivas (§40–§44), la más larga 273 contra
 un techo de 320, cabecera en 67 contra `60 + 2 × 39 = 138`.
 
 ### 11. Ficheros
@@ -1256,3 +1256,21 @@ un techo de 320, cabecera en 67 contra `60 + 2 × 39 = 138`.
 | `tests/validation/cases.py` | la cita a `test_table.py`, que no existe |
 | `notes/ROADMAP.md`, `README.md` | etapa 8 cerrada, hito B alcanzado y qué significa, 35 casos |
 | `notes/LAST_CHANGES.md`, `notes/archive/LAST_CHANGES-39.md` | §39 archivado con la comprobación de dónde vive cada cosa suya |
+| `pyproject.toml` | los «40 MB» de pyarrow, medidos: son **152 MiB** |
+
+### 12. Un número falso que defendía una dependencia, de paso
+
+El comentario del extra `export` en `pyproject.toml` decía que pyarrow «is 40 MB
+and not a physics dependency». Medido
+(`du -sh .venv/lib/python3.13/site-packages/pyarrow`, CPython 3.13, Linux
+x86-64): **152 MiB**, 3.8 veces lo que afirmaba, y **más que numpy y scipy
+juntos** (31.6 + 90.4 = 122 MB de bytes de fichero contra los 157 de pyarrow).
+
+Se arregla y se comprueba lo segundo, que es lo que pedía la regla: **la decisión
+que ese número defendía sigue en pie, y con la cifra real es la única lectura que
+queda.** Un extra, nunca un requisito del núcleo de física — porque este formato
+opcional resulta ser lo más grande que el proyecto puede arrastrar, más que toda
+la pila numérica sobre la que está construido. Un comentario que defiende una
+dependencia con un número que nadie comprobó es el mismo defecto que persigue el
+[ADR 0016](../docs/adr/0016-the-engine-adds-nothing-and-one-altitude.md), una
+capa fuera de la física.

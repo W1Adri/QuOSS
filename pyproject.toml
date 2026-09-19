@@ -45,7 +45,19 @@ viz = [
     "matplotlib>=3.8",
 ]
 # Columnar export of results (io/export.py). CSV and the JSON manifest need
-# nothing; Parquet needs pyarrow, which is 40 MB and not a physics dependency.
+# nothing; Parquet needs pyarrow, which is **152 MiB installed** and not a
+# physics dependency.
+#
+# That figure said "40 MB" until 2026-09-19 and was never measured. Measured now
+# (`du -sh .venv/lib/python3.13/site-packages/pyarrow`, CPython 3.13, Linux
+# x86-64): 152 MiB, which is 3.8x what the comment claimed and **more than numpy
+# and scipy together** (31.6 + 90.4 = 122 MB of file bytes, against pyarrow's
+# 157 MB). The decision the number defended -- an extra, never a requirement of
+# the physics core -- is not weakened by the correction, it is the only reading
+# left: this optional format is the single largest thing the project can pull
+# in, bigger than the whole numerical stack it is built on. A comment that
+# defends a dependency with a number nobody checked is the defect ADR 0016
+# exists to prevent, one layer out from the physics.
 export = [
     "pyarrow>=15",
 ]
