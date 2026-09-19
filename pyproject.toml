@@ -25,9 +25,30 @@ dynamic = ["version"]
 # sgp4 is in this list and not in an optional group: orbits/tle.py wraps it
 # rather than reimplementing SGP4, per notes/ROADMAP.md 2.1.5, and a TLE is
 # useless without a propagator for it.
+#
+# EVERY FLOOR BELOW IS TESTED BY THE `minimums` JOB OF .github/workflows/ci.yml,
+# which pins each one exactly and runs the whole suite. Before 2026-09-19 they
+# were not, and two of them were **false** rather than merely unverified:
+#
+#   - `numpy>=1.26`. The repository uses numpy-2-only spellings in two places:
+#     `np.trapezoid` in tests/orbits/test_geometry.py (it is `np.trapz` before
+#     2.0, and that spelling is deprecated *after* 2.0, so no single spelling
+#     serves both under `filterwarnings = ["error"]`), and a doctest in
+#     src/quoss/system/correlated_fading.py that prints `np.float64(0.951)`,
+#     which is numpy 2's scalar repr and `0.951` before it. Measured: at
+#     numpy 1.26.0 the suite fails those two.
+#   - `scipy>=1.11`. scipy 1.11 and 1.12 pin `numpy<2`, so the pair the metadata
+#     advertised is not installable together. And `scipy==1.11.0` is **yanked**
+#     from PyPI for a licence violation, so the floor named a version nobody
+#     should resolve to.
+#
+# The floors are now the lowest versions measured to work, not the lowest that
+# looked plausible. The job pins the declared floor; it does not search for a
+# lower one, so "floor" here means "this exact set passes", not "nothing below
+# it could".
 dependencies = [
-    "numpy>=1.26",
-    "scipy>=1.11",
+    "numpy>=2.0",
+    "scipy>=1.13",
     "pydantic>=2.7",
     "sgp4>=2.23",
     # The scenario is a datum, not a request (README, principle 1), and the datum
@@ -41,8 +62,18 @@ quoss = "quoss.cli.main:main"
 
 [project.optional-dependencies]
 # Publication figures (matplotlib style sheet lives in quoss.viz).
+#
+# `>=3.11` and not `>=3.8`, and the reason is this project's own pytest
+# configuration rather than anything matplotlib does wrong. `filterwarnings =
+# ["error"]` below turns every warning into a failure, and **every matplotlib
+# below 3.11 calls pyparsing APIs that today's pyparsing deprecates** --
+# `parseString` up to 3.8, `oneOf` through 3.10.6 -- at import time, inside
+# `_rc_params_in_file`. Measured on 2026-09-19 against pyparsing 3.3.2: 3.8.4,
+# 3.9.0, 3.9.2, 3.10.0, 3.10.3 and 3.10.6 all fail to import under `-W error`;
+# 3.11.0 is the first that does not. A floor of 3.8 was therefore a version this
+# project's own test suite refuses to run on.
 viz = [
-    "matplotlib>=3.8",
+    "matplotlib>=3.11",
 ]
 # Columnar export of results (io/export.py). CSV and the JSON manifest need
 # nothing; Parquet needs pyarrow, which is **152 MiB installed** and not a
@@ -58,18 +89,36 @@ viz = [
 # in, bigger than the whole numerical stack it is built on. A comment that
 # defends a dependency with a number nobody checked is the defect ADR 0016
 # exists to prevent, one layer out from the physics.
+#
+# `>=16` and not `>=15`: pyarrow 15 pins `numpy<2`, so it cannot be installed
+# beside the `numpy>=2.0` above at all -- `uv` calls the pair unsatisfiable.
+# Measured 2026-09-19 along with the rest of the floors.
 export = [
-    "pyarrow>=15",
+    "pyarrow>=16",
 ]
+# The two extras below carry **no floors**, and that is the other half of the
+# same decision as the measured floors above. Nothing in this repository imports
+# numba, fastapi, uvicorn or pydantic-settings: stage 2.4 is not written (ADR
+# 0026 says no measurement of today justifies it) and stage 9 is not written
+# (ADR 0027). So no job can pin these to a floor and find out whether it works,
+# and a `>=` that no environment ever builds is not a floor -- it is a hope
+# published in the wheel's metadata, which is the same class of unkept claim
+# ADR 0016 exists to refuse, one layer out from the physics.
+#
+# The day `kernels/` or `api/` is written, these get a floor **and** a row in the
+# `minimums` job in the same commit. Until then the honest statement is the
+# absence of one. Asserted by tests/unit/test_project_config.py, which requires
+# every floor the project declares to be pinned by that job.
+#
 # Optional numeric kernels. Only pulled in when the profiler asks for them.
 accel = [
-    "numba>=0.60",
+    "numba",
 ]
 # HTTP layer. FastAPI is an extra, never a requirement of the physics core.
 web = [
-    "fastapi>=0.110",
-    "uvicorn[standard]>=0.29",
-    "pydantic-settings>=2.2",
+    "fastapi",
+    "uvicorn[standard]",
+    "pydantic-settings",
 ]
 
 [project.urls]
@@ -166,8 +215,15 @@ allowed-confusables = ["−", "×", "≤", "≥"]
 # D403: auto-capitalises the first word, which silently rewrites a physics
 # symbol — `sigma` -> `Sigma`, and `e` (eccentricity) -> `E` (energy).
 "tests/**" = ["D100", "D101", "D102", "D103", "D104", "D403", "ARG", "SIM300"]
-"benchmarks/**" = ["D100", "D103"]
-"validation/**" = ["D100", "D103"]
+# `benchmarks/**` and `validation/**` were here from stage 0 and left on
+# 2026-09-19 with the two empty directories they named. Both were aimed at code
+# that was never written: `benchmarks/` held a `.gitkeep` and nothing else, and
+# the root `validation/` was a second, empty copy of a name `src/quoss/validation/`
+# has held since stage 8 -- so the ignore would not even have applied to the
+# validation code if it had ever fired. A lint exception for a directory that
+# does not exist cannot be doing anything, and cannot be told from one that is.
+# `tests/unit/test_project_config.py` now asserts the property for every entry
+# in this table, which is the half that fails; ruff itself says nothing.
 
 [tool.ruff.lint.pydocstyle]
 convention = "numpy"

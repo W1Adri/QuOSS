@@ -36,6 +36,7 @@ propia — y **V4 no es validación**.
 | 2.2 | `channel/` | ✅ (9 módulos) |
 | 2.3 | `qkd/` | ✅ (un protocolo, por decisión) |
 | 2.4 | `kernels/` | ⬜ **no justificada por ninguna medida de hoy** → [0026](../docs/adr/0026-the-language-ladder.md) |
+| 2.5 | la física que queda | ⬜ tres piezas, **ninguna bloquea a nadie**: Brouwer-Lyddane, Vallado §9.6 y la reducción GCRF↔ITRF |
 | 3 | `system/` | ✅ |
 | 4 | `scenario/` | ✅ |
 | 5 | `engine/` | ✅ |
@@ -155,6 +156,23 @@ exigiría renunciar al paso adaptativo por satélite, que es lo que hace fiable 
 integrador cerca de perigeo. La distinción, con lo que cuesta cada una, está en
 el ADR 0026 («El bucle no se puede vectorizar; lo que admite es paralelizar»), y
 el trabajo pertenece a `engine/parallel.py`, etapa 11.
+
+### 2.5 `orbits/` otra vez — la física que queda ⬜
+
+**Por qué es una etapa y no tres filas sueltas.** Hasta el 2026-09-19 estas tres
+vivían en la tabla de «Trabajo abierto», dos de ellas con la **etapa 8** en la
+columna de dónde van. La etapa 8 está cerrada, así que eran trabajo apuntado a
+un sitio al que ya nadie vuelve: una fila que nadie va a leer en el momento en
+que importa. Aquí tienen un número, y el número dice dónde están en el orden.
+
+**Ninguna de las tres bloquea nada**, y decirlo importa tanto como listarlas: el
+hito B está alcanzado sin ellas, y ninguna cambia hoy un número publicable.
+
+| Qué | Por qué está abierta | Qué desbloquea |
+|---|---|---|
+| **Transformación osculador↔medio (Brouwer-Lyddane)** | Es lo único vivo de la bandera del [ADR 0006](../docs/adr/0006-osculating-vs-mean-elements.md). Pendiente de decidir: alcance (solo período corto, o corto + largo) y oráculo | el modo analítico de `propagate`, los términos seculares de 2.º orden, y apretar el test del predictor `3π·δa` de un 5 % a un 0.1 % — hoy ese 5 % existe porque el promedio temporal del semieje osculador sustituye al semieje medio |
+| **Transcribir Vallado §9.6** (tasas seculares) como V2 | Hay que comprobar primero si el libro imprime elementos medios u osculadores; transcribirlo sin saberlo sería un V2 falso, que es lo que el [ADR 0009](../docs/adr/0009-citation-policy.md) prohíbe | una fila más en `docs/validation.md` para `secular_rates_j2`, que hoy no tiene ancla publicada |
+| **Reducción completa GCRF ↔ ITRF** | El enum de `frames.py` deja la puerta abierta a propósito. Medido: hoy no cambia ningún número publicable — el presupuesto del [ADR 0002](../docs/adr/0002-frames-and-time-scales.md) son 14.4 m de movimiento polar y 274 m de DUT1 | precisión de marco por debajo del metro, que ningún escenario de este proyecto pide todavía |
 
 ---
 
@@ -309,8 +327,18 @@ están en el [ADR 0027](../docs/adr/0027-four-levels-of-distribution.md).
 - **10. `web/`** — TypeScript + Vite + Svelte, deps vendorizadas. El frontend
   **no calcula física**: pinta lo que devuelve el motor, `warnings[]` incluidos.
 - **11. `deploy/` + rendimiento** — `Dockerfile` que funciona **offline**,
-  `compose.yaml`, `benchmarks/` como puerta de regresión en CI, y `kernels/`
+  `compose.yaml`, la **puerta de regresión de rendimiento** en CI, y `kernels/`
   solo si el profiler lo pide.
+
+  **Decisión del 2026-09-19: la puerta de regresión es de esta etapa, y va junto
+  al paralelismo del bucle de `propagator.py:535`, que es justamente lo que
+  mediría.** Hasta hoy la prometía un directorio `benchmarks/` vacío en la raíz
+  del repositorio, con un `.gitkeep` dentro y nada más. Ese directorio está
+  **borrado**, con los otros tres que prometían lo mismo (`deploy/`, `web/` y el
+  `validation/` de la raíz, que con `src/quoss/validation/` lleno al lado se
+  leía como una segunda implementación). Decir que la puerta no está escrita es
+  mejor que fingirla; un directorio vacío la finge sin que nada pueda
+  comprobarlo, y el sitio donde una etapa se promete es esta tabla.
 
 ---
 
@@ -322,13 +350,10 @@ están en el [ADR 0027](../docs/adr/0027-four-levels-of-distribution.md).
 
 | Dónde | Qué | Comprobado |
 |---|---|---|
-| `orbits/` | **Transformación osculador↔medio (Brouwer-Lyddane).** Es lo único que queda vivo de la bandera del ADR 0006, y desbloquea a la vez el modo analítico de `propagate` y los términos seculares de segundo orden. Pendiente: elegir alcance (solo período corto, o corto + largo) y oráculo | no existe |
-| etapa 8 | **Transcribir Vallado §9.6** (tasas seculares) como V2, comprobando primero si el libro imprime elementos medios u osculadores | sin transcribir |
 | ~~etapa 8~~ | ~~Reactivar `warn_unused_configs = true` en mypy.~~ **Cerrada el 2026-09-19.** Activada, nombró **tres** secciones muertas (`quoss.kernels.*`, `numba.*`, `pyarrow.*`) y las tres están fuera con su razón. La bandera sola no bastaba —mypy la emite como `note:` y sale 0—, así que la mitad que falla es `tests/unit/test_project_config.py`. §46 | cerrada |
-| etapa 8 | ¿Reducción completa GCRF ↔ ITRF? El enum deja la puerta abierta; hoy no cambia ningún número publicable | no existe |
 | etapa 11 | **Paralelismo del bucle sobre satélites.** `ZONAL_NUMERIC` integra las S órbitas en serie (`propagator.py:535`): 927 ms/satélite con S = 60 y 934 con S = 1. **Paralelizar, no vectorizar** — cada satélite lleva su propia secuencia de pasos adaptativos en DOP853 ([ADR 0026](../docs/adr/0026-the-language-ladder.md)). Pertenece a `engine/parallel.py`, no a la física, y es lo que hay que hacer **antes** de volver a medir la etapa 2.4 | en serie |
-| etapa 11 | `uv sync --all-extras` en CI arrastra `numba` **y `fastapi`** en los cinco jobs. Comprobado el 2026-09-19: ninguno de los dos se importa en nada que la suite toque, así que los extras `accel` y `web` son peso muerto. Falta la medida del tiempo de CI que cuestan, que es lo que decide dónde se quitan | `ci.yml`, tres `uv sync --all-extras` |
-| etapa 11 | El suelo `numpy>=1.26` no está testeado, y **no es alcanzable con el `scipy` del lock**: medido el 2026-09-19, `--with numpy==1.26.4` revienta en `scipy/sparse/_sputils.py` (`np.long`, retirado en numpy 2) porque el scipy resuelto es 1.18.0. Un entorno de mínimos de verdad —`numpy==1.26.0` + `scipy==1.11.0` sobre Python 3.11— sí se construye, y ahí el primer fallo **no es de numpy**: es `matplotlib==3.8.0` contra el `pyparsing` de hoy, con `filterwarnings = ["error"]` convirtiéndolo en error. El job de mínimos tendrá que fijar también el suelo del extra `viz` | sin job de mínimos; medido en §46 |
+| ~~etapa 11~~ | ~~`uv sync --all-extras` arrastra `numba` y `fastapi` a los cinco jobs.~~ **Cerrada el 2026-09-19.** Medido antes de quitarlo: **210 MiB, el 30 %** de la caché de uv y del entorno, casi todo `llvmlite`; el tiempo **no** era el coste (0.56 s contra 0.17 s en caliente). Los jobs sincronizan `--extra viz --extra export`. §48 | cerrada |
+| ~~etapa 11~~ | ~~El suelo `numpy>=1.26` no está testeado.~~ **Cerrada el 2026-09-19, y no estaba sin probar sino MAL**: `np.trapezoid` y el `repr` de escalar de numpy 2 hacen que la suite no corra por debajo de 2.0, y `scipy>=1.11` fija `numpy<2` además de estar retirado de PyPI. Los suelos son hoy los medidos y el job `minimums` los construye; los dos extras que nada importa (`accel`, `web`) **pierden el suyo**. §48 | cerrada |
 | cuando duela | **Coste de la suite.** Casi todo integraciones DOP853 de `test_perturbations.py`. Recortar revoluciones antes que tolerancias | ver §41 |
 | si entra `sgp4` en más sitios | `filterwarnings = ["error"]` necesitará excepciones **por warning concreto**, nunca una categoría entera | — |
 | si aparece un tercero | `frames._broadcast_against` y `kepler._broadcast_to_common` siguen duplicados a medias. **Difieren** en forma y en lo que aconsejan sus mensajes, y por eso no se unificaron | documentado en `orbits/_validation.py` |

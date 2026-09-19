@@ -336,6 +336,15 @@ CITED_ROOTS = (
     "notes",
     "scenarios",
     "data",
+    # These four were directories of this repository until 2026-09-19, when the
+    # four `.gitkeep`s that were all they held were deleted: a directory that
+    # promises a stage is a promise nobody can check. They stay in this list on
+    # purpose, and the purpose is the opposite of the one they had. Before, they
+    # let a citation of a file under one of them resolve; now they make one
+    # **fail**, because the scan below asserts that every path it matches
+    # exists. Taking them out would make such a citation invisible instead --
+    # and this comment is the demonstration: naming an example file here was
+    # itself caught by the test on the first run.
     "benchmarks",
     "deploy",
     "validation",

@@ -20,7 +20,7 @@ CLI, la API y el frontend son *consumidores* del mismo motor, no parte de él.
 > | **Existe y está cerrado** | `core/` · `orbits/` · `channel/` · `qkd/` · `system/` · `scenario/` · `engine/` · `io/` · `viz/` · `cli/` · `validation/` |
 > | **La tabla de validación** | [`docs/validation.md`](docs/validation.md), generada y commiteada: **35 casos de ocho fuentes** — 17 reproducidos, 3 compatibles, **8 no reproducidos** y 7 huecos declarados. Un test la compara byte a byte con lo que la CLI produce hoy |
 > | **Los tres expedientes** | [`docs/experiments/`](docs/experiments/): [GE-1](docs/experiments/GE-1.md), [GE-0b](docs/experiments/GE-0b.md) y el [enlace de referencia](docs/experiments/reference-link.md). Son los documentos con los que se decide qué comprar, **generados por `quoss dossier`** desde los escenarios y con el mismo test byte a byte detrás. Ninguna cifra está transcrita a mano |
-> | **No existe: solo un `.gitkeep`** | `api/` · `kernels/` · `web/` · `deploy/` |
+> | **No existe, y ya no lo finge** | `api/` y `kernels/` son paquetes vacíos dentro de `src/quoss/`. Los cuatro directorios de la raíz que solo tenían un `.gitkeep` —`benchmarks/`, `deploy/`, `web/` y `validation/`— **se han borrado** el 2026-09-19: dónde va cada uno cuando toque está en el [ROADMAP](notes/ROADMAP.md) y en el [ADR 0027](docs/adr/0027-four-levels-of-distribution.md), que es un sitio que no promete nada por existir |
 >
 > **Y un defecto conocido de la suite**, que no es del paquete:
 > `tests/viz/test_plots.py` importa matplotlib arriba del fichero, así que sin el
@@ -84,8 +84,8 @@ CLI, la API y el frontend son *consumidores* del mismo motor, no parte de él.
 Requiere [`uv`](https://docs.astral.sh/uv/) (gestiona también la versión de Python):
 
 ```bash
-uv sync                 # entorno de desarrollo reproducible desde uv.lock
-uv sync --all-extras    # + viz, accel y web
+uv sync                              # entorno reproducible desde uv.lock
+uv sync --extra viz --extra export   # + lo que la suite necesita
 ```
 
 Extras disponibles: `viz` (matplotlib), `export` (pyarrow, para Parquet),
@@ -95,7 +95,21 @@ pydantic + sgp4 + pyyaml.
 La **suite**, en cambio, todavía no es tan modular como el paquete:
 `tests/viz/test_plots.py` importa matplotlib en el módulo, así que sin el extra
 `viz` la recogida de `tests/viz/` **falla** en vez de saltarse. Está anotado como
-pendiente arriba; para correr la suite entera, `uv sync --all-extras`.
+pendiente arriba; para correr la suite entera, `uv sync --extra viz --extra export`
+— que es exactamente lo que sincroniza CI. `--all-extras` funciona igual y trae
+210 MiB de más (`numba` y `llvmlite`) que **nada de lo que la suite toca
+importa**.
+
+**Y los suelos de versión del paquete están probados desde el 2026-09-19**, que
+antes no lo estaban. El job `minimums` de CI construye el entorno más bajo que
+`pyproject.toml` declara —numpy 2.0.2, scipy 1.13.0, pydantic 2.7.0, sgp4 2.23,
+pyyaml 6.0, matplotlib 3.11.0, pyarrow 16.0.0, sobre Python 3.11— y corre la
+suite entera ahí. Antes de existir ese job, dos de los suelos no estaban sin
+probar sino **equivocados**: `numpy>=1.26` (el repositorio usa `np.trapezoid` y
+el `repr` de escalar de numpy 2) y `scipy>=1.11` (fija `numpy<2`, y 1.11.0 está
+retirado de PyPI por violación de licencia). Los extras `accel` y `web` **no
+declaran suelo**, porque nada los importa todavía y un `>=` que ningún entorno
+construye no es un suelo: es una esperanza publicada en los metadatos del wheel.
 
 ## Uso
 
@@ -208,18 +222,24 @@ data/          ✅ catálogo de estaciones + snapshots offline con manifiesto
 tests/         ✅ unit · orbits · channel · qkd · system · scenario · engine
                   · io · viz · cli · validation · dossier · packaging · e2e
                   · golden   ⬜ physics · api
-docs/          ✅ 28 ADRs + validation.md (35 casos, generado y commiteado)
+docs/          ✅ 29 ADRs + validation.md (35 casos, generado y commiteado)
                   + experiments/ (los tres expedientes, generados y commiteados)
                   ⬜ manual de física autogenerado
-benchmarks/    ⬜ puerta de regresión de rendimiento
-web/           ⬜ frontend (TS + Vite + Svelte), deps vendorizadas
-deploy/        ⬜ Dockerfile y compose — la imagen funciona offline
 ```
 
-`✅` cerrado · `🚧` empezado y con huecos declarados arriba · `⬜` solo un
-`.gitkeep`. El `validation/` de la raíz del repo es un `.gitkeep`; el código de
-validación vive en `src/quoss/validation/` y sus tests en `tests/validation/`
-(siete ficheros, cobertura del 100 % del paquete en líneas y ramas).
+`✅` cerrado · `🚧` empezado y con huecos declarados arriba · `⬜` no escrito.
+
+**Lo que no está en ese árbol tampoco está en el repositorio, y eso es nuevo.**
+Hasta el 2026-09-19 la raíz tenía `benchmarks/`, `deploy/`, `web/` y
+`validation/`: cuatro directorios con un `.gitkeep` dentro y nada más. Un
+directorio vacío **promete**, y el peor de los cuatro era `validation/`, que con
+`src/quoss/validation/` lleno al lado se leía como una segunda implementación.
+Los cuatro están borrados; dónde va cada uno cuando toque lo dice el
+[ROADMAP](notes/ROADMAP.md), que es estado y no promesa — incluida la puerta de
+regresión de rendimiento, que es de la etapa 11 y va junto al paralelismo del
+bucle que mediría. El código de validación vive en `src/quoss/validation/` y sus
+tests en `tests/validation/` (siete ficheros, cobertura del 100 % del paquete en
+líneas y ramas).
 
 Regla de dependencia: `core ← orbits/channel/qkd ← system ← engine ← {cli, api, viz}`.
 Las flechas nunca van al revés.
