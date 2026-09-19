@@ -2,14 +2,14 @@
 
 What lives here
 ---------------
-:func:`build_parser` wires the three subcommands onto one ``argparse`` parser,
+:func:`build_parser` wires the four subcommands onto one ``argparse`` parser,
 and :func:`main` runs the one the arguments chose and turns whatever comes back
 into a process exit status. That is all; every subcommand's own work is in its
 own module.
 
 Why ``argparse`` and not a CLI framework
 -----------------------------------------
-Three subcommands and a dozen flags do not need one, and a framework is a
+Four subcommands and a dozen flags do not need one, and a framework is a
 dependency that everybody who installs the physics core would carry. The core's
 dependency list is deliberately five packages (``pyproject.toml``), on the same
 argument ADR 0027 makes about the distribution levels: the thing people install
@@ -41,6 +41,7 @@ Examples
     uv run quoss run scenarios/ge1_1km.yaml --out out/ge1
     uv run quoss sweep scenarios/ge1_1km.yaml scenarios/sweeps/ge1_distance.yaml
     uv run quoss validate
+    uv run quoss dossier scenarios/ge1_1km.yaml --out docs/experiments/GE-1.md
 
 >>> main(["--version"])
 Traceback (most recent call last):
@@ -55,7 +56,7 @@ import sys
 from collections.abc import Sequence
 
 import quoss
-from quoss.cli import run, sweep, validate
+from quoss.cli import dossier, run, sweep, validate
 from quoss.cli.report import EXIT_ERROR, EXIT_USAGE
 from quoss.core.errors import QuossError
 
@@ -65,9 +66,10 @@ PROG = "quoss"
 """The program name, as installed."""
 
 _DESCRIPTION = (
-    "QuOSS — quantum optical satellite simulator. Run a scenario, sweep one, or recompute "
-    "the validation table. The CLI computes nothing: it turns arguments into a call and a "
-    "result into files (docs/adr/0028-the-cli-computes-nothing.md)."
+    "QuOSS — quantum optical satellite simulator. Run a scenario, sweep one, recompute the "
+    "validation table, or write an experiment's dossier. The CLI computes nothing: it turns "
+    "arguments into a call and a result into files "
+    "(docs/adr/0028-the-cli-computes-nothing.md)."
 )
 
 _EPILOG = (
@@ -104,6 +106,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_parser(subparsers)
     sweep.add_parser(subparsers)
     validate.add_parser(subparsers)
+    dossier.add_parser(subparsers)
     return parser
 
 
