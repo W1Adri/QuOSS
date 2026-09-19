@@ -1580,7 +1580,7 @@ class TestTheScenarioChoosesTheRegime:
 
         The field has **no schema default** since PR C — see
         ``tests/scenario/test_models.py::
-        TestTheStationSpecConversions::test_the_schema_has_no_regime_default_and_the_physics_signatures_keep_theirs``
+        TestUnitsConvertOnceAtTheBoundary::test_the_schema_has_no_regime_default_and_the_physics_signatures_keep_theirs``
         and the annex of ADR 0022 — so what this asserts is that
         :func:`~quoss.scenario.defaults.reference_castelldefels` writes ``weak``
         itself rather than receiving it, and that writing it a second time by

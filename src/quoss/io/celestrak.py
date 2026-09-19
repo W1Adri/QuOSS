@@ -21,7 +21,7 @@ match on the object name and may return several objects. In ``FORMAT=TLE`` the
 answer is three lines per object — a 24-character name line, then the two
 element lines — with CRLF line endings, and the text ``No GP data found`` when
 nothing matches. Verified by fetching the ISS on 2026-09-13 (the payload is
-``data/snapshots/tle/iss_zarya.json``).
+``quoss/data/snapshots/tle/iss_zarya.json``).
 
 Why the epoch is the data version
 ---------------------------------

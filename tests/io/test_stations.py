@@ -1,4 +1,4 @@
-"""Tests for :mod:`quoss.io.stations` and the shipped ``data/ogs.yaml``."""
+"""Tests for :mod:`quoss.io.stations` and the shipped ``src/quoss/data/ogs.yaml``."""
 
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ def write(tmp_path: Path, document: Any) -> Path:
 
 
 class TestShippedCatalogue:
-    def test_path_is_the_repository_file(self, data_dir: Path) -> None:
+    def test_path_is_the_packaged_file(self, data_dir: Path) -> None:
         assert DEFAULT_CATALOGUE_PATH == data_dir / "ogs.yaml"
 
     def test_names_in_order(self) -> None:

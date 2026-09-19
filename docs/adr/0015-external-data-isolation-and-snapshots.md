@@ -2,7 +2,7 @@
 
 - **Estado:** aceptada
 - **Fecha:** 2026-09-13
-- **Etapa:** 6 (`io/cache.py`, `io/celestrak.py`, `io/openmeteo.py`, `io/snapshots.py`, `io/export.py`, `io/stations.py`, `data/ogs.yaml`, `data/snapshots/`)
+- **Etapa:** 6 (`io/cache.py`, `io/celestrak.py`, `io/openmeteo.py`, `io/snapshots.py`, `io/export.py`, `io/stations.py`, `quoss/data/ogs.yaml`, `quoss/data/snapshots/`)
 - **Afecta a:** todo resultado que use un TLE o una serie de nubes reales, a
   la procedencia (`Provenance.data_versions`) que `scenario/result.py` guarda,
   a la demo offline de `notes/archive/GUIA_REIMPLEMENTACION-v3.md` §5, y a
@@ -136,7 +136,7 @@ sirvió la celda de 41.3005 N, 2.0660 E, a **7.2 km** (INFO
 
 ### 5. Un snapshot es una respuesta real con su manifiesto, o dice «synthetic» en el nombre
 
-`data/snapshots/<kind>/<name>.json` guarda `{"manifest": {kind, name,
+`quoss/data/snapshots/<kind>/<name>.json` guarda `{"manifest": {kind, name,
 source_url, fetched_utc, sha256, data_version, note}, "payload": <respuesta
 verbatim>}`. Tres reglas:
 
@@ -183,7 +183,7 @@ celda vacía. `manifest.json` + `arrays.npz` es exactamente lo que
 
 ### 7. Una estación del catálogo es una coordenada con su fuente, y una apertura que no está en la fuente es `null`
 
-`data/ogs.yaml` lleva cuatro estaciones. Cada una tiene `source` (con la fecha
+`quoss/data/ogs.yaml` lleva cuatro estaciones. Cada una tiene `source` (con la fecha
 en que se abrió la página) y `coordinates_precision` (cuántos decimales imprimió
 la fuente y qué valen en el suelo); el cargador exige que ambos sean cadenas
 no vacías, que no haya nombres duplicados ni claves desconocidas, y que los
@@ -231,10 +231,19 @@ proyecto prohíbe.
 ### Lo que esto cuesta
 
 - `DEFAULT_SNAPSHOT_ROOT` y `DEFAULT_CATALOGUE_PATH` se resuelven relativos al
-  fichero fuente (`<repo>/data/...`). Funciona en un checkout y con `uv run`;
-  **no** funciona con el paquete instalado como wheel, donde `data/` no se
-  distribuye. Toda función acepta `root`/`path` explícitos para ese caso;
-  mover los datos dentro del paquete es una decisión de empaquetado pendiente.
+  fichero fuente. **Hasta el 2026-09-19 eso era `<repo>/data/...`**, tres
+  directorios por encima del módulo, y el coste estaba escrito aquí como
+  aplazado: funcionaba en un checkout y con `uv run`, y **no** con el paquete
+  instalado, donde `data/` ni siquiera viajaba en el wheel. Cerrado: los datos
+  son hoy datos de paquete en `src/quoss/data/`, el ancla es
+  `quoss.data.DATA_ROOT` —un directorio por encima, dentro de lo que se copia—
+  y el wheel los lleva. La medida y el test que lo comprueba **desde una
+  instalación fuera del checkout** están en `LAST_CHANGES.md` §45 y en
+  `tests/packaging/test_wheel.py`. Toda función sigue aceptando `root`/`path`
+  explícitos, que es lo que usa quien guarda los snapshots en otro sitio.
+  Lo que **no** cubre el arreglo, dicho en `quoss/data/__init__.py`: un paquete
+  zipimportado no tiene directorio que abrir, y ninguno de los cuatro niveles
+  del [ADR 0027](0027-four-levels-of-distribution.md) lo distribuye así.
 - La celda de 25 km del reanálisis no es la línea de visión de un pase de
   cinco minutos. Este paquete registra la distancia; qué hacer con ella es de
   `system/pcflos.py`.

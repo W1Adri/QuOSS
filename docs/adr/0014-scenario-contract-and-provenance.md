@@ -84,7 +84,7 @@ esquema tiene sentido en infinito.
 
 | Campo | Por qué | Test |
 |---|---|---|
-| `channel.zenith_transmittance` | ADR 0009 hueco 14: la ley de escala está publicada, el número que escala no, en ninguna fuente que se pueda abrir. Un defecto sería un número inventado etiquetado «publicado» por su posición. Quien no tiene extinción escribe `1.0` y con eso lo declara | `test_models.py::TestTheTwoFieldsWithoutADefault::test_zenith_transmittance_is_required` |
+| `channel.zenith_transmittance` | ADR 0009 hueco 14: la ley de escala está publicada, el número que escala no, en ninguna fuente que se pueda abrir. Un defecto sería un número inventado etiquetado «publicado» por su posición. Quien no tiene extinción escribe `1.0` y con eso lo declara | `test_models.py::TestTheFieldsWithoutADefault::test_extinction_must_be_declared_one_of_the_two_ways` (el nombre dice «una de las dos» desde el [ADR 0023](0023-traceable-extinction.md): la extinción trazable es la segunda forma de declararla, y lo que se aserta es el par) |
 | `passes.minimum_elevation_deg` | ADR 0011 §5: óptimo interior cerca de 8°; bajar de 8° a 2° compra un 71 % más de segundos y destruye el 6.0 % de la clave. Una cantidad con óptimo es variable de diseño | `…::test_minimum_elevation_is_required` |
 
 Todo lo demás con valor publicado defendible lo lleva como defecto, con la fuente
@@ -263,7 +263,7 @@ lleva texto.
 seis módulos (`models.py` 349 sentencias, `result.py` 372, `io.py` 69,
 `defaults.py` 46, `hash.py` 12). Las medidas citadas arriba viven en:
 
-- `test_models.py::TestTheTwoFieldsWithoutADefault`, `::TestAValidScenarioAlwaysConverts`
+- `test_models.py::TestTheFieldsWithoutADefault`, `::TestAValidScenarioAlwaysConverts`
   (Hypothesis), `::TestUnitsConvertOnceAtTheBoundary::test_the_wind_default_is_the_hv57_value_not_the_bufton_conversion`.
 - `test_defaults.py::TestReferenceCastelldefels::test_the_budgets_evaluate_identically_from_either_source`
   (los dos presupuestos a `1e-12` relativo desde el escenario y desde las

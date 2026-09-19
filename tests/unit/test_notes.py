@@ -21,6 +21,7 @@ entry the project has ever written.
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -309,4 +310,362 @@ def test_every_guide_section_cited_from_the_code_exists() -> None:
         f"do exist are {present}. Point the citation at "
         f"notes/archive/{GUIDE_STEM}-v3.md, where the old numbering is frozen, or at the ADR "
         f"that owns the decision today."
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Citations to a file in the tree resolve to a file that is in the tree
+# --------------------------------------------------------------------------- #
+#: Directories a path citation may start from. Two families, and the split is
+#: the project's own habit rather than a rule invented here:
+#:
+#: * repository roots -- ``docs/adr/0018-….md``, ``scenarios/ge1_1km.yaml``;
+#: * package-relative module paths -- ``channel/atmosphere.py``, ``cli/run.py``,
+#:   which every ADR and docstring writes without the ``src/quoss/`` prefix.
+#:
+#: A citation is resolved against the repository root, against ``src/`` and
+#: against ``src/quoss``, and only counts as broken when none of the three
+#: exists. Three anchors because the tree really does use three spellings --
+#: ``docs/adr/0018-….md``, ``quoss/data/ogs.yaml``, ``channel/atmosphere.py`` --
+#: and insisting on one would fail 140 citations that are perfectly readable.
+CITED_ROOTS = (
+    # repository roots
+    "src",
+    "tests",
+    "docs",
+    "notes",
+    "scenarios",
+    "data",
+    "benchmarks",
+    "deploy",
+    "validation",
+    "web",
+    # src-relative
+    "quoss",
+    # package-relative
+    "core",
+    "orbits",
+    "channel",
+    "qkd",
+    "system",
+    "scenario",
+    "engine",
+    "io",
+    "cli",
+    "viz",
+    "kernels",
+    "api",
+)
+
+#: Extensions a citation may end in. Restricting to a list rather than accepting
+#: ``\.\w+`` is not tidiness, it is what keeps the scan from reading Python
+#: attribute access as a file: ``core/types.TimeGrid`` and
+#: ``scenario/io.format_for_path`` are dotted names, not files, and an open
+#: extension matches both.
+CITED_SUFFIXES = ("py", "md", "toml", "yaml", "yml", "json", "csv", "npz", "lock", "txt")
+
+#: A path, not preceded by a character that would make it the tail of a longer
+#: one. The lookbehind is what stops ``<venv>/lib/python3.13/data/ogs.yaml`` --
+#: prose about where an *installed* tree resolves a path to -- from being read
+#: as a citation of ``data/ogs.yaml`` in this tree.
+PATH_CITATION_RE = re.compile(
+    r"(?<![\w/<.-])((?:" + "|".join(CITED_ROOTS) + r")/[\w./-]*\."
+    r"(?:" + "|".join(CITED_SUFFIXES) + r"))(?![\w.])"
+)
+
+#: Where a path citation may live. Same three roots as the guide scan above,
+#: plus ``notes/ROADMAP.md`` -- which is state, not history, so a dead path in
+#: it is a defect -- and the same three root files.
+#:
+#: ``LAST_CHANGES.md``, ``INCONSISTENCIAS.md`` and ``archive/`` are out, and not
+#: by oversight: they are a record of what was true on a date. §42 saying the
+#: wheel did not carry ``data/ogs.yaml`` is a true sentence about 2026-09-19,
+#: and rewriting it when the file moves would be falsifying the log.
+PATH_CITING_ROOTS = ("src", "tests", "docs")
+PATH_CITING_FILES = ("pyproject.toml", "CLAUDE.md", "README.md", "notes/ROADMAP.md")
+
+#: Paths cited by name that deliberately do **not** exist, each with its reason.
+#: Every one of them is asserted *absent* as well, so the day one gets written
+#: this list fails and has to shrink: an allowlist that can only grow is the
+#: kind of exception that outlives its reason.
+PATHS_DECLARED_ABSENT = {
+    # ADR 0027 names the four levels of distribution and says, in the same
+    # bullet, "de los cuales **ninguno existe todavía**". Stages 9-11.
+    "api/app.py": "stage 9, ADR 0027 declares it absent in the same sentence",
+    "cli/serve.py": "stage 9, ADR 0027 declares it absent in the same sentence",
+    "deploy/compose.yaml": "stage 11, ADR 0027 declares it absent in the same sentence",
+    # ADR 0026 governs stage 2.4, which the roadmap marks as not justified by
+    # any measurement of today. An ADR records a decision, not an implementation.
+    "kernels/base.py": "stage 2.4, ADR 0026 governs a stage that is not written",
+    "kernels/numpy_backend.py": "stage 2.4, ADR 0026 governs a stage that is not written",
+    "kernels/numba_backend.py": "stage 2.4, ADR 0026 governs a stage that is not written",
+    # A placeholder inside the doctest of ValidationCase, showing what the
+    # `test` field looks like. Pointing it at a real node would be worse: the
+    # case in that example is invented, so a real node would claim to reproduce
+    # something it has never seen.
+    "tests/x.py": "placeholder in the ValidationCase doctest, deliberately not a node",
+}
+
+
+def _path_citing_files(root: Path) -> list[Path]:
+    files = [
+        path
+        for directory in PATH_CITING_ROOTS
+        for path in (root / directory).rglob("*")
+        if path.is_file() and path.suffix in CITING_SUFFIXES
+    ]
+    files.extend(root / name for name in PATH_CITING_FILES)
+    return sorted(set(files))
+
+
+def _path_citations(root: Path) -> list[tuple[Path, int, str]]:
+    """Return ``(citing file, line, cited path)`` for every path citation found."""
+    out: list[tuple[Path, int, str]] = []
+    for path in _path_citing_files(root):
+        text = path.read_text(encoding="utf-8")
+        for match in PATH_CITATION_RE.finditer(text):
+            cited = match.group(1)
+            if "..." in cited:  # an elision in prose, not a path
+                continue
+            out.append((path, text[: match.start()].count("\n") + 1, cited))
+    return out
+
+
+def test_every_path_cited_from_the_code_exists() -> None:
+    """A citation of a file in this tree resolves to a file that is in this tree.
+
+    The sibling test above covers a citation of a *section*. This one covers a
+    citation of a *file*, and it exists because the failure has already
+    happened twice in this project by the same mechanism: something moved, and
+    the citations kept pointing at where it used to be. §42 trimmed the guide
+    and broke fourteen section citations (INCONSISTENCIAS #17); the stage that
+    added this test moved ``data/`` into the package and had **fifteen** path
+    citations to carry with it.
+
+    What it does not cover, said out loud. Only paths ending in a known
+    extension are checked, so a citation of a *directory* -- ``data/snapshots/``
+    -- is invisible to it. That is not laziness: in prose a slash-terminated
+    name is indistinguishable from a slash-separated list, and the tree has a
+    real example, ``core ← orbits/channel/qkd ← system`` in ``README.md:205``,
+    which any directory-shaped rule reads as a citation of
+    ``src/quoss/orbits/channel/``. A scan that fires on that sentence would be
+    turned off within a week, and a test that gets turned off protects nothing.
+
+    Measured when written: **186 distinct paths cited**, seven of them absent
+    and all seven in :data:`PATHS_DECLARED_ABSENT`. Checked by breaking one by
+    hand -- renaming ``scenarios/ge1_1km.yaml`` to ``ge1_1km.yml`` made the test
+    fail naming **26** citing lines, and restoring it made it pass again.
+    """
+    root = NOTES.parent
+    anchors = (root, root / "src", root / "src" / "quoss")
+
+    citations = _path_citations(root)
+    assert citations, "no path citations found at all; the scan is broken"
+
+    broken = sorted(
+        f"{path.relative_to(root)}:{line} cites {cited}"
+        for path, line, cited in citations
+        if cited not in PATHS_DECLARED_ABSENT
+        and not any((anchor / cited).exists() for anchor in anchors)
+    )
+    assert not broken, (
+        f"citations pointing at a file that is not in the tree: {broken}. Either the "
+        f"file moved and the citation did not, or the citation names something that was "
+        f"never written -- in which case it belongs in PATHS_DECLARED_ABSENT with its "
+        f"reason, not in an exception nobody can date."
+    )
+
+
+@pytest.mark.parametrize("cited", sorted(PATHS_DECLARED_ABSENT))
+def test_a_path_declared_absent_is_still_absent(cited: str) -> None:
+    """The allowlist above shrinks by itself when the file it excuses gets written."""
+    root = NOTES.parent
+    anchors = (root, root / "src", root / "src" / "quoss")
+    assert not any((anchor / cited).exists() for anchor in anchors), (
+        f"{cited} is listed in PATHS_DECLARED_ABSENT ({PATHS_DECLARED_ABSENT[cited]}) and now "
+        f"exists. Remove the entry: the citations of it are no longer excused, they are correct."
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Citations of a pytest node resolve to a node that is defined
+# --------------------------------------------------------------------------- #
+#: A test file, then one or more ``::``-separated identifiers. No literal
+#: example is written anywhere in this module, for the reason given above
+#: :data:`GUIDE_STEM`: this file is inside the tree the scan walks, so an
+#: illustrative broken citation would *be* one and would fail its own test.
+#: The path part is matched loosely and resolved below; the segments are
+#: plain identifiers, because a parametrised
+#: ``[...]`` suffix names an argument set and not a definition, and checking it
+#: would fail on every ``ids=`` change without a defect behind it.
+NODE_CITATION_RE = re.compile(r"(?<![\w/<.-])([\w./-]+\.py)((?:::\w+)+)")
+
+#: A node id written across two lines, which prose does constantly:
+#: the file name and a trailing ``::`` at a line end, the class on the next.
+#: Seven in the
+#: tree when this was written. Joining them costs a few lines here and is the
+#: difference between checking 132 citations and checking 125.
+WRAPPED_NODE_RE = re.compile(r"::[ \t]*\n[ \t>*`]*")
+
+#: Nodes cited by name that deliberately do not exist, same rule as
+#: :data:`PATHS_DECLARED_ABSENT`: a reason each, and a test that they stay
+#: absent so the list cannot quietly outlive it.
+NODES_DECLARED_ABSENT = {
+    "tests/x.py::TestX::test_x": "placeholder in the ValidationCase doctest",
+    "tests/validation/test_base.py::TestSomething::test_something": (
+        "placeholder in the fixture dict of tests/validation/cases.py, which is the "
+        "example case the table's own tests are built from"
+    ),
+}
+
+
+def _join_wrapped_nodes(text: str) -> tuple[str, list[int]]:
+    """Return the text with wrapped node ids joined, and a map back to offsets.
+
+    The offset map is what keeps the failure message useful: a line number
+    computed on the joined text points at the wrong line of the real file, and
+    a citation test whose message sends the reader to the wrong line has
+    replaced one wild goose chase with another.
+    """
+    joined: list[str] = []
+    offsets: list[int] = []
+    pos = 0
+    for match in WRAPPED_NODE_RE.finditer(text):
+        joined.append(text[pos : match.start()])
+        offsets.extend(range(pos, match.start()))
+        joined.append("::")
+        offsets.extend((match.start(), match.start() + 1))
+        pos = match.end()
+    joined.append(text[pos:])
+    offsets.extend(range(pos, len(text)))
+    return "".join(joined), offsets
+
+
+def _resolve_test_file(root: Path, cited: str) -> list[Path]:
+    """Return the files a cited path could mean, most specific first."""
+    for anchor in (root, root / "src", root / "src" / "quoss"):
+        candidate = anchor / cited
+        if candidate.is_file():
+            return [candidate]
+    if "/" not in cited:
+        # The tree cites bare file names, with no directory in front, and they
+        # are unambiguous in practice because test modules are uniquely named.
+        # When they are not, every match is tried and one hit is enough.
+        return sorted((root / "tests").rglob(cited))
+    return []
+
+
+def _defines(path: Path, segments: list[str]) -> bool:
+    """Report whether ``path`` defines the nested chain ``segments``.
+
+    Resolved by parsing the file rather than by asking pytest to collect it.
+    Two reasons, and the second is the one that matters: pytest inside pytest
+    is a plugin-state problem nobody wants, and collection only sees *tests*,
+    while the tree legitimately cites things that are not tests --
+    ``tests/channel/test_horizontal.py::ge1_key`` is a fixture, and a
+    collection-based check would call that citation broken.
+    """
+    try:
+        tree: ast.AST = ast.parse(path.read_text(encoding="utf-8"))
+    except SyntaxError:  # pragma: no cover - the suite would not import either
+        return False
+    node: ast.AST = tree
+    for segment in segments:
+        body = getattr(node, "body", [])
+        found = next(
+            (
+                child
+                for child in body
+                if isinstance(child, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef)
+                and child.name == segment
+            ),
+            None,
+        )
+        if found is None:
+            return False
+        node = found
+    return True
+
+
+def _node_citations(root: Path) -> list[tuple[Path, int, str, list[str]]]:
+    out: list[tuple[Path, int, str, list[str]]] = []
+    for path in _path_citing_files(root):
+        raw = path.read_text(encoding="utf-8")
+        text, offsets = _join_wrapped_nodes(raw)
+        for match in NODE_CITATION_RE.finditer(text):
+            segments = [part for part in match.group(2).split("::") if part]
+            line = raw[: offsets[match.start()]].count("\n") + 1
+            out.append((path, line, match.group(1), segments))
+    return out
+
+
+def test_every_pytest_node_cited_from_the_code_exists() -> None:
+    """A citation naming a file, a class and a test resolves to something defined.
+
+    The third and last of the citation tests, and the one §44 left named. Its
+    two siblings check that a cited *section* and a cited *file* exist; nothing
+    checked that a cited **node** exists, so a citation could name a real file
+    and a test that had been renamed out of it, and read as perfectly specific
+    while pointing at nothing.
+
+    Two of those were fixed by hand during stage 8 without an inconsistency
+    being opened, which was fine because they ended up fixed -- but the class
+    is the same one as #17, and the remedy that worked there is a test. It
+    found **eleven** more on 2026-09-19, of four different kinds, and none of
+    them was noisy:
+
+    * four cited a method without its class, so they resolved to a file and
+      then to nothing -- ``test_the_published_answer_satisfies_keplers_equation``
+      is a method of ``TestPublishedVallado21`` and was cited bare;
+    * three named a class that had been renamed (``TestTheMaskSweep`` for
+      ``TestTheMaskSweepInBothRegimes``, ``TestTheTwoFieldsWithoutADefault``
+      for ``TestTheFieldsWithoutADefault``, ``TestTheStationSpecConversions``
+      for ``TestUnitsConvertOnceAtTheBoundary``);
+    * one used node syntax for a module constant -- ``REFERENCE_DAY_NUMBER`` of
+      ``tests/system/reference.py``, which is not a node at all;
+    * and one, the worst, named a test that **had never been written**:
+      ``engine/horizontal.py`` justified dropping a scratch degradation log
+      with "That is asserted, not assumed, by
+      tests/engine/test_horizontal.py::TestNothingIsDroppedWithTheScratchLog",
+      and the class did not exist. A comment claiming an assertion that is not
+      there is worse than one claiming nothing, because it stops the next
+      reader from checking. That one was closed by writing the test.
+
+    Checked by breaking one by hand, the same way the fourteen were: renaming
+    ``TestTheMaskSweepInBothRegimes`` makes this fail naming the citation in
+    ``engine/sweep.py``.
+    """
+    root = NOTES.parent
+    citations = _node_citations(root)
+    assert citations, "no node citations found at all; the scan is broken"
+
+    broken: list[str] = []
+    for path, line, cited, segments in citations:
+        node_id = cited + "::" + "::".join(segments)
+        if node_id in NODES_DECLARED_ABSENT:
+            continue
+        candidates = _resolve_test_file(root, cited)
+        if not candidates:
+            broken.append(f"{path.relative_to(root)}:{line} cites {node_id} (no such file)")
+        elif not any(_defines(candidate, segments) for candidate in candidates):
+            where = ", ".join(str(c.relative_to(root)) for c in candidates)
+            broken.append(f"{path.relative_to(root)}:{line} cites {node_id} (not in {where})")
+
+    assert not broken, (
+        f"citations naming a pytest node that is not defined: {sorted(broken)}. A renamed "
+        f"class, a method cited without its class, or a test that was never written -- the "
+        f"last is the one worth looking at twice, because the sentence around it usually "
+        f"claims the code is asserted."
+    )
+
+
+@pytest.mark.parametrize("node_id", sorted(NODES_DECLARED_ABSENT))
+def test_a_node_declared_absent_is_still_absent(node_id: str) -> None:
+    """Same self-emptying rule as the path allowlist."""
+    root = NOTES.parent
+    cited, _, rest = node_id.partition("::")
+    segments = rest.split("::")
+    assert not any(_defines(c, segments) for c in _resolve_test_file(root, cited)), (
+        f"{node_id} is listed in NODES_DECLARED_ABSENT "
+        f"({NODES_DECLARED_ABSENT[node_id]}) and now exists. Remove the entry."
     )

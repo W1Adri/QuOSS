@@ -112,7 +112,7 @@ alternativas descartadas de abajo.
 
 | Artefacto | Tamaño |
 |---|---|
-| `quoss-0.1.0-py3-none-any.whl` (`uv build`) | **644 KB**, 85 ficheros al medir (2026-09-19); **648 KB y 90** con `cli/` dentro, desde el mismo día |
+| `quoss-0.1.0-py3-none-any.whl` (`uv build`) | **644 KB**, 85 ficheros al medir (2026-09-19); **648 KB y 90** con `cli/` dentro, y **671 KB y 95** desde que lleva `quoss/data/` (los tres ficheros de datos, su `__init__.py` y la entrada de directorio) |
 | `quoss-0.1.0.tar.gz` (sdist) | 1.66 MB |
 | `numpy` instalado | 33 MB |
 | `scipy` instalado | 91 MB |
@@ -129,7 +129,7 @@ razón de que `pyarrow` y `numba` sean **extras** y no dependencias: el comentar
 de `pyproject.toml:48` («pyarrow, que son 40 MB y no es una dependencia de
 física») tenía la idea correcta y la cifra corta por un factor de casi cuatro.
 
-### Dos defectos del nivel 0 que esta medición destapa; uno ya está cerrado
+### Dos defectos del nivel 0 que esta medición destapó; los dos están cerrados
 
 1. **~~`[project.scripts]` apunta a `quoss.cli.main:main` desde la etapa 0 y ese
    módulo no existe.~~ Cerrado el 2026-09-19** por el
@@ -139,18 +139,40 @@ física») tenía la idea correcta y la cifra corta por un factor de casi cuatro
    escenarios probados —horizontal, bajada y TLE—, saliendo 0 y escribiendo su
    directorio. El test que lo guarda ejecuta el script de consola **como
    subproceso**, porque un `import` no ve una cadena de entry point equivocada.
-2. **El wheel no lleva `data/`, y esto sigue abierto.** Las 90 entradas del
-   wheel son `quoss/**/*.py`, los `.gitkeep` de los paquetes vacíos y el
-   `dist-info`: `data/ogs.yaml` y
-   `data/snapshots/` no viajan, y se resuelven relativos al fichero fuente. Con
-   el defecto 1 cerrado, esto **ya es alcanzable**, y se midió: desde la
-   instalación, `load_station_catalogue()` resuelve su ruta por defecto a
+2. **~~El wheel no lleva `data/`.~~ Cerrado el 2026-09-19**, el mismo día que
+   se midió. Las 90 entradas del wheel eran `quoss/**/*.py` y el `dist-info`:
+   `data/ogs.yaml` y `data/snapshots/` no viajaban, y se resolvían relativos al
+   fichero fuente, tres directorios por encima del módulo. Con el defecto 1
+   cerrado esto **ya era alcanzable**, y se midió: desde la instalación,
+   `load_station_catalogue()` resolvía su ruta por defecto a
    `<venv>/lib/python3.13/data/ogs.yaml` —un nivel por encima de
-   `site-packages`— y levanta `DataError: Station catalogue not found at …`. Es
-   un defecto del **nivel 0**, el único nivel del que depende todo lo demás, y
-   por eso está escrito aquí y en
-   [`INCONSISTENCIAS.md`](../../notes/INCONSISTENCIAS.md) #18, y no solo en la
-   etapa que lo arregle.
+   `site-packages`— y levantaba `DataError: Station catalogue not found at …`.
+
+   **Cómo se cerró.** Los datos pasan a ser **datos de paquete**:
+   `src/quoss/data/`, con `quoss.data.DATA_ROOT` como única ancla —un
+   directorio por encima de sí misma, o sea *dentro* de lo que se copia— y las
+   dos rutas por defecto derivadas de ella. El wheel pasa de **90 a 95
+   entradas** y de 648 a **671 KB**.
+
+   **Y se aserta desde donde el defecto existe**, que es lo que costaba:
+   `tests/packaging/test_wheel.py` construye el wheel, lo instala en un venv
+   limpio **fuera del checkout** —comprobado, no supuesto: la ruta del venv se
+   aserta ajena al árbol— y desde ahí carga el catálogo, los dos snapshots
+   (con su SHA-256) y corre los tres escenarios. **16 s en total** con la caché
+   de `uv` caliente, de los cuales 15 son física; por eso corre en todos los
+   jobs y no en uno aparte.
+
+   La comprobación que le da valor es la negativa: devuelto el defecto a mano
+   con un `exclude` en `[tool.hatch.build.targets.wheel]`, **fallan cinco de
+   los ocho tests** y los tres que pasan son los tres escenarios — porque los
+   escenarios commiteados llevan su estación y su TLE en línea y nunca abren
+   `quoss/data/`. Es exactamente lo que #18 reportaba: el comando salía 0
+   mientras el catálogo no se podía cargar.
+
+   Lo que **no** cubre: un paquete zipimportado, donde `__file__` nombra una
+   entrada de un archivo y no hay directorio que abrir. Ninguno de los cuatro
+   niveles de arriba distribuye así, y está escrito en
+   `quoss/data/__init__.py` en vez de descubrirse.
 
 ---
 

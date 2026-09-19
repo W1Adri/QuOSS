@@ -223,9 +223,10 @@ todos los caminos con `fetch` falsos. Decisiones en el
 | ✅ `cache.py` | caché HTTP en disco, content-addressed, TTL obligatorio, reloj inyectado |
 | ✅ `celestrak.py` | un TLE del API GP, validado por `parse_tle` antes de existir |
 | ✅ `openmeteo.py` | cobertura horaria de nubes del archivo histórico (familia ERA5) |
-| ✅ `snapshots.py` | `data/snapshots/<kind>/<name>.json` con manifiesto y hash comprobado |
+| ✅ `snapshots.py` | `quoss/data/snapshots/<kind>/<name>.json` con manifiesto y hash comprobado |
 | ✅ `export.py` | `manifest.json`, `passes.csv`, `daily.csv`, `series_*.csv`, `arrays.npz`, `result.json` |
-| ✅ `stations.py` + `data/ogs.yaml` | cuatro estaciones con `source` y `coordinates_precision` obligatorios |
+| ✅ `stations.py` + `quoss/data/ogs.yaml` | cuatro estaciones con `source` y `coordinates_precision` obligatorios |
+| ✅ `quoss/data/` | **datos de paquete**, no ficheros del checkout: el wheel los lleva y `quoss.data.DATA_ROOT` los encuentra igual instalado que en el árbol. Asertado desde una instalación por `tests/packaging/test_wheel.py` |
 
 ---
 
@@ -312,11 +313,11 @@ están en el [ADR 0027](../docs/adr/0027-four-levels-of-distribution.md).
 |---|---|---|
 | `orbits/` | **Transformación osculador↔medio (Brouwer-Lyddane).** Es lo único que queda vivo de la bandera del ADR 0006, y desbloquea a la vez el modo analítico de `propagate` y los términos seculares de segundo orden. Pendiente: elegir alcance (solo período corto, o corto + largo) y oráculo | no existe |
 | etapa 8 | **Transcribir Vallado §9.6** (tasas seculares) como V2, comprobando primero si el libro imprime elementos medios u osculadores | sin transcribir |
-| etapa 8 | Reactivar `warn_unused_configs = true` en mypy | hoy `false` en `pyproject.toml:175` |
+| ~~etapa 8~~ | ~~Reactivar `warn_unused_configs = true` en mypy.~~ **Cerrada el 2026-09-19.** Activada, nombró **tres** secciones muertas (`quoss.kernels.*`, `numba.*`, `pyarrow.*`) y las tres están fuera con su razón. La bandera sola no bastaba —mypy la emite como `note:` y sale 0—, así que la mitad que falla es `tests/unit/test_project_config.py`. §46 | cerrada |
 | etapa 8 | ¿Reducción completa GCRF ↔ ITRF? El enum deja la puerta abierta; hoy no cambia ningún número publicable | no existe |
 | etapa 11 | **Paralelismo del bucle sobre satélites.** `ZONAL_NUMERIC` integra las S órbitas en serie (`propagator.py:535`): 927 ms/satélite con S = 60 y 934 con S = 1. **Paralelizar, no vectorizar** — cada satélite lleva su propia secuencia de pasos adaptativos en DOP853 ([ADR 0026](../docs/adr/0026-the-language-ladder.md)). Pertenece a `engine/parallel.py`, no a la física, y es lo que hay que hacer **antes** de volver a medir la etapa 2.4 | en serie |
-| etapa 11 | `uv sync --all-extras` en CI arrastra `numba` en los tres jobs. Los grupos PEP 735 no se ven afectados | `ci.yml` líneas 40, 68, 112 |
-| etapa 11 | El suelo `numpy>=1.26` no está testeado: CI corre con la versión resuelta, no con la mínima declarada | sin job de mínimos |
+| etapa 11 | `uv sync --all-extras` en CI arrastra `numba` **y `fastapi`** en los cinco jobs. Comprobado el 2026-09-19: ninguno de los dos se importa en nada que la suite toque, así que los extras `accel` y `web` son peso muerto. Falta la medida del tiempo de CI que cuestan, que es lo que decide dónde se quitan | `ci.yml`, tres `uv sync --all-extras` |
+| etapa 11 | El suelo `numpy>=1.26` no está testeado, y **no es alcanzable con el `scipy` del lock**: medido el 2026-09-19, `--with numpy==1.26.4` revienta en `scipy/sparse/_sputils.py` (`np.long`, retirado en numpy 2) porque el scipy resuelto es 1.18.0. Un entorno de mínimos de verdad —`numpy==1.26.0` + `scipy==1.11.0` sobre Python 3.11— sí se construye, y ahí el primer fallo **no es de numpy**: es `matplotlib==3.8.0` contra el `pyparsing` de hoy, con `filterwarnings = ["error"]` convirtiéndolo en error. El job de mínimos tendrá que fijar también el suelo del extra `viz` | sin job de mínimos; medido en §46 |
 | cuando duela | **Coste de la suite.** Casi todo integraciones DOP853 de `test_perturbations.py`. Recortar revoluciones antes que tolerancias | ver §41 |
 | si entra `sgp4` en más sitios | `filterwarnings = ["error"]` necesitará excepciones **por warning concreto**, nunca una categoría entera | — |
 | si aparece un tercero | `frames._broadcast_against` y `kepler._broadcast_to_common` siguen duplicados a medias. **Difieren** en forma y en lo que aconsejan sus mensajes, y por eso no se unificaron | documentado en `orbits/_validation.py` |

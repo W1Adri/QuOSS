@@ -54,7 +54,7 @@ sweep, as a :class:`SweepSpec` over ``passes.minimum_elevation_deg`` on the
 reference scenario, reproduces it: 2, 5, 8, 10 and 15 degrees give
 409 584 / 427 602 / 435 462 / 433 442 / 407 794 finite bits with the station's
 30 m wired into the turbulence profile, and a chain wired by hand gives the same
-numbers to the bit (``tests/e2e/test_reference_scenarios.py::TestTheMaskSweep``).
+numbers to the bit (``tests/e2e/test_reference_scenarios.py::TestTheMaskSweepInBothRegimes``).
 The maximum is at 8 degrees, and the hand chain at the 0 m turbulence height of
 ``tests/system/reference.py`` gives the system tests' 408 946 at 2 degrees and
 434 938 at 8 — the same optimum from the same mechanism, 0.1-0.2 % lower.

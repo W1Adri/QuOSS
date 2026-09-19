@@ -43,8 +43,15 @@ def scenarios_dir() -> Path:
 
 @pytest.fixture(scope="session")
 def data_dir() -> Path:
-    """Directory holding read-only static data and offline snapshots."""
-    return PROJECT_ROOT / "data"
+    """Directory holding read-only static data and offline snapshots.
+
+    Anchored on the *source tree* rather than on :data:`quoss.data.DATA_ROOT`
+    on purpose. A test that compares the package's default path against the
+    package's own constant compares a name with itself and passes whatever the
+    constant says; going through the repository layout is what keeps it an
+    assertion about where the data actually is.
+    """
+    return PROJECT_ROOT / "src" / "quoss" / "data"
 
 
 @pytest.fixture

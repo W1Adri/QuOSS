@@ -67,7 +67,7 @@ que devuelva solo la esperada.
 `cloud_free_probability(cloud_fraction, *, degradations)` devuelve `1 − f`, que
 para una línea vertical es una definición: la fracción de cobertura *es* la
 fracción del área que una vertical atraviesa con nube. **No acepta una
-elevación**, y `tests/system/test_pcflos.py::test_no_function_here_takes_an_elevation`
+elevación**, y `tests/system/test_pcflos.py::TestTheZenithValueIsExactAndTheRestIsAGap::test_no_function_here_takes_an_elevation`
 lo aserta por ausencia sobre todo `__all__`, el mismo control negativo de
 `channel/background.py`. Cada llamada registra un `WARNING`
 (`pcflos.no-elevation-dependence`) con el sentido del error: para una capa, una

@@ -30,7 +30,7 @@ The endpoint and its fields, as verified
 ----------------------------------------
 Verified by fetching ``https://open-meteo.com/en/docs/historical-weather-api``
 and the endpoint itself on 2026-09-13 (the payload is
-``data/snapshots/cloud_cover/castelldefels_2025-01-01_02.json``)::
+``quoss/data/snapshots/cloud_cover/castelldefels_2025-01-01_02.json``)::
 
     https://archive-api.open-meteo.com/v1/archive
         ?latitude=<deg>&longitude=<deg>
