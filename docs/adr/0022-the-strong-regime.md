@@ -512,7 +512,7 @@ a comprobar el arreglo nuevo en las dos direcciones:
 `ChannelSpec.model_fields["scintillation_regime"].is_required()`, y las **siete**
 firmas con `WEAK` —el recuento incluido, para que una firma nueva sin defecto, o
 con el otro, sea un test rojo en vez de una asimetría callada—. Está en
-`tests/scenario/test_models.py::TestTheStationSpecConversions::test_the_schema_has_no_regime_default_and_the_physics_signatures_keep_theirs`.
+`tests/scenario/test_models.py::TestUnitsConvertOnceAtTheBoundary::test_the_schema_has_no_regime_default_and_the_physics_signatures_keep_theirs`.
 
 ### Lo que cuesta, medido
 

@@ -793,7 +793,7 @@ class ChannelSpec(SpecModel):
     to the saturated model would move six of the eight published cells of ITU-R
     P.1622 Table 2 outside half a printed digit, so the project would lose six
     of its eight strongest V2 anchors of the channel
-    (``tests/channel/test_turbulence.py::test_what_the_default_would_cost_across_the_whole_published_table``).
+    (``tests/channel/test_turbulence.py::TestTheRegimeIsChosenAndSaid::test_what_the_default_would_cost_across_the_whole_published_table``).
     That measurement still holds and the flip is still refused. What stopped
     holding is the *other* half of the argument — that a default here is
     invisible only in theory, because every file in ``scenarios/`` writes the

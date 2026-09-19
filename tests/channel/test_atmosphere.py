@@ -76,7 +76,7 @@ class TestPublishedItuValues:
 
         If the transcription of the coefficients were wrong, this would catch it
         without consulting the code under test at all. Same pattern as
-        ``test_kepler.py::test_the_published_answer_satisfies_keplers_equation``.
+        ``test_kepler.py::TestPublishedVallado21::test_the_published_answer_satisfies_keplers_equation``.
         """
         ground = ITU_GROUND_WIND_SPEED_M_S
         from_equation = np.sqrt(ground**2 + 33.11 * ground + 360.31)

@@ -42,7 +42,7 @@ EPOCH_JD = 2_460_676.5
 """2025-01-01 00:00 UTC, the reference epoch of the suite."""
 
 DAY_NUMBER = 2_460_677
-"""JDN of 2025-01-01 (tests/system/reference.py::REFERENCE_DAY_NUMBER)."""
+"""JDN of 2025-01-01 (the ``REFERENCE_DAY_NUMBER`` of tests/system/reference.py)."""
 
 CORE_FORMATS = ("json", "csv", "npz")
 """The formats whose writers need nothing beyond numpy and the standard library.

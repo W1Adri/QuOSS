@@ -1,8 +1,8 @@
 # QuOSS — Últimos cambios
 
 > **Bitácora viva. Se actualiza al cerrar cada etapa del [`ROADMAP.md`](ROADMAP.md).**
-> Última entrada: **§45, 2026-09-19** — el wheel lleva sus datos, y una cita a
-> un fichero deja de poder envejecer sola.
+> Última entrada: **§46, 2026-09-19** — una cita a un nodo de test tampoco puede
+> envejecer sola, y una configuración de mypy deja de excusarse sola.
 >
 > **Qué hay aquí y qué no.** Este fichero guarda **las cinco últimas entradas
 > completas**. Todo lo anterior está en [`archive/`](archive/), íntegro y sin
@@ -22,7 +22,7 @@
 
 ---
 
-## Índice de lo archivado (§1–§40)
+## Índice de lo archivado (§1–§41)
 
 | § | Fecha | La cifra o la regla que la resume | Dónde |
 |---|---|---|---|
@@ -66,234 +66,7 @@
 | §38 | 2026-09-15 | `extinction.py` → [ADR 0023](../docs/adr/0023-traceable-extinction.md). La extinción deja de ser una **entrada** del escenario: **0.230 dB cenitales —el aire más limpio del código meteorológico de la UIT— cuestan el 22.7 % de la clave certificada** del día de referencia | [archivo](archive/LAST_CHANGES-37-38.md) |
 | §39 | 2026-09-15 | El **régimen de escintilación pasa a ser un campo** del escenario, y con ello entra en el hash. Los 30 m de la estación valen **+457 bits en régimen débil y −206 en saturado**: el cruce está en 27.02° y el día pasa el 67.7 % de sus segundos por debajo | [archivo](archive/LAST_CHANGES-39.md) |
 | §40 | 2026-09-17 | El **camino horizontal pasa de biblioteca a escenario** → [ADR 0024](../docs/adr/0024-the-horizontal-scenario.md), [0025](../docs/adr/0025-two-terminals-one-way.md). GE-1 a 1 km certifica **253 935 bit/s** en una sesión de 60 s, y el **acantilado de los 5 km** es lo que impide dimensionar con el número asintótico | [archivo](archive/LAST_CHANGES-40.md) |
-
----
-
-## 41. Las notas dejan de caber en la sesión que las tiene que leer
-
-**Fecha:** 2026-09-19. **Ningún `.py` de `src/` tocado.** ADR tocado:
-[0004](../docs/adr/0004-zonal-perturbations.md) (dos celdas que le faltaban).
-
-**La cifra que resume la entrada: el camino de lectura obligatorio pasa de
-8 038 líneas a 1 623, y no se ha borrado nada.** `LAST_CHANGES.md` va de 6 834 a
-1 170, `ROADMAP.md` de 935 a 321 y `GUIA_REIMPLEMENTACION.md` de 267 a 130; las
-**6 382 líneas** que salen están en [`archive/`](archive/), íntegras y sin
-editar.
-
-Y la cifra que explica por qué se podía hacer sin perder nada: **de los 823
-números distintos de §1 a §35, 765 —el 93.0 %— ya vivían en un ADR, en `src/` o
-en `tests/`.**
-
-### El problema, y no es que el fichero fuera largo
-
-`CLAUDE.md` manda leer `LAST_CHANGES.md` al empezar cualquier sesión. Con 6 834
-líneas eso no ocurre: se leen las primeras pantallas y se abandona. Y las
-primeras pantallas eran **lo peor que podía leerse**, porque la cabecera había
-crecido por apilamiento —cada entrada nueva empujaba a la anterior a un párrafo
-«Entrada anterior:…» y ninguno se retiraba— hasta **352 líneas, el 5.2 % del
-fichero**, que resumían §14 a §36. Es decir: lo primero que leía una sesión era
-la tercera copia de cosas que ya estaban en su entrada y en su ADR, y lo que no
-llegaba a leer eran §30–§40, que son las que describen el árbol de hoy.
-
-**El coste no es hipotético y está fechado.** La PR C la escribió una sesión que
-no había leído lo que la PR B dejó dicho. Dos días después, otra sesión abrió la
-etapa 7 afirmando que la PR C no existía ([INCONSISTENCIAS #16](INCONSISTENCIAS.md)).
-Son dos fallos distintos —uno de lectura, otro de sincronización— y los dos
-terminan igual: trabajo hecho sobre un estado del proyecto que no era el real.
-
-### La regla para archivar, que no es «lo viejo fuera»
-
-Una entrada §N se archiva cuando **todo lo que carga peso en ella vive ya en
-otro sitio que se lee de verdad**: un ADR, un test, o un docstring. Si no, se
-migra primero y se archiva después.
-
-**Por qué esa regla y no «archiva lo de hace más de un mes».** Una bitácora es
-el único sitio del proyecto donde vive la *narración* de una decisión — qué se
-creía antes, qué medición lo cambió. Un ADR guarda la conclusión; el ADR 0004
-dice que los términos de segundo orden se quedan fuera, pero la entrada §5 es la
-que cuenta que se intentaron y que empeoraban. Archivar por antigüedad borra del
-camino de lectura cosas que todavía sostienen código. Archivar por cobertura no
-puede: si algo sostiene código, o está junto al código o no se archiva.
-
-**Y el ejemplo de lo que la regla evita.** §13 parecía la entrada más
-archivable del fichero: se llama «Cosas a considerar», es de agosto, y no tiene
-un módulo detrás. Tenía dentro una tabla **Pendiente de decidir** y una lista
-**Deuda pequeña** que seguían **vivas** — `warn_unused_configs = true` sin
-reactivar, `uv sync --all-extras` arrastrando `numba` en los tres jobs de CI,
-el suelo `numpy>=1.26` sin testear, Vallado §9.6 sin transcribir,
-Brouwer-Lyddane sin existir. Archivarla por antigüedad habría enterrado siete
-tareas abiertas en un fichero que nadie abre.
-
-### Cómo se clasificó, porque «lo revisé una a una» no es una medida
-
-A ojo, treinta y cinco entradas de prosa técnica son una opinión. Así que la
-clasificación se hizo con el árbol: extraer de cada entrada todo número con tres
-cifras significativas o notación científica, normalizar los separadores de
-millares, y buscarlo en `docs/adr/*.md`, `src/**/*.py` y `tests/**`.
-
-| | §1–§35 | `ROADMAP.md` |
-|---|---|---|
-| Números distintos | **823** | **241** |
-| Ya en un ADR, en `src/` o en un test | **765** (93.0 %) | **240** (99.6 %) |
-| Sin dueño | **58** | **1** |
-
-Los 58 se miraron uno a uno en su contexto, y se separan solos:
-
-| Clase | Cuántos | Qué se hizo |
-|---|---|---|
-| Números de sección leídos como cifras (`18.2`, `20.1`, `21.5`…) | 21 | nada: falsos positivos del extractor |
-| Recuentos históricos de la suite y de cobertura (2 237, 1 027, 1 131, 2 058, 3 487…) | 12 | se archivan: son el estado de un día, no una afirmación sobre física |
-| Intermedios recalculados por un test que sí existe (las filas de las tablas de §18 y §21, los operandos de §4) | 21 | se archivan: el test los produce, no los transcribe |
-| **Sin dueño y cargando peso** | **4** | **migrados, abajo** |
-
-El único huérfano del `ROADMAP.md`, `0.7687` (el óptimo analítico de µ de la
-Ec. (12) de Ma et al.), es del tercer tipo: `tests/qkd/test_bb84.py` **resuelve
-la ecuación publicada** en vez de teclear su resultado, con una tolerancia
-derivada del tamaño de los términos que esa ecuación desprecia.
-
-### Lo que hubo que migrar antes de archivar
-
-1. **§5 → [ADR 0004](../docs/adr/0004-zonal-perturbations.md).** El ADR decía
-   que una fórmula de segundo orden candidata «mejoraba en unos casos y
-   empeoraba en otros» **sin imprimir ningún caso**, que es una impresión y no
-   una medida. Ahora lleva las dos celdas: a `i = 51.6°` mejora de 1.3e-3 a
-   5.2e-4, y a **`i = 98°` empeora de 1.0e-4 a 1.4e-3**. Y lleva la frase que
-   las dos celdas juntas permiten y ninguna por separado: **la inclinación que
-   empeora catorce veces es la de este proyecto**, así que el caso favorable es
-   el que no se usa.
-2. **§13 → [`ROADMAP.md`](ROADMAP.md), sección «Trabajo abierto que no es una
-   etapa».** Las filas ya tachadas no se copiaron; las vivas sí, y **se
-   comprobaron una a una contra el árbol de hoy** en vez de copiarse de
-   confianza. Es la columna «Comprobado» de esa tabla: `pyproject.toml:175`
-   sigue en `false`, `ci.yml` tiene `--all-extras` en las líneas 40, 68 y 112.
-
-### El ROADMAP, que era la segunda copia
-
-935 líneas, y la mayor parte no era estado sino justificación: cada entrada
-citaba su ADR **y a continuación volvía a explicar la decisión**. La medición de
-arriba dice que el 99.6 % de sus números ya estaban en ese ADR o en un test, así
-que la repetición no guardaba nada y sí creaba un documento que envejece por su
-cuenta — como ya había pasado: su tabla de ADRs decía «hay dieciséis, del 0001
-al 0016» con veintitrés en el árbol.
-
-Queda en **321 líneas** de estado: una tabla por etapa, fichero → qué es → su
-ADR, con `✅`/`🟨`/`⬜`.
-
-### La guía de reimplementación, que era la tercera copia
-
-`GUIA_REIMPLEMENTACION.md` (267 líneas, 2026-07-31) es el documento que propuso
-reescribir SimulCTTC. **Esa reimplementación ya ocurrió**, así que sus §1
-(estructura de directorios), §2 (tooling, rendimiento, calidad) y §5 (mejoras de
-física y de flujo) describen decisiones hoy tomadas — y las describen **en
-paralelo** a `ROADMAP.md`, a `CLAUDE.md` y a los ADRs. Ese es el caso concreto
-de tercera fuente de verdad: tres ficheros afirmando lo mismo, de los cuales dos
-se actualizan y el tercero no. Íntegro en
-[`archive/GUIA_REIMPLEMENTACION-v3.md`](archive/GUIA_REIMPLEMENTACION-v3.md).
-
-Queda en **130 líneas**, con lo único que no tenía otro dueño: el diagnóstico de
-SimulCTTC —que es lo que **sostiene** la regla «SimulCTTC no es un oráculo», hoy
-citada en tres sitios sin su defensa— y la escalera de lenguajes.
-
-**Y ahí está el hallazgo que no se podía resolver en esta PR.** La escalera de
-lenguajes (Python → Numba → Rust → C++, con «MATLAB no», «PyInstaller no» y
-«WASM no») y los cuatro niveles de distribución **son decisiones con forma de
-ADR y no tienen ADR**: son no obvias, siguen vigentes, gobiernan trabajo futuro
-(`kernels/` de la 2.4, `deploy/` de la 11) y viven en un fichero de notas. No se
-ha inventado un ADR para ellas, porque un ADR se numera al escribirse y eso es
-una decisión de quien lo vaya a mantener, no un efecto secundario de reordenar
-notas. Queda escrito al final del propio fichero.
-
-### Lo que se miró y **no** hizo falta migrar, que también es un resultado
-
-Tres cosas parecían huérfanas y no lo eran, y vale la pena que conste porque el
-reflejo era migrarlas:
-
-- **La errata de Vallado (§4).** Su exclusión —«ningún `|r|` ni `|n|` que la
-  página imprima recupera `145.60549°»`— está en `tests/orbits/test_kepler.py`,
-  que además **reproduce la aritmética de la página** en vez de solo registrar
-  el desacuerdo. Lo que sigue sin asertarse es la inversa concreta (qué `|r|`
-  haría falta: 11 472.24 km), y convertirlo en test es tocar un `.py`, que esta
-  PR no hace.
-- **El control de dos cuerpos (§13, «0.083 mm sobre 15 vueltas»).** Vive en
-  `test_with_j2_off_both_paths_are_the_same_two_body_problem`, **con cota
-  derivada** (1 mm, del `atol` de 1 nm del integrador sobre sus ~250 pasos por
-  vuelta) y no elegida.
-- **El `4 * eps` de `brentq` (§17).** Ya es `_BRENTQ_RTOL` con docstring en
-  `constellations.py`; el literal `8.881784197001252e-16` es historia.
-
-### El objetivo de 900 líneas — **retirado en §42**
-
-Esta entrada se escribió con un objetivo declarado: **por debajo de 900 líneas
-con las cinco últimas entradas completas**. Midió que las dos cosas no caben a
-la vez —las cuatro entradas anteriores, solas y sin cabecera, ya eran 847
-líneas, el 94 % del presupuesto— y dejó la decisión abierta con tres opciones.
-
-**Ya no está abierta, y el objetivo no sobrevive.** §42 lo retira: 900 era un
-número elegido a mano, y lo que lo sustituye es la cota estructural que esta
-misma entrada dejó asertada —cabecera acotada, entrada acotada, cinco entradas—
-que acota el total **por construcción** sin que nadie tenga que elegir una cifra.
-La aritmética completa —la tabla de las cinco entradas y la de las tres
-opciones— está en el historial de git de este fichero, en el commit de §41, y
-su conclusión operativa está en §42.
-
-**Lo que sí se conserva de aquella medición**, porque es lo que sostiene la cota
-de hoy: un total de líneas no distingue «la regla se rompió» de «las entradas de
-este mes son largas», así que cualquier total es inalcanzable o incapaz de
-fallar. Eso está escrito donde se comprueba, en el docstring de
-`tests/unit/test_notes.py`.
-
-### La regla se aserta, no se recuerda
-
-`tests/unit/test_notes.py`, y la parte que importa es **qué** se aserta. Una
-cota de líneas sola no sirve: cinco entradas largas pueden pesar más que seis
-cortas, así que un número redondo no distingue «la regla se rompió» de «las
-entradas de este mes son largas». Lo que se aserta es la regla:
-
-1. `LAST_CHANGES.md` tiene **como mucho cinco** entradas `## N.`.
-2. El índice cubre **todas** las archivadas, exactamente una vez, sin huecos ni
-   duplicados en la numeración, y **cada enlace de archivo resuelve**.
-3. Ninguna entrada aparece **a la vez** en el fichero y en el archivo.
-4. La **cabecera más el índice** —que es lo que de verdad creció hasta 352
-   líneas— se queda bajo `60 + 2 × (entradas archivadas)`. Hoy: **66 contra
-   132**.
-5. **Ninguna entrada pasa de 320 líneas.** La más larga que ha escrito el
-   proyecto en 41 entradas es §29, con **307**; 320 es esa con un 4 % de
-   holgura, así que pasa para todo lo que existe y salta para cualquier cosa
-   más larga que todas ellas.
-
-**Y no hay una cota del total, a propósito.** Se intentó, con 1 100, y fue esta
-misma entrada la que la rompió — lo cual es la demostración del problema y no un
-accidente: un total no distingue «la regla se rompió» de «las entradas de este
-mes son largas». Cualquier número es inalcanzable (900) o incapaz de fallar
-(1 732), y una cota que no puede fallar no prueba nada, que es la regla de
-tolerancias de `CLAUDE.md`. Acotar la cabecera y cada entrada por separado acota
-el total **por construcción**, en `132 + 5 × 320 = 1 732`, y ese número es una
-consecuencia en vez de una elección.
-
-### Verificación
-
-`uv run pytest`: **3 773 passed**, 0 fallos (3 763 antes, más los 10 de
-`tests/unit/test_notes.py`). `ruff check`, `ruff format --check` y `mypy`
-limpios.
-
-**Ninguna entrada perdida, y se comprueba sola:** las 41 entradas siguen siendo
-1…41 sin huecos ni duplicados, repartidas entre el fichero (§37–§41) y el
-archivo (§1–§36), y ninguna está en los dos sitios. Eso es lo que asertan los
-tests 2, 3 y 4 — y es mejor garantía que contar líneas, porque una línea perdida
-al reformatear no es lo mismo que una entrada perdida.
-
-### Ficheros
-
-| Fichero | Qué |
-|---|---|
-| `notes/LAST_CHANGES.md` | 6 834 → **1 170** líneas: cabecera nueva, índice de §1–§36, y §37–§41 completas |
-| `notes/archive/LAST_CHANGES-{01-12,13-24,25-36}.md` | nuevos; 6 098 líneas, las entradas íntegras, más la cabecera acumulativa de 352 líneas como apéndice |
-| `notes/ROADMAP.md` | 935 → 321 líneas: estado, no justificación. Sección «Trabajo abierto» heredada de §13 |
-| `notes/GUIA_REIMPLEMENTACION.md` | 267 → 130 líneas; el resto a `archive/GUIA_REIMPLEMENTACION-v3.md` |
-| `notes/INCONSISTENCIAS.md` | entrada 16 (la verificación contra un árbol rancio) |
-| `docs/adr/0004-zonal-perturbations.md` | las dos celdas de §5 |
-| `tests/unit/test_notes.py` | nuevo; 10 tests sobre las reglas de arriba |
-| `CLAUDE.md`, `README.md` | norma 0 (sincronizar) y el orden de lectura de una sesión, con líneas y con «¿siempre?» |
+| §41 | 2026-09-19 | **Las notas dejan de caber en la sesión que las tiene que leer.** `LAST_CHANGES.md` llegó a **6 834 líneas**; la regla de las cinco entradas vivas y sus dos cotas derivadas se asertan en `tests/unit/test_notes.py`. **240 de los 241 números** del ROADMAP ya vivían en un ADR, un test o un docstring | [archivo](archive/LAST_CHANGES-41.md) |
 
 ---
 
@@ -1219,3 +992,159 @@ podía dar por supuesto y no ha hecho.
 | `tests/conftest.py`, `tests/io/test_stations.py`, `tests/io/test_snapshots.py` | `data_dir` apunta al paquete; dos tests renombrados para que digan lo que comprueban |
 | `.github/workflows/ci.yml` | `QUOSS_REQUIRE_PACKAGING_TESTS=1` |
 | ADRs 0015 y 0027, `INCONSISTENCIAS.md`, `ROADMAP.md` | el defecto pasa de aplazado a cerrado, con su medida |
+
+---
+
+## 46. Una cita a un nodo tampoco puede envejecer sola, y una excusa de mypy caducada
+
+**Fecha:** 2026-09-19. **Ninguna física tocada.** ADRs tocados:
+[0013](../docs/adr/0013-cloud-availability-and-station-aggregation.md),
+[0014](../docs/adr/0014-scenario-contract-and-provenance.md) y
+[0022](../docs/adr/0022-the-strong-regime.md), los tres solo en citas.
+
+**La cifra que resume la entrada: once citas a nodos de test estaban rotas, y
+una de ellas nombraba un test que no se había escrito nunca — para justificar
+que tirar entradas de un registro de degradación no pierde nada.**
+
+### Qué es un «nodo de pytest», y por qué citarlos importa aquí
+
+Un **nodo** es la dirección de un test dentro de la suite:
+`fichero.py::Clase::metodo`. Es la unidad que `pytest` sabe ejecutar suelta, así
+que una cita a un nodo es una **invitación a comprobar**: el docstring dice «esto
+está medido» y el nodo dice dónde correr la medición.
+
+Este proyecto vive de eso. La regla de `CLAUDE.md` —«medido en este repo»
+significa medido por un test que corre— convierte cada afirmación numérica en
+una cita a un nodo. Hay **132** en el árbol.
+
+### Qué fallaba, y por qué no se veía
+
+§44 dejó dicha la clase: nada comprobaba que un nodo citado exista; solo que el
+fichero exista. Un fichero sigue existiendo cuando la clase de dentro se
+renombra, así que la cita resuelve a medias y **se lee como perfectamente
+específica**. Es el mismo modo de fallo de la inconsistencia #17 —una cita que
+resuelve al sitio equivocado en vez de a ninguno— un nivel más abajo.
+
+`test_every_pytest_node_cited_from_the_code_exists` encontró **once**, de cuatro
+clases:
+
+| Clase | Cuántas | Ejemplo |
+|---|---|---|
+| Método citado sin su clase | 4 | `test_the_published_answer_satisfies_keplers_equation` es de `TestPublishedVallado21` |
+| Clase renombrada | 3 | `TestTheMaskSweep` por `TestTheMaskSweepInBothRegimes` |
+| Sintaxis de nodo para una constante | 1 | `REFERENCE_DAY_NUMBER` de `tests/system/reference.py`, que no es un nodo |
+| **Un test que no existía** | 1 | `TestNothingIsDroppedWithTheScratchLog` |
+
+**La última es la que importa.** `engine/horizontal.py`, en su etapa `result`,
+recalcula dos cantidades con un `DegradationLog` de usar y tirar, y tirar
+entradas de un registro de degradación es exactamente lo que el proyecto
+prohíbe. El código llevaba la defensa escrita: el presupuesto hizo las mismas dos
+llamadas con el registro de verdad un momento antes, así que todo código que el
+registro de pega pueda tener ya está en `degradations`, y tirarlo no pierde nada.
+La frase terminaba **«That is asserted, not assumed, by …»** y la clase no
+existía. Una afirmación de que algo está asertado, cuando no lo está, es peor que
+no decir nada: le quita al siguiente lector la razón para comprobarlo.
+
+Se cerró **escribiendo el test**, no suavizando el comentario. Y se escribió sin
+repetir la lista de argumentos —reproducir a mano la llamada que el código hace
+es un test que se pone verde justo cuando la copia se desincroniza del original—:
+se sustituye el `DegradationLog` que el módulo construye por una subclase que
+guarda cada instancia, así que lo que se compara es el registro de pega real.
+Con dos longitudes, que son el control del propio test: a 1 km de GE-1 solo habla
+la llamada de apuntado, y a 5 km —el acantilado que midió §40, usado aquí como
+instrumento— la varianza de Rytov pasa de 1 Np² y habla también la de turbulencia.
+Con una sola longitud el test no podría distinguir «la propiedad se cumple» de
+«no avisó nadie».
+
+**Comprobado rompiendo una a mano**, como las catorce de §42: renombrando
+`TestTheMaskSweepInBothRegimes`, el test falla nombrando la cita de
+`engine/sweep.py:57`.
+
+**Lo que hace y lo que no.** Resuelve por **AST**, no pidiéndole a pytest que
+recolecte: `pytest` dentro de `pytest` es un problema de estado de plugins, y —la
+razón que de verdad decide— la recolección solo ve *tests*, mientras que el árbol
+cita legítimamente cosas que no lo son, como la fixture
+`tests/channel/test_horizontal.py::ge1_key`. Y une los nodos partidos en dos
+líneas, que la prosa produce constantemente: **siete** en el árbol, y sin unirlos
+se comprobarían 125 citas en vez de 132.
+
+### La otra mitad: `warn_unused_configs`, una excusa que caducó
+
+`pyproject.toml` lo tenía en `false` desde la etapa 0, con una razón **cierta
+cuando se escribió**: las secciones por módulo eran anticipatorias, nombraban
+paquetes que el roadmap aún no había creado, y avisar de todas ellas habría sido
+ruido puro. Las etapas 1-8 están escritas, así que la excusa caducó — y nada
+tenía por qué notarlo. Lo notó una fila del ROADMAP.
+
+Puesto a `true`, nombró **tres** secciones muertas:
+
+- `quoss.kernels.*` en la lista estricta: rigor prometido a un paquete que no
+  existe, y que el [ADR 0026](../docs/adr/0026-the-language-ladder.md) declara no
+  justificado por ninguna medida de hoy.
+- `numba.*` y `pyarrow.*` en la de *stubs* ausentes: ninguno de los dos se importa
+  donde mypy mira. numba es de la 2.4; pyarrow se alcanza **solo** por
+  `importlib.import_module` en `io/export.py`, a propósito, para que Parquet siga
+  siendo un extra — y un módulo que mypy nunca ve no necesita que le perdonen los
+  stubs.
+
+Las tres fuera, cada una con su razón escrita en el sitio del que salió.
+
+**Y la bandera sola no cierra la fila**, que es lo que hacía falta decir: mypy la
+emite como `note:` y **sale 0**. Una comprobación que no puede fallar no prueba
+nada —la regla de tolerancias de `CLAUDE.md`—, así que reportaría la próxima
+sección muerta a un log de CI que nadie lee. La mitad que falla es
+`tests/unit/test_project_config.py`: cada patrón `quoss.*` tiene que nombrar un
+paquete que exista en `src/quoss/`, y cada patrón de terceros, una distribución
+que el proyecto declare. Los dos lados por separado y no el mismo, porque
+significan cosas distintas: si un `override` de stubs **hace falta** depende de
+qué esté instalado, y un test que dependa de los extras es un test que informa de
+su entorno en vez de del árbol (§32).
+
+### Lo que esta ronda **no** cierra, y por qué
+
+De las siete tareas vivas del ROADMAP, esta entrada cierra **una** y deja seis,
+todas comprobadas contra el árbol de hoy antes de tocarlas. Dos merecen su
+medida, porque se empezaron y lo que salió es información:
+
+- **El suelo `numpy>=1.26` no es alcanzable con el `scipy` del lock.** Medido:
+  `uv run --with "numpy==1.26.4"` revienta en `scipy/sparse/_sputils.py` con
+  `AttributeError: module 'numpy' has no attribute 'long'`, porque el scipy
+  resuelto (1.18.0) es de la era numpy 2. Un entorno de mínimos de verdad
+  —`numpy==1.26.0` con `scipy==1.11.0` sobre Python 3.11— **sí** se construye, y
+  ahí el primer fallo que aparece **no es de numpy**: es `matplotlib==3.8.0`
+  contra el `pyparsing` de hoy, `PyparsingDeprecationWarning` convertida en error
+  por `filterwarnings = ["error"]`. O sea que el suelo que está sin justificar no
+  es solo el de numpy, y el job de mínimos que la fila pide tendrá que fijar
+  también el del extra `viz`. La fila se queda abierta **con esta medida escrita**
+  en vez de cerrarse con un suelo elegido a ojo.
+- **`--all-extras` en CI:** comprobado que ni `numba` ni `fastapi` se importan en
+  ningún sitio que la suite toque, así que los extras `accel` y `web` son peso
+  muerto en los cinco jobs. Lo que falta es la medida del tiempo que cuestan en
+  CI, que es lo que la fila pide y no se ha hecho.
+
+Las otras cuatro —Brouwer-Lyddane, Vallado §9.6, la reducción GCRF↔ITRF completa
+y el paralelismo del bucle sobre satélites— siguen como estaban, y ninguna es de
+esta ronda: las cuatro son trabajo de una etapa, no de una fila.
+
+**Y `benchmarks/` sigue vacío.** La puerta de regresión que la etapa 11 pide no
+está escrita, y decirlo aquí es preferible a un directorio con un `.gitkeep` que
+parece que sí.
+
+### Verificación
+
+`ruff check`, `ruff format --check`, `mypy` (166 ficheros, ahora con
+`warn_unused_configs` activo y sin nota) y la suite en verde.
+
+### Ficheros
+
+| Fichero | Qué |
+|---|---|
+| `tests/unit/test_notes.py` | `test_every_pytest_node_cited_from_the_code_exists`, su gemelo que vacía la lista de excepciones, y el unido de nodos partidos en dos líneas |
+| `tests/engine/test_horizontal.py` | `TestNothingIsDroppedWithTheScratchLog`, el test que el comentario decía que existía |
+| `tests/unit/test_project_config.py` | **nuevo.** La mitad que falla de `warn_unused_configs` |
+| `pyproject.toml` | `warn_unused_configs = true` y las tres secciones muertas fuera, cada una con su razón |
+| `tests/channel/test_atmosphere.py`, `tests/io/test_export.py`, `tests/e2e/test_reference_scenarios.py` | citas arregladas |
+| `src/quoss/scenario/models.py`, `src/quoss/engine/sweep.py` | citas arregladas |
+| ADRs 0013, 0014 y 0022 | citas arregladas; la del 0014 además dice que desde el ADR 0023 lo que se aserta es el par |
+| `notes/ROADMAP.md` | la fila de `warn_unused_configs`, cerrada; las de numpy y los extras, con su medida |
+
