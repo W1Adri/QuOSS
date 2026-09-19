@@ -141,13 +141,44 @@ return _wrap_two_pi(self._argp_rad + self._true_anomaly_rad)
 
 ---
 
+## Norma 0 — Sincronizar antes de afirmar que algo no existe
+
+**Regla:** lo primero de cualquier sesión, antes de leer nada y antes de decir
+que un fichero, un símbolo o una decisión falta:
+
+```bash
+git fetch origin --prune && git status -sb
+```
+
+**Por qué.** Un checkout local puede estar decenas de commits por detrás de
+`origin/main` sin que nada en el árbol lo diga: `ls`, `grep` y `git log` son
+igual de rápidos y de convincentes sobre un árbol rancio que sobre uno fresco.
+El resultado es una afirmación **defendida con evidencia y falsa** — el modo de
+fallo exacto que este proyecto persigue en los números, aplicado por una vez a
+la verificación. Y cuesta más ahí: la verificación es lo que se supone que caza
+a los números.
+
+**El ejemplo, medido, porque pasó.** El 2026-09-19 una sesión concluyó que
+`HorizontalResult`, el tag `link`, `scenarios/ge1_1km.yaml`, los ADRs 0024 y
+0025 y el §40 de `LAST_CHANGES.md` no existían, con una tabla de siete filas de
+evidencia: siete `grep` con cero ocurrencias, `ls docs/adr/` acabando en 0023,
+`git branch -a` sobre trece ramas. Las siete filas eran **ciertas sobre el árbol
+que tenía delante y falsas sobre el proyecto**. `git fetch` movió `main` de
+`fd3b3fd` a `2596618`: **29 commits**, y once refs remotos que ya no existían.
+El `grep` de «cero ocurrencias de `HorizontalResult`» devuelve hoy 94. Está en
+`notes/INCONSISTENCIAS.md` #16, abierta, porque **no se puede asertar**: la
+suite corre sobre el árbol que tiene, así que ningún test distingue uno fresco
+de uno rancio.
+
+---
+
 ## Contexto del proyecto (lo mínimo antes de tocar nada)
 
 | Fichero | Para qué |
 |---|---|
 | [`notes/ROADMAP.md`](notes/ROADMAP.md) | En qué orden se construye y por qué ese orden |
 | [`notes/LAST_CHANGES.md`](notes/LAST_CHANGES.md) | Estado actual, decisiones tomadas, y lo pendiente con fecha |
-| [`notes/INCONSISTENCIAS.md`](notes/INCONSISTENCIAS.md) | Lo que el código o los documentos afirman y hoy no se cumple. **Hoy tiene una entrada abierta**, y su valor está en cómo se llenó: ninguna de las catorce que ha tenido la detectaba la suite, y una de ellas era un número citado en quince sitios que resultó falso |
+| [`notes/INCONSISTENCIAS.md`](notes/INCONSISTENCIAS.md) | Lo que el código o los documentos afirman y hoy no se cumple. **Hoy tiene dos entradas abiertas**, y su valor está en cómo se llenó: ninguna de las quince que ha tenido la detectaba la suite, y una de ellas era un número citado en quince sitios que resultó falso |
 | [`notes/GUIA_REIMPLEMENTACION.md`](notes/GUIA_REIMPLEMENTACION.md) | Por qué la arquitectura es esta y no la de SimulCTTC |
 | [`tests/golden/README.md`](tests/golden/README.md) | Los cuatro niveles de verificación V1–V4 |
 | `docs/adr/*.md` | Las decisiones no obvias, una por fichero |
