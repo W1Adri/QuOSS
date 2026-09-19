@@ -32,32 +32,44 @@ __main__
 channel
     ITU-R P.1621-2 and P.1622, and the Farid & Hranilovic 2007 pointing model
     against Ntanos et al. 2021.
+ntanos2021
+    **The source of the reference link itself** — Ntanos et al. 2021 — together
+    with the two protocol papers its link is evaluated with, Ma et al. 2005 and
+    Lim et al. 2014.
 satquma
     Sidhu et al. 2021 (SatQuMA): what is like-for-like with this project's
     finite-key stack and what is not.
 micius
     Liao et al. 2017: the only measured satellite QKD data in the table.
 
-What is **not** here yet, and it is the row that matters most
---------------------------------------------------------------
-``ntanos2021`` — Ntanos et al. 2021, the reference link's own source, together
-with the two protocol papers the link is evaluated with (Ma et al. 2005, Lim
-et al. 2014). It is stage 8.1 of ``notes/ROADMAP.md`` and it is **not written**.
+What the table says today, and it is the honest headline of stage 8
+--------------------------------------------------------------------
+``run_all()`` returns **35 cases from eight sources**: 17 reproduced, 3
+compatible, 8 not reproduced and 7 declared gaps.
 
-This paragraph replaces one that listed it among the modules as though it
-existed. That was not only a docstring being optimistic: the name was in
-:data:`~quoss.validation.base.CASE_MODULES`, so :func:`~quoss.validation.base.run_all`
-— the one entry point of the package — raised ``ModuleNotFoundError`` on every
-call. **The table that existed to stop "validated" from being a badge could not
-be produced at all.** The six disagreements that module will carry are kept, and
-kept reachable, in :data:`~quoss.validation.base.PENDING_DISAGREEMENTS`.
+The number worth reading is the 8. Seven of them are Ntanos et al. 2021, and
+that is not a verdict on the paper — it is the source with the most fully
+stated parameters this project has, so more of its printed consequences can be
+checked at all. A vaguer source would produce a shorter list and a false sense
+of agreement. What the eight disagreements are, each in one line, is
+:data:`~quoss.validation.base.EXPECTED_DISAGREEMENTS`; what each one costs is in
+the note of its row.
 
-So what ``run_all()`` returns today is 22 cases from three sources, and the
-honest reading of it is: the channel recommendations and the two external
-systems are covered; **the paper this project's reference link is built on is
-not in the table yet**. Anything reported as validated against Ntanos et al.
-traces to the assertions in ``tests/channel/`` and ``tests/qkd/``, not to a row
-here.
+**This section replaces one that said the paper the reference link is built on
+had no row here at all**, and that absence is worth remembering rather than
+quietly deleting. ``ntanos2021`` was listed in
+:data:`~quoss.validation.base.CASE_MODULES` before it was written, so
+:func:`~quoss.validation.base.run_all` — the one entry point of the package —
+raised ``ModuleNotFoundError`` on every call: the table that existed to stop
+"validated" from being a badge could not be produced at all. It was then
+removed from the tuple and the hole declared, which made the package work and
+made the gap visible; stage 8.1 is where the gap closed.
+
+One disagreement still has no row, on purpose:
+:data:`~quoss.validation.base.PENDING_DISAGREEMENTS` holds
+``lim2014.block-1e4-reach``, because computing it would mean carrying a second
+implementation of Lim et al.'s Evaluation section. Its measurement is named
+there.
 
 No re-exports, deliberately — see :mod:`quoss.core` for the reasoning. Import
 from the module that defines the name.

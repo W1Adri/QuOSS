@@ -101,21 +101,26 @@ REGENERATE_COMMAND: Final = "uv run python -m quoss.validation --write docs/vali
 
 CASE_MODULES: Final = (
     "quoss.validation.channel",
+    "quoss.validation.ntanos2021",
     "quoss.validation.satquma",
     "quoss.validation.micius",
 )
 """The modules :func:`run_all` collects, in the order the table lists them.
 
-Channel sources first because every link number downstream depends on them,
-then the two external systems.
+Channel recommendations first because every link number downstream depends on
+them, then the paper the reference link is assembled from together with the two
+protocol papers it is evaluated with, then the two external systems.
 
-**One module is missing on purpose, and it is the most important one.** This
-tuple listed ``quoss.validation.ntanos2021`` before that module was written, so
-:func:`run_all` — the package's entry point — raised ``ModuleNotFoundError``
-rather than producing a short table. A table that cannot be produced at all
-says less than a table with a declared hole in it, which is the same rule
-ADR 0009 applies to citations, so the entry is removed and the hole is declared:
-see :data:`PENDING_DISAGREEMENTS` and ``notes/ROADMAP.md`` stage 8.
+**The second entry was missing for as long as this package existed**, and the
+way it was missing is worth keeping. The tuple listed
+``quoss.validation.ntanos2021`` before that module was written, so
+:func:`run_all` — the package's only entry point — raised
+``ModuleNotFoundError`` on every call: the table that exists to stop
+"validated" from being a badge could not be produced at all. The entry was then
+removed and the hole declared in :data:`PENDING_DISAGREEMENTS`, on the rule that
+a table with a declared hole says more than a table nobody can render. The
+module now exists, so the entry is back and the hole is closed — except for
+one identifier, which stays pending with its reason measured.
 """
 
 EXPECTED_DISAGREEMENTS: Final[Mapping[str, str]] = MappingProxyType(
@@ -124,58 +129,92 @@ EXPECTED_DISAGREEMENTS: Final[Mapping[str, str]] = MappingProxyType(
             "22 dB at 1200 km is not the diffraction loss of the printed 300 mm aperture; the "
             "printed ~10 urad divergence is 2.8x its diffraction limit."
         ),
+        "ntanos2021.eq5-printed-gain-product": (
+            "Eq. (5) as printed, (8/w0)^2, is 8x the energy-conserving 8/w0^2 and returns a "
+            "transmittance of 1.36 at their own largest station; ADR 0009, Ntanos caveat."
+        ),
+        "ntanos2021.eq20-background-click-probability": (
+            "Eq. (20) calls t_gate x R_back a probability; under ITU-R bright sunshine at the "
+            "2.3 m station it is 3.42, and the exact 1 - exp(-mu) is 0.967."
+        ),
+        "ntanos2021.full-moon-background": (
+            "\u00a74.2.2 '10 kcps at most' is 76.4 kcps from their own Eq. (19) at the 2.3 m station; "
+            "ADR 0009, Ntanos caveat."
+        ),
+        "ntanos2021.protocol-efficiency-as-printed": (
+            "\u00a74.1 prints 4:1:16 and q = 2/5 in one sentence; Eq. (A1) gives 0.095 for that order, "
+            "a factor 4.2 away."
+        ),
+        "ntanos2021.single-pass-peak-skr": (
+            "\u00a74.3.1's 3.33e-4 bits/pulse needs 24.07 dB of total loss, 4.07 dB more than the "
+            "20 dB \u00a74.2.1 declares as the best case; the two printed claims disagree with each other."
+        ),
+        "ntanos2021.aperture-ratio-helmos-skinakas": (
+            "\u00a74.3.2 'about four times' is 3.06 at zenith, rising to 3.25 at their 20 deg floor."
+        ),
+        "ntanos2021.skinakas-latitude-as-printed": (
+            "\u00a72 prints 'longitude: 35.2118, latitude: 24.8981' for a station on Crete; the labels "
+            "are swapped, systematically, in all three stations."
+        ),
     }
 )
 """Every case expected to come out ``NOT_REPRODUCED``, with why, one line each.
 
 Both directions are enforced by ``tests/validation/test_base.py``: a new
 disagreement that is not listed here fails CI, and so does a listed one that
-starts agreeing — which is good news, but news that must be read, because the
+starts agreeing \u2014 which is good news, but news that must be read, because the
 case note and the ADR paragraph behind it describe a disagreement that no
 longer exists. Enforcing both directions is also why this mapping may not hold a
 key no module produces: an entry nobody can reach is a claim nobody can check,
 and those live in :data:`PENDING_DISAGREEMENTS` instead.
+
+**Seven of the eight are Ntanos et al. 2021**, and that is not a verdict on the
+paper. It is the most fully parameterised source this project has \u2014 numbered
+equations, a stated receiver, a stated transmitter, stated protocol parameters
+\u2014 so more of its printed consequences can be checked at all. A vaguer source
+produces a shorter list and a false sense of agreement.
 """
 
 PENDING_DISAGREEMENTS: Final[Mapping[str, str]] = MappingProxyType(
     {
-        "ntanos2021.eq5-printed-gain-product": (
-            "Eq. (5) as printed, (8/w0)^2, is 8x the energy-conserving 8/w0^2 and returns a "
-            "transmittance above one; ADR 0009, Ntanos caveat."
-        ),
-        "ntanos2021.protocol-efficiency-as-printed": (
-            "§4.1 prints 4:1:16 and q = 2/5 in one sentence; Eq. (A1) gives 0.095 for that order."
-        ),
-        "ntanos2021.full-moon-background": (
-            "§4.2.2 '10 kcps at most' is 76.4 kcps from their own Eq. (19) at the 2.3 m station; "
-            "ADR 0009, Ntanos caveat."
-        ),
-        "ntanos2021.single-pass-peak-skr": (
-            "§4.3.1's 3.33e-4 bps/pulse needs more extinction than §4.2.1's 20 dB allows."
-        ),
-        "ntanos2021.aperture-ratio-helmos-skinakas": (
-            "§4.3.2 'about four times'; the same link gives 3.06 at every elevation tested."
-        ),
         "lim2014.block-1e4-reach": (
-            "Fig. 1's 1e4 block reaching 135 km does not reproduce; ADR 0009 gap 16."
+            "Fig. 1's 1e4 block reaching 135 km does not reproduce \u2014 this project certifies no "
+            "key at any fibre length with that block, and its 1e5 curve is their 1e4 one; "
+            "ADR 0009 gap 16, measured in tests/qkd/test_finite_key.py."
         ),
     }
 )
-"""The disagreements ``quoss.validation.ntanos2021`` will carry, kept because they are known.
+"""Disagreements that are known and measured but have **no row** in the table.
 
-These six were written into :data:`EXPECTED_DISAGREEMENTS` before the module
-that produces them existed, which made them unreachable — a listed claim no
-test could check either way. They are **not** dropped, because each one is a
-real finding already measured and asserted elsewhere in the suite
-(``tests/channel/test_beam.py::TestPublishedGainProduct``,
-``tests/channel/test_background.py::TestTheFullMoonClaim``,
-``tests/qkd/test_finite_key.py``, and the Ntanos caveat of ADR 0009); what is
-missing is only the row in ``docs/validation.md`` that would name them.
-
-The day ``ntanos2021.py`` is written (stage 8.1), each identifier it produces
-moves from here into :data:`EXPECTED_DISAGREEMENTS`, and
+This mapping held six entries until ``quoss.validation.ntanos2021`` was written:
+five Ntanos et al. findings and this one. The five have moved into
+:data:`EXPECTED_DISAGREEMENTS` with rows behind them, and
 ``tests/validation/test_base.py`` checks that the two mappings never share a
 key, so the move cannot be half-done.
+
+**Why this one stays, and it is a cost paid in the wrong currency if it does
+not.** Lim et al. state that "even if we use a block size of 1e4, cryptographic
+keys can still be distributed over a fiber length of 135 km". Reaching their
+number needs their optimisation over five free parameters \u2014 the basis bias, the
+two state probabilities and the two intensities \u2014 which is about 120 lines of
+transcription of their Evaluation section, living today beside the test that
+measures the disagreement
+(``tests/qkd/test_finite_key.py::TestLim2014Evaluation``). Lifting it into
+``src/`` to buy one row would leave this project with **two** implementations of
+that section, and one formula in two places is the defect
+``docs/adr/0016-the-engine-adds-nothing-and-one-altitude.md`` exists to prevent:
+the two drift, and the one that drifts is the one nobody runs. A declared hole
+with its measurement named is the cheaper honest answer, which is the same rule
+ADR 0009 applies to citations.
+
+What is measured, so the hole is not vague: with a block of 1e4 detections in
+the key basis this project certifies **zero** key at 0, 100 and 135 km \u2014 not a
+small key, no key \u2014 while its 1e5 block gives a positive rate at 135 km and
+zero by 150 km, which is the shape of the curve they draw one decade lower. The
+disagreement is therefore exactly one decade in block size, and the two
+candidate causes (a different convention for what ``n_X`` counts, and a
+different resolution of the ``e_k`` ambiguity of their Evaluation section) are
+settled by nothing printed in the paper.
 """
 
 
@@ -521,8 +560,11 @@ def run_all() -> tuple[ValidationCase, ...]:
     """Recompute every case, in the stable order of :data:`CASE_MODULES`.
 
     Nothing is cached: each call runs the physics again, so the statuses it
-    returns describe the code that is installed now. Measured cost is reported
-    in ``tests/validation/test_base.py::TestRunAll::test_the_whole_table_runs_in_under_ten_seconds``.
+    returns describe the code that is installed now. That is affordable and
+    measured: ``tests/validation/test_base.py::TestTheTableRuns`` collects the
+    whole table in a module-scoped fixture, and the thirty-five cases take
+    about 0.2 s together, because every one of them is a closed form or a
+    single integral over the 139-layer ITU grid.
 
     Returns
     -------

@@ -41,13 +41,17 @@ propia — y **V4 no es validación**.
 | 5 | `engine/` | ✅ |
 | 6 | `io/` | ✅ |
 | 7 | `cli/` + `viz/` | ✅ |
-| 8 | `validation/` | 🟨 falta la fila de Ntanos y la tabla commiteada |
+| 8 | `validation/` | ✅ (35 casos de ocho fuentes; `docs/validation.md` commiteado) |
 | 9–11 | `api/`, `web/`, `deploy/` | ⬜ distribución, no ciencia → [0027](../docs/adr/0027-four-levels-of-distribution.md) |
 
 **Hito A (fin de etapa 5):** simulador completo en Python, sin red y sin web.
 **Alcanzado.** **Hito B (fin de etapa 8):** resultados validados contra
 literatura y reproducibles por terceros — aquí es donde el proyecto es
-publicable. **Es lo siguiente.**
+publicable. **Alcanzado el 2026-09-19**, y conviene leer lo que significa: no es
+«los números están bien», es que **cada número publicable tiene una fila que
+dice contra qué se comparó, con qué tolerancia y de dónde sale esa tolerancia**,
+y que ocho de esas filas dicen que no cuadra. Un hito de credibilidad se alcanza
+publicando los desacuerdos, no eliminándolos.
 
 ---
 
@@ -251,7 +255,7 @@ levantaba `AttributeError` ([INCONSISTENCIAS #15](INCONSISTENCIAS.md), cerrada).
 
 ---
 
-## Etapa 8 — `validation/`: credibilidad 🟨
+## Etapa 8 — `validation/`: credibilidad ✅
 
 Barato y el mayor multiplicador de confianza que hay. Se ejecuta en CI. ADR de la
 etapa: el [**0018**](../docs/adr/0018-validation-is-a-table-not-a-badge.md).
@@ -260,15 +264,23 @@ etapa: el [**0018**](../docs/adr/0018-validation-is-a-table-not-a-badge.md).
 |---|---|---|
 | `base.py` | los cuatro estados, y la regla que **deriva** el estado en vez de aceptarlo escrito a mano | ✅ |
 | `channel.py` | ITU-R P.1621-2, P.1622, y Farid & Hranilovic | ✅ |
+| `ntanos2021.py` | la fuente del enlace de referencia entero, más Ma et al. 2005 y Lim et al. 2014 | ✅ |
 | `satquma.py` | dos identidades reproducidas y **dos huecos declarados** | ✅ |
-| `micius.py` | datos de misión real; el único `not_reproduced` que hay | ✅ |
-| `tests/validation/` | `cases.py`, `test_base.py`, `test_main.py`, `test_micius.py`, `test_satquma.py` | ✅ |
-| `ntanos2021.py` | la fuente del enlace de referencia entero. **La fila que falta** | ⬜ |
-| `docs/validation.md` | autogenerado, commiteado, y con un test que lo compara | ⬜ |
+| `micius.py` | datos de misión real | ✅ |
+| `tests/validation/` | `cases.py`, `test_base.py`, `test_docs.py`, `test_main.py`, `test_micius.py`, `test_ntanos2021.py`, `test_satquma.py` | ✅ |
+| `docs/validation.md` | autogenerado, **commiteado**, y con un test que lo compara byte a byte | ✅ |
 
-**Estado al 2026-09-14:** 22 casos de tres fuentes — 14 reproducidos, 1
-compatible, 1 no reproducido, 6 huecos. `tests/validation/` cubre el paquete al
-**100 %** de líneas y ramas.
+**Estado al 2026-09-19:** **35 casos de ocho fuentes** — 17 reproducidos, 3
+compatibles, **8 no reproducidos** y 7 huecos declarados.
+`tests/validation/` cubre el paquete al **100 %** de líneas y ramas.
+
+Siete de los ocho desacuerdos son de Ntanos et al. 2021, y no es un juicio sobre
+el paper: es la fuente con los parámetros mejor declarados que tiene el proyecto,
+así que es de la que más consecuencias impresas se pueden comprobar. Uno se queda
+**sin fila y con su razón medida** —`lim2014.block-1e4-reach`, en
+`PENDING_DISAGREEMENTS`—: reproducirlo exige la optimización de cinco parámetros
+de Lim et al., que vive junto al test que la mide, y subirla a `src/` dejaría dos
+implementaciones de una misma sección publicada.
 
 ---
 
