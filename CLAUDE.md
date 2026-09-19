@@ -172,16 +172,40 @@ de uno rancio.
 
 ---
 
-## Contexto del proyecto (lo mínimo antes de tocar nada)
+## Contexto del proyecto — qué leer, en qué orden, y cuánto cuesta
 
-| Fichero | Para qué |
-|---|---|
-| [`notes/ROADMAP.md`](notes/ROADMAP.md) | En qué orden se construye y por qué ese orden |
-| [`notes/LAST_CHANGES.md`](notes/LAST_CHANGES.md) | Estado actual, decisiones tomadas, y lo pendiente con fecha |
-| [`notes/INCONSISTENCIAS.md`](notes/INCONSISTENCIAS.md) | Lo que el código o los documentos afirman y hoy no se cumple. **Hoy tiene dos entradas abiertas**, y su valor está en cómo se llenó: ninguna de las quince que ha tenido la detectaba la suite, y una de ellas era un número citado en quince sitios que resultó falso |
-| [`notes/GUIA_REIMPLEMENTACION.md`](notes/GUIA_REIMPLEMENTACION.md) | Por qué la arquitectura es esta y no la de SimulCTTC |
-| [`tests/golden/README.md`](tests/golden/README.md) | Los cuatro niveles de verificación V1–V4 |
-| `docs/adr/*.md` | Las decisiones no obvias, una por fichero |
+**El orden importa y está medido.** Hasta el 2026-09-19 esta sección era una
+tabla de seis ficheros sin orden ni tamaño, y dos de ellos —`LAST_CHANGES.md` con
+6 834 líneas y `ROADMAP.md` con 935— **no se leían**: una sesión llegaba a las
+primeras pantallas y seguía. El resultado tiene fecha: la PR C la escribió una
+sesión que no había leído lo que la PR B dejó dicho. Hoy son 910 y 321, y el
+orden de abajo es de arriba a abajo, parando cuando ya sepas lo que ibas a hacer.
+
+| # | Fichero | Líneas | Para qué | ¿Siempre? |
+|---|---|---|---|---|
+| 1 | [`notes/INCONSISTENCIAS.md`](notes/INCONSISTENCIAS.md) | ~120 | **Lo que el código o los documentos afirman y hoy no se cumple.** Primero porque es lo único que puede hacerte perder la tarde entera | **sí** |
+| 2 | [`notes/LAST_CHANGES.md`](notes/LAST_CHANGES.md) | ~910 | Las **cinco últimas** entradas completas, más un índice de una línea por entrada archivada. Es el estado de hoy y cómo se llegó | **sí** |
+| 3 | [`notes/ROADMAP.md`](notes/ROADMAP.md) | ~320 | Qué existe, qué falta, en qué orden. **Estado, no justificación** | **sí** |
+| 4 | `docs/adr/<el tuyo>.md` | 1 por decisión | El **porqué**. La tabla del ROADMAP te dice cuál te toca; no los leas todos | el de tu módulo |
+| 5 | [`tests/golden/README.md`](tests/golden/README.md) | — | Los cuatro niveles V1–V4, y por qué V4 no es validación | si vas a asertar algo |
+| 6 | [`notes/archive/`](notes/archive/) | 6 000 | Las entradas §1–§36, íntegras | solo si el índice te manda |
+| 7 | [`notes/GUIA_REIMPLEMENTACION.md`](notes/GUIA_REIMPLEMENTACION.md) | ~130 | Qué era SimulCTTC y la escalera de lenguajes | si tocas `kernels/` o `deploy/` |
+
+**Hoy `INCONSISTENCIAS.md` tiene dos entradas abiertas**, y su valor está en cómo
+se llenó: ninguna de las quince que ha tenido la detectaba la suite, una era un
+número citado en quince sitios que resultó falso, y otra es una verificación que
+se hizo contra un árbol de hace 29 commits (de ahí la norma 0).
+
+**Dónde va lo que escribas al terminar**, que es la otra mitad de la regla:
+
+- **Una entrada nueva en `LAST_CHANGES.md`**, con su cifra resumen. Si con ella
+  pasan de cinco, la más vieja se archiva — y solo después de comprobar que todo
+  lo que carga peso en ella vive ya en un ADR, un test o un docstring. Lo aserta
+  `tests/unit/test_notes.py`.
+- **El porqué va al ADR**, no a la bitácora ni al roadmap. Una justificación en
+  dos sitios es una que se va a quedar quieta en uno de los dos.
+- **Lo que no se pueda cerrar va a `INCONSISTENCIAS.md` con su medida**, nunca a
+  un comentario en el código.
 
 Reglas que no se negocian, todas ya escritas en el README y los ADRs:
 

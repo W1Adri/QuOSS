@@ -109,7 +109,21 @@ Al intentar validarlos contra el integrador apareció el problema:
 - Medido: con elementos osculadores, el residuo de primer orden es 1e-4…2.6e-3
   según la inclinación, y una fórmula de segundo orden candidata **mejoraba en
   unos casos y empeoraba en otros**, que es exactamente lo que se espera cuando
-  la corrección es más pequeña que el ruido del argumento.
+  la corrección es más pequeña que el ruido del argumento. **Las dos celdas que
+  lo demuestran**, porque «mejora en unos y empeora en otros» sin números es una
+  impresión y no una medida:
+
+  | Inclinación | 1.er orden | Con el 2.º orden candidato | |
+  |---|---|---|---|
+  | i = 51.6° (tipo ISS) | 1.3e-3 | **5.2e-4** | mejora 2.5 veces |
+  | i = 98° (heliosíncrona) | 1.0e-4 | **1.4e-3** | **empeora 14 veces** |
+
+  Y es el segundo caso el que decide, no el primero. Una corrección que mejora
+  donde el residuo ya era grande y empeora catorce veces donde era pequeño no
+  está corrigiendo: está añadiendo un término del tamaño del ruido con el signo
+  que le toque. La inclinación que empeora es además **la de este proyecto** —
+  la SSO de 700 km del escenario de referencia—, así que el caso favorable es el
+  que no se usa.
 - Promediar los elementos osculadores sobre las revoluciones **no** resuelve
   nada: el residuo se queda en O(J2) en las seis configuraciones probadas. Los
   elementos medios de Brouwer no son el promedio temporal de los osculadores.

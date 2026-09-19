@@ -68,9 +68,11 @@ CLI, la API y el frontend son *consumidores* del mismo motor, no parte de él.
 > todo `src/quoss` — `core/`, `orbits/`, `channel/`, `qkd/`, `system/`,
 > `scenario/`, `engine/`, `io/`, `viz/` y `validation/`.
 >
-> Ver [`notes/ROADMAP.md`](notes/ROADMAP.md) para el orden de construcción,
-> [`notes/GUIA_REIMPLEMENTACION.md`](notes/GUIA_REIMPLEMENTACION.md) para el porqué de la
-> arquitectura y [`notes/LAST_CHANGES.md`](notes/LAST_CHANGES.md) para el estado actual.
+> Ver [`notes/ROADMAP.md`](notes/ROADMAP.md) para qué existe y qué falta,
+> [`notes/LAST_CHANGES.md`](notes/LAST_CHANGES.md) para las cinco últimas entradas
+> de la bitácora (las anteriores, íntegras, en [`notes/archive/`](notes/archive/)),
+> [`notes/INCONSISTENCIAS.md`](notes/INCONSISTENCIAS.md) para lo que hoy no se
+> cumple, y [`docs/adr/`](docs/adr/) para el porqué de cada decisión no obvia.
 
 ## Instalación
 
