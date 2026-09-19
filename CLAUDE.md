@@ -1,8 +1,8 @@
 # CLAUDE.md — cómo trabajar en QuOSS
 
 > Único sistema de metadatos de agentes del repo, por la regla de higiene de
-> [`notes/GUIA_REIMPLEMENTACION.md`](notes/GUIA_REIMPLEMENTACION.md) §5: **un**
-> sistema, no cuatro. Si hace falta otro fichero de instrucciones, va aquí dentro.
+> [`notes/archive/GUIA_REIMPLEMENTACION-v3.md`](notes/archive/GUIA_REIMPLEMENTACION-v3.md)
+> §5, «Higiene de repo»: **un** sistema, no cuatro. Si hace falta otro fichero de instrucciones, va aquí dentro.
 
 ---
 
@@ -184,12 +184,12 @@ orden de abajo es de arriba a abajo, parando cuando ya sepas lo que ibas a hacer
 | # | Fichero | Líneas | Para qué | ¿Siempre? |
 |---|---|---|---|---|
 | 1 | [`notes/INCONSISTENCIAS.md`](notes/INCONSISTENCIAS.md) | ~120 | **Lo que el código o los documentos afirman y hoy no se cumple.** Primero porque es lo único que puede hacerte perder la tarde entera | **sí** |
-| 2 | [`notes/LAST_CHANGES.md`](notes/LAST_CHANGES.md) | ~910 | Las **cinco últimas** entradas completas, más un índice de una línea por entrada archivada. Es el estado de hoy y cómo se llegó | **sí** |
-| 3 | [`notes/ROADMAP.md`](notes/ROADMAP.md) | ~320 | Qué existe, qué falta, en qué orden. **Estado, no justificación** | **sí** |
+| 2 | [`notes/LAST_CHANGES.md`](notes/LAST_CHANGES.md) | ~1 140 | Las **cinco últimas** entradas completas, más un índice de una línea por entrada archivada. Es el estado de hoy y cómo se llegó | **sí** |
+| 3 | [`notes/ROADMAP.md`](notes/ROADMAP.md) | ~350 | Qué existe, qué falta, en qué orden. **Estado, no justificación** | **sí** |
 | 4 | `docs/adr/<el tuyo>.md` | 1 por decisión | El **porqué**. La tabla del ROADMAP te dice cuál te toca; no los leas todos | el de tu módulo |
 | 5 | [`tests/golden/README.md`](tests/golden/README.md) | — | Los cuatro niveles V1–V4, y por qué V4 no es validación | si vas a asertar algo |
-| 6 | [`notes/archive/`](notes/archive/) | 6 000 | Las entradas §1–§36, íntegras | solo si el índice te manda |
-| 7 | [`notes/GUIA_REIMPLEMENTACION.md`](notes/GUIA_REIMPLEMENTACION.md) | ~130 | Qué era SimulCTTC y la escalera de lenguajes | si tocas `kernels/` o `deploy/` |
+| 6 | [`notes/archive/`](notes/archive/) | 6 800 | Las entradas §1–§38 íntegras, y la guía v3 con su numeración §0–§5 congelada | solo si el índice te manda |
+| 7 | [`notes/GUIA_REIMPLEMENTACION.md`](notes/GUIA_REIMPLEMENTACION.md) | ~85 | Qué era SimulCTTC, y nada más: la escalera de lenguajes se fue al [ADR 0026](docs/adr/0026-the-language-ladder.md) | si tocas `kernels/` o `deploy/` |
 
 **Hoy `INCONSISTENCIAS.md` tiene dos entradas abiertas**, y su valor está en cómo
 se llenó: ninguna de las quince que ha tenido la detectaba la suite, una era un

@@ -1483,6 +1483,51 @@ class HorizontalResult:
         """Rebuild from :meth:`to_dict`."""
         return cls._from_tree(data)
 
+    def to_manifest_and_blocks(self) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+        """Return the JSON manifest and the two scalar blocks a table can hold.
+
+        The counterpart of :meth:`SimulationResult.to_manifest_and_arrays` for a
+        result that has no arrays, and **deliberately not the same method under
+        the same name**. :func:`quoss.io.export.export_result` dispatches on
+        which of the two a result offers, and the two protocols are disjoint:
+        this class has no ``to_manifest_and_arrays`` and
+        :class:`SimulationResult` has no ``to_manifest_and_blocks``, so a type
+        checker refuses a horizontal result on the downlink path before it can
+        produce a directory with an empty ``passes.csv`` in it. ADR 0028 has the
+        argument; the short form is that an absent file and an empty column read
+        the same to a consumer, and only one of them is true here.
+
+        A *block* is one row: a mapping of column name to scalar, which is what
+        a horizontal run has where a downlink has a table over passes. Written
+        one row per run rather than one row per term so that N exported runs
+        concatenate into an N-row table, which is what a sweep over distance
+        looks like on disk.
+
+        Returns
+        -------
+        tuple[dict, dict[str, dict[str, Any]]]
+            ``(manifest, {"budget": {...}, "session": {...}})``. The manifest is
+            :meth:`to_dict` verbatim, so it carries the blocks too: the CSVs are
+            a convenience for a spreadsheet, never the only copy.
+
+        Examples
+        --------
+        >>> from quoss.engine.pipeline import run
+        >>> from quoss.scenario.defaults import ge1_two_terminals
+        >>> manifest, blocks = run(ge1_two_terminals()).to_manifest_and_blocks()
+        >>> sorted(blocks)
+        ['budget', 'session']
+        >>> blocks["session"]["has_key"]
+        True
+        """
+        manifest = self.to_dict()
+        budget: dict[str, Any] = dict(self.budget._tree())
+        session: dict[str, Any] = dict(self.session._tree())
+        session["finite_bit_s"] = self.session.finite_bit_s
+        session["asymptotic_bit_s"] = self.session.asymptotic_bit_s
+        session["has_key"] = self.session.has_key
+        return manifest, {"budget": budget, "session": session}
+
 
 AnyResult = SimulationResult | HorizontalResult
 """What :func:`quoss.engine.pipeline.run` returns, for either member of ``link``.

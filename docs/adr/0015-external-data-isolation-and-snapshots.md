@@ -5,7 +5,8 @@
 - **Etapa:** 6 (`io/cache.py`, `io/celestrak.py`, `io/openmeteo.py`, `io/snapshots.py`, `io/export.py`, `io/stations.py`, `data/ogs.yaml`, `data/snapshots/`)
 - **Afecta a:** todo resultado que use un TLE o una serie de nubes reales, a
   la procedencia (`Provenance.data_versions`) que `scenario/result.py` guarda,
-  a la demo offline de `notes/GUIA_REIMPLEMENTACION.md` §5, y a `engine/` y
+  a la demo offline de `notes/archive/GUIA_REIMPLEMENTACION-v3.md` §5, y a
+  `engine/` y
   `cli/`, que son quienes llaman a este paquete.
 - **Extiende** al [ADR 0009](0009-citation-policy.md): una coordenada de
   estación o un TLE son también «números que se citan», y la regla de que una

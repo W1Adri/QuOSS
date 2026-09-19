@@ -17,10 +17,19 @@ from hypothesis import strategies as st
 import quoss
 from quoss.core.errors import ConfigurationError, DegradationLog, DomainError, Severity
 from quoss.core.types import TimeGrid, TimeSeries
-from quoss.io.export import ARRAY_MARKER, FORMATS, ExportedFile, export_result
-from quoss.scenario.defaults import reference_castelldefels
+from quoss.engine.pipeline import run
+from quoss.io.export import (
+    ARRAY_MARKER,
+    FORMATS,
+    ExportableResult,
+    ExportedFile,
+    ScalarBlockResult,
+    export_result,
+)
+from quoss.scenario.defaults import ge1_two_terminals, reference_castelldefels
 from quoss.scenario.result import (
     DailyResults,
+    HorizontalResult,
     MonteCarloResults,
     PassResults,
     Provenance,
@@ -734,3 +743,210 @@ class TestRoundTrips:
         )
         with np.load(tmp / "arrays.npz") as loaded:
             np.testing.assert_array_equal(loaded["passes.v"], array)
+
+
+# --------------------------------------------------------------------------- #
+# The horizontal shape (ADR 0028)
+# --------------------------------------------------------------------------- #
+class FakeScalarResult:
+    """A hand-shaped manifest/blocks pair, for the edge cases a real result cannot produce."""
+
+    def __init__(self, manifest: dict[str, Any], blocks: dict[str, Any]) -> None:
+        self.manifest = manifest
+        self.blocks = blocks
+
+    def to_manifest_and_blocks(self) -> tuple[dict[str, Any], dict[str, Any]]:
+        return self.manifest, self.blocks
+
+
+@pytest.fixture(scope="module")
+def horizontal_result() -> HorizontalResult:
+    """Return the GE-1 link of ``scenarios/ge1_1km.yaml``, run once for the module."""
+    result = run(ge1_two_terminals(), degradations=DegradationLog())
+    assert isinstance(result, HorizontalResult)
+    return result
+
+
+class TestTheTwoProtocolsAreDisjoint:
+    """What makes the dispatch safe is that neither result can take the other's path."""
+
+    def test_a_simulation_result_is_not_a_scalar_block_result(self) -> None:
+        assert isinstance(build_result(), ExportableResult)
+        assert not isinstance(build_result(), ScalarBlockResult)
+
+    def test_a_horizontal_result_is_not_an_exportable_result(
+        self, horizontal_result: HorizontalResult
+    ) -> None:
+        assert isinstance(horizontal_result, ScalarBlockResult)
+        assert not isinstance(horizontal_result, ExportableResult)
+
+    def test_no_method_is_shared(self) -> None:
+        """Stated as a property, so a future convenience method cannot blur it.
+
+        The dispatch is safe only while the two protocols are disjoint. The day
+        one of them gains a method the other also has, ``isinstance`` stops
+        narrowing and a horizontal result can reach the downlink path -- which
+        is how a directory with an empty ``passes.csv`` gets written.
+        """
+        exportable = {n for n in vars(ExportableResult) if not n.startswith("_")}
+        scalar = {n for n in vars(ScalarBlockResult) if not n.startswith("_")}
+        assert exportable == {"to_manifest_and_arrays"}
+        assert scalar == {"to_manifest_and_blocks"}
+        assert exportable & scalar == set()
+
+
+class TestTheHorizontalDirectory:
+    def test_the_files_written(
+        self, horizontal_result: HorizontalResult, tmp_path: Path, degradations: DegradationLog
+    ) -> None:
+        out = export_result(
+            horizontal_result, tmp_path, formats=CORE_FORMATS, degradations=degradations
+        )
+        assert out.shape == "horizontal"
+        assert {f.name for f in out.files} == {"budget.csv", "session.csv", "result.json"}
+        assert {p.name for p in tmp_path.iterdir()} == {
+            "budget.csv",
+            "session.csv",
+            "result.json",
+            "manifest.json",
+            "README.txt",
+        }
+
+    def test_no_empty_npz_is_written(
+        self, horizontal_result: HorizontalResult, tmp_path: Path, degradations: DegradationLog
+    ) -> None:
+        """An empty archive is the file-level version of the zero-length array ADR 0024 refused."""
+        export_result(horizontal_result, tmp_path, formats=("npz",), degradations=degradations)
+        assert not (tmp_path / "arrays.npz").exists()
+
+    def test_asking_for_npz_says_why_it_is_absent(
+        self, horizontal_result: HorizontalResult, tmp_path: Path, degradations: DegradationLog
+    ) -> None:
+        """Not written *and* not silent: the absence is explained where a reader looks."""
+        export_result(horizontal_result, tmp_path, formats=("npz",), degradations=degradations)
+        codes = [e.code for e in degradations.entries]
+        assert codes == ["io.export-no-arrays"]
+        assert degradations.entries[0].severity is Severity.INFO
+
+    def test_the_manifest_names_the_shape(
+        self, horizontal_result: HorizontalResult, tmp_path: Path, degradations: DegradationLog
+    ) -> None:
+        export_result(horizontal_result, tmp_path, formats=("json",), degradations=degradations)
+        document = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
+        assert document["export"]["shape"] == "horizontal"
+
+    def test_the_readme_says_the_absences_do_not_apply(
+        self, horizontal_result: HorizontalResult, tmp_path: Path, degradations: DegradationLog
+    ) -> None:
+        export_result(horizontal_result, tmp_path, formats=("json",), degradations=degradations)
+        text = (tmp_path / "README.txt").read_text(encoding="utf-8")
+        assert "do not apply" in text
+        assert "not because they came out" in text
+
+    def test_the_two_shapes_name_disjoint_data_files(
+        self, horizontal_result: HorizontalResult, tmp_path: Path, degradations: DegradationLog
+    ) -> None:
+        down = export_result(
+            build_result(), tmp_path / "d", formats=CORE_FORMATS, degradations=degradations
+        )
+        horiz = export_result(
+            horizontal_result, tmp_path / "h", formats=CORE_FORMATS, degradations=degradations
+        )
+        shared = {f.name for f in down.files} & {f.name for f in horiz.files}
+        assert shared == {"result.json"}
+
+
+class TestTheDirectoryRebuildsTheResult:
+    """The assertion D.1 asks for: what was written reconstructs what was run."""
+
+    def test_result_json_rebuilds_the_result_exactly(
+        self, horizontal_result: HorizontalResult, tmp_path: Path, degradations: DegradationLog
+    ) -> None:
+        export_result(horizontal_result, tmp_path, formats=("json",), degradations=degradations)
+        document = json.loads((tmp_path / "result.json").read_text(encoding="utf-8"))
+        assert document["arrays"] == {}
+        rebuilt = HorizontalResult.from_dict(document["manifest"])
+        assert rebuilt == horizontal_result
+
+    def test_manifest_json_carries_the_same_result(
+        self, horizontal_result: HorizontalResult, tmp_path: Path, degradations: DegradationLog
+    ) -> None:
+        """``manifest.json`` is the archive form here, because there is nothing to split out."""
+        export_result(horizontal_result, tmp_path, formats=("json",), degradations=degradations)
+        document = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
+        assert HorizontalResult.from_dict(document["result"]) == horizontal_result
+
+    def test_every_listed_hash_matches_the_bytes_on_disk(
+        self, horizontal_result: HorizontalResult, tmp_path: Path, degradations: DegradationLog
+    ) -> None:
+        export_result(horizontal_result, tmp_path, formats=CORE_FORMATS, degradations=degradations)
+        document = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
+        for entry in document["files"]:
+            data = (tmp_path / entry["name"]).read_bytes()
+            assert hashlib.sha256(data).hexdigest() == entry["sha256"]
+            assert len(data) == entry["size_bytes"]
+
+
+class TestTheBlockTables:
+    def test_each_block_is_one_row(
+        self, horizontal_result: HorizontalResult, tmp_path: Path, degradations: DegradationLog
+    ) -> None:
+        """One row per run, so that N exports concatenate into an N-row table."""
+        export_result(horizontal_result, tmp_path, formats=("csv",), degradations=degradations)
+        for name in ("budget", "session"):
+            _, rows = read_csv(tmp_path / f"{name}.csv")
+            assert len(rows) == 1
+
+    def test_every_budget_term_is_a_column_and_reads_back_equal(
+        self, horizontal_result: HorizontalResult, tmp_path: Path, degradations: DegradationLog
+    ) -> None:
+        export_result(horizontal_result, tmp_path, formats=("csv",), degradations=degradations)
+        header, (row,) = read_csv(tmp_path / "budget.csv")
+        expected = horizontal_result.budget._tree()
+        assert header == list(expected)
+        for name, cell in zip(header, row, strict=True):
+            assert float(cell) == expected[name]
+
+    def test_the_session_carries_the_three_derived_columns(
+        self, horizontal_result: HorizontalResult, tmp_path: Path, degradations: DegradationLog
+    ) -> None:
+        """``finite_bit_s`` is what a reader compares between two sessions of different length."""
+        export_result(horizontal_result, tmp_path, formats=("csv",), degradations=degradations)
+        header, (row,) = read_csv(tmp_path / "session.csv")
+        cells = dict(zip(header, row, strict=True))
+        assert float(cells["finite_bit_s"]) == horizontal_result.session.finite_bit_s
+        assert float(cells["asymptotic_bit_s"]) == horizontal_result.session.asymptotic_bit_s
+        assert cells["has_key"] == "true"
+
+    def test_a_nested_block_is_refused_rather_than_stringified(
+        self, tmp_path: Path, degradations: DegradationLog
+    ) -> None:
+        """A dict in a cell would be written as JSON and read back as data that is not there."""
+        with pytest.raises(DomainError, match="holds dict, not a"):
+            export_result(
+                FakeScalarResult({}, {"budget": {"nested": {"a": 1}}}),
+                tmp_path,
+                formats=("csv",),
+                degradations=degradations,
+            )
+
+    @pytest.mark.parametrize("block", [{}, 3])
+    def test_an_empty_or_non_mapping_block_is_refused(
+        self, tmp_path: Path, degradations: DegradationLog, block: Any
+    ) -> None:
+        with pytest.raises(DomainError, match="non-empty mapping"):
+            export_result(
+                FakeScalarResult({}, {"budget": block}),
+                tmp_path,
+                formats=("csv",),
+                degradations=degradations,
+            )
+
+    def test_parquet_writes_the_same_two_tables(
+        self, horizontal_result: HorizontalResult, tmp_path: Path, degradations: DegradationLog
+    ) -> None:
+        pytest.importorskip("pyarrow")
+        parquet = pytest.importorskip("pyarrow.parquet")
+        export_result(horizontal_result, tmp_path, formats=("parquet",), degradations=degradations)
+        table = parquet.read_table(tmp_path / "session.parquet").to_pydict()
+        assert table["finite_bits"] == [horizontal_result.session.finite_bits]

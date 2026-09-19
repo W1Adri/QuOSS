@@ -100,38 +100,22 @@ free V2 pair waiting to be added.
 
 # Argument of latitude u = omega + nu for Example 2-5.
 #
-# The book (p. 116) prints u = 145.60549 deg and shows the formula:
+# The book (p. 116) prints u = 145.60549 deg, and that number is a confirmed
+# erratum: it is **excluded from the V2 set**, not used as a reference and not
+# covered by widening a tolerance. The decision, its defence and its three
+# measurements live in the ADR that owns this comparison --
+# docs/adr/0003-orbital-elements.md, "La errata de la p. 116, y por qué es una
+# exclusión de V2" -- and are cited here rather than repeated, because an
+# exclusion kept in a test comment is one that disappears with the next refactor
+# of the test while the number stays printed in the book.
 #
-#   u = arccos( n.r / (|n| |r|) )
+# What this file keeps is what the tests below actually evaluate:
 #
-# with operands  |n| = 66374.17,  |r| = 11456.67,
-#   n.r = (-44500.5)(6524.834) + (-49246.7)(6862.875).
-#
-# Two errors are present on that page:
-#
-#   1. |r| is printed as 11456.67 km instead of the correct 11456.57 km --
-#      a digit transposition (57 -> 67).  With the wrong value the formula
-#      evaluates to 145.7193794974 deg, not 145.60549 deg.
-#
-#   2. Even using those wrong operands, the printed result 145.60549 deg is
-#      arithmetically wrong: the expression yields 145.7193 deg, not 145.606 deg.
-#      There is no third definition of u that recovers the printed number.
-#
-# The correct value, computed from the published r and v vectors with full
-# double precision, is 145.720087380597 deg, confirmed by two independent routes:
-#
-#   Route 1 -- vector formula (definition):
-#     h = r x v = (-49246.67792015, 44500.50424119, 2469.64476138)
-#     n = k_hat x h = (-44500.50424119, -49246.67792015, 0)
-#     cos u = (n.r) / (|n| |r|) = -0.8262958108435008
-#     r_z > 0  ->  no 360 deg correction needed
-#     u = arccos(-0.826296) = 145.720087380597 deg
-#
-#   Route 2 -- elements (omega + nu):
-#     omega = 53.384930618460 deg,  nu = 92.335156762137 deg
-#     u = omega + nu = 145.720087380597 deg   (exact to numerical precision)
-#
-# The value 145.60549 deg must not be used as a reference.
+#   * the page's own operands, so that its arithmetic can be reproduced
+#     (VALLADO_2_5_PRINTED_* and VALLADO_2_5_U_WITH_WRONG_R_DEG);
+#   * the printed value, as the thing being excluded;
+#   * the correct value, confirmed by omega + nu and by the vector formula
+#     arccos(n.r / (|n| |r|)), which agree to numerical precision.
 VALLADO_2_5_U_CORRECT_DEG = 145.720087380597
 VALLADO_2_5_U_PRINTED_ERRATA_DEG = 145.60549
 
@@ -362,19 +346,15 @@ class TestPublishedVallado25:
     def test_argument_of_latitude_errata(self) -> None:
         """u = omega + nu = 145.720087 deg -- the value printed in Vallado (145.60549 deg) is wrong.
 
-        Vallado p. 116 prints u = 145.60549 deg via arccos(n.r / (|n||r|)), but
-        two errors are present on that page:
-
-        1. ``|r|`` is given as 11456.67 km instead of the correct 11456.57 km
-           (a digit transposition, 57 -> 67).  Evaluating the printed formula
-           with those wrong operands yields 145.7193794974 deg, not 145.60549 deg.
-
-        2. Even the wrong-|r| result does not match the printed 145.60549 deg.
-           There is no arithmetic path from the page's own numbers to that value.
-
-        The correct u follows from two independent routes that agree to numerical
-        precision, and is asserted against both.  The printed value is recorded
-        here as a documented book erratum, not used as a bound.
+        Layers 1 and 2 of the erratum that
+        ``docs/adr/0003-orbital-elements.md`` ("La errata de la p. 116, y por
+        qué es una exclusión de V2") records: the page's formula is transcribed
+        correctly, so evaluating it with the page's own operands reproduces the
+        page's intermediate value, and the printed *result* does not follow from
+        it. The correct u is asserted against two independent routes that agree
+        to numerical precision. Layer 3 -- that no |r| at all recovers the
+        printed angle -- is
+        ``test_no_printed_radius_recovers_the_printed_angle``.
         """
         coe = _vallado_25_elements()
         omega_deg = math.degrees(float(coe.argp_rad[0]))
@@ -427,6 +407,35 @@ class TestPublishedVallado25:
         assert typo_cost_deg == pytest.approx(7.1e-4, abs=1e-5)
         assert printed_gap_deg == pytest.approx(0.1146, abs=1e-4)
         assert printed_gap_deg > 100.0 * typo_cost_deg
+
+    def test_no_printed_radius_recovers_the_printed_angle(self) -> None:
+        """Layer 3: solving the page's own formula for |r| lands 15 km from anything it prints.
+
+        This is what turns "the book is wrong here" into "this number is not
+        usable", which is the difference between a note and an exclusion from
+        the V2 set (``docs/adr/0003-orbital-elements.md``). Layers 1 and 2 leave
+        open the reading that the printed angle came from some other radius that
+        the page rounded away. It did not: the only |r| that produces
+        145.60549 deg from the page's own numerator and node magnitude is
+        11472.24 km, which is 15.57 km from the |r| the page prints and 15.67 km
+        from the correct one -- 0.136 %, against the 8.7e-4 % the transposition
+        is worth. Two orders of magnitude apart is not a rounding.
+        """
+        printed_node = np.array([-44500.5, -49246.7, 0.0])
+        r = np.array(VALLADO_2_5_R_IJK_KM)
+        printed_dot = float(printed_node[0] * r[0] + printed_node[1] * r[1])
+
+        required_r_km = printed_dot / (
+            VALLADO_2_5_PRINTED_NODE_MAGNITUDE
+            * math.cos(math.radians(VALLADO_2_5_U_PRINTED_ERRATA_DEG))
+        )
+
+        assert required_r_km == pytest.approx(11472.237, abs=1e-3)
+        # The two radii the page knows about, and how far each one is from it.
+        assert abs(required_r_km - VALLADO_2_5_PRINTED_R_KM) == pytest.approx(15.57, abs=0.01)
+        assert abs(required_r_km - 11456.57) == pytest.approx(15.67, abs=0.01)
+        # And that distance is two orders of magnitude above what the typo costs.
+        assert abs(VALLADO_2_5_PRINTED_R_KM - 11456.57) == pytest.approx(0.10, abs=1e-9)
 
     def test_argument_of_latitude_property_carries_the_v2_value(self) -> None:
         """The published ``u`` validates the accessor, not just a sum written in this file.

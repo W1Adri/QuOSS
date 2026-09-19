@@ -6,7 +6,7 @@ A run of :func:`quoss.engine.pipeline.run` goes through named *stages* — orbit
 geometry, passes, channel, key, series, and the optional ones. This module
 times each of them with :func:`time.perf_counter` and hands the numbers to
 :class:`~quoss.scenario.result.StageTimings`, which travels inside the result.
-``notes/GUIA_REIMPLEMENTACION.md`` §5 asks for exactly that ("tiempos por etapa
+``notes/archive/GUIA_REIMPLEMENTACION-v3.md`` §5 asks for exactly that ("tiempos por etapa
 del pipeline dentro del propio resultado. Optimizar con datos, no con
 intuición"): a slow run should say where it was slow without anybody attaching
 a profiler.

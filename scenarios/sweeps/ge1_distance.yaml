@@ -1,0 +1,22 @@
+# The GE-1 horizontal link swept over path length: the figure of LAST_CHANGES §40.
+#
+# A sweep spec is a datum for the same reason a scenario is one (ADR 0014): a
+# figure has to be reproducible from something that is committed, and a shell
+# history is not. `quoss sweep` takes this file, not an inline string.
+#
+# `parameters` are dotted paths into the scenario, `metrics` dotted paths into
+# the result. The metric roots legal here are the horizontal ones — `budget` and
+# `session` — because the base scenario is `link: horizontal`; a `daily.…` metric
+# is refused before the first point runs, naming the sections that do exist.
+#
+# What it shows, measured (60 s session, GE-1 as scenarios/ge1_1km.yaml declares
+# it): 23 696 707 certified bits at 200 m, 15 236 099 at 1 km, and **exactly
+# zero** at 5 km while the asymptotic figure still claims 267 678. That last
+# column is the point of asking for both metrics: a link that an asymptotic
+# sizing would call a 4.5 kbit/s link certifies nothing at all.
+parameters:
+  path.path_length_m: [200.0, 1000.0, 2410.0, 5000.0]
+mode: grid
+metrics:
+  - session.finite_bits
+  - session.asymptotic_bits

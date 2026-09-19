@@ -54,14 +54,17 @@ ranged, so the figure shows a relationship that is a property of the axis
 limits, not of the data. Two panels sharing the time axis show the same
 alignment in time — which is the point, the rate lives only inside the shaded
 pass windows — without that artefact. ``docs/adr/0017-publication-figures.md``
-will record the decision; 0017 is reserved for stage 7 and not written yet
-(see ``notes/ROADMAP.md``).
+records the decision, together with the other two conventions of this module
+that admit an inverted reading: the plane-to-spherical band, which is not an
+error bar, and the Rayleigh region, where the band narrows for the wrong
+reason.
 
 What it deliberately leaves out
 -------------------------------
 Coverage maps (they need a ground-track grid the result does not store),
-interactive plots (the web frontend's job, ``notes/GUIA_REIMPLEMENTACION.md``
-§4), and a daily Monte Carlo band: :class:`~quoss.scenario.result.MonteCarloResults`
+interactive plots (the web frontend's job:
+``docs/adr/0027-four-levels-of-distribution.md`` makes the web a *client* of the
+engine, and a client does not draw the paper's figures), and a daily Monte Carlo band: :class:`~quoss.scenario.result.MonteCarloResults`
 keeps quantiles per *pass*, and the quantiles of a day are quantiles of the
 per-realisation sum, which cannot be rebuilt from per-pass quantiles (on the
 reference ensemble the day's P5 is 735 329 bits while the sum of the passes'

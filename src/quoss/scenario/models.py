@@ -85,8 +85,8 @@ What this module deliberately does not do
 It does not compute anything physical. Conversion, yes; a loss budget, no.
 It imports from ``core``, ``orbits``, ``channel`` and ``qkd`` only — never from
 ``system`` or ``engine`` — because the dependency ladder of
-``notes/GUIA_REIMPLEMENTACION.md`` puts ``scenario`` above the physics and below
-the engine, and a schema that imported the pipeline would be a schema the
+``notes/ROADMAP.md`` ("Regla de oro del orden") puts ``scenario`` above the
+physics and below the engine, and a schema that imported the pipeline would be a schema the
 pipeline could not import.
 
 Examples
@@ -150,6 +150,7 @@ from quoss.qkd.bb84 import Bb84DecoyProtocol
 from quoss.qkd.finite_key import SecurityParameters
 
 __all__ = [
+    "HASH_EXCLUDED_FIELDS",
     "HV57_RMS_WIND_SPEED_M_S",
     "SCHEMA_VERSION",
     "AggregationPolicyName",
@@ -185,6 +186,23 @@ A file states its version in ``schema_version`` and is refused if it does not
 match, rather than being read under whatever field meanings this version
 happens to have. Bumped when a field changes meaning or unit; adding an
 optional field with a default does not bump it.
+"""
+
+HASH_EXCLUDED_FIELDS: frozenset[str] = frozenset({"name", "description", "expected_degradations"})
+"""Top-level fields that :meth:`Scenario.physics_dict` leaves out of the digest.
+
+The first two are labels for humans. The third is not a label, and it is here
+for a different reason worth stating: ``expected_degradations`` names the
+substituted models the author has already looked at and accepted. That is a
+statement about **what the reader will tolerate**, not about what the code
+computes -- the same run, with the same numbers, is produced whether or not a
+code is listed. Two files that differ only there must therefore share a cache
+entry, exactly as two files that differ only in their name do, and a run must
+not be re-executed because somebody accepted a warning.
+
+Defined here rather than in :mod:`quoss.scenario.hash` because
+``physics_dict`` is what applies it and ``hash`` imports this module; the hash
+module re-exports the name, which is where a reader looks for it.
 """
 
 _RAD_PER_URAD = 1e-6
@@ -1843,6 +1861,15 @@ class HorizontalScenario(SpecModel):
     )
     name: str = Field(min_length=1, description="Label. Excluded from the hash.")
     description: str = Field(default="", description="Free text. Excluded from the hash.")
+    expected_degradations: tuple[str, ...] = Field(
+        default=(),
+        description="Degradation codes this run is expected to record, e.g. "
+        "['turbulence.saturated-regime']. Excluded from the hash: it says which substituted "
+        "models the author has already looked at and accepted, which is a statement about the "
+        "run's acceptance and not about its physics, so two files that differ only here must "
+        "share a cache entry. `quoss run` exits non-zero on a DEGRADED that is not listed, "
+        "which is what makes the field load-bearing rather than documentation (ADR 0028).",
+    )
     schema_version: int = Field(
         default=SCHEMA_VERSION, description="Schema version this file was written for."
     )
@@ -1900,7 +1927,7 @@ class HorizontalScenario(SpecModel):
         members of the union carry this method rather than the hash special-casing
         them: a third member would then need nothing but the method.
         """
-        return self.model_dump(mode="json", exclude={"name", "description"})
+        return self.model_dump(mode="json", exclude=set(HASH_EXCLUDED_FIELDS))
 
 
 # --------------------------------------------------------------------------- #
@@ -1939,6 +1966,15 @@ class Scenario(SpecModel):
     )
     name: str = Field(min_length=1, description="Label. Excluded from the hash.")
     description: str = Field(default="", description="Free text. Excluded from the hash.")
+    expected_degradations: tuple[str, ...] = Field(
+        default=(),
+        description="Degradation codes this run is expected to record, e.g. "
+        "['turbulence.saturated-regime']. Excluded from the hash: it says which substituted "
+        "models the author has already looked at and accepted, which is a statement about the "
+        "run's acceptance and not about its physics, so two files that differ only here must "
+        "share a cache entry. `quoss run` exits non-zero on a DEGRADED that is not listed, "
+        "which is what makes the field load-bearing rather than documentation (ADR 0028).",
+    )
     schema_version: int = Field(
         default=SCHEMA_VERSION, description="Schema version this file was written for."
     )
@@ -2024,7 +2060,7 @@ class Scenario(SpecModel):
         The payload :mod:`quoss.scenario.hash` canonicalises: enums by value,
         the datetime as an ISO-8601 string, floats as floats.
         """
-        return self.model_dump(mode="json", exclude={"name", "description"})
+        return self.model_dump(mode="json", exclude=set(HASH_EXCLUDED_FIELDS))
 
 
 # --------------------------------------------------------------------------- #

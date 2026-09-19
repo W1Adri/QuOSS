@@ -201,3 +201,112 @@ def test_the_other_notes_stay_readable(name: str) -> None:
         f"header). If it has no ADR owner, that is a finding, not a reason to "
         f"write it here."
     )
+
+
+# --------------------------------------------------------------------------- #
+# Citations to a section of the guide resolve to a section that exists
+# --------------------------------------------------------------------------- #
+#: The guide's file name, without the extension. Kept as a variable and never
+#: written next to a section sign in this module, because this module is inside
+#: the tree the scan below walks: a literal example of a broken citation, written
+#: to illustrate the failure, would *be* one and would fail its own test.
+GUIDE_STEM = "GUIA_REIMPLEMENTACION"
+
+#: Where a citation may live. ``notes/`` is out on purpose and not by oversight:
+#: it is where the renumbering is *described* -- "§41 renumbered the document,
+#: the v3 had §0-§5" -- and prose about which sections used to exist is not a
+#: citation of them.
+CITING_ROOTS = ("src", "tests", "docs")
+
+#: Single files outside those roots that cite the guide too. Named one by one
+#: rather than scanning the repository root, so that adding a file does not
+#: silently widen the scan to somebody's scratch notes.
+CITING_FILES = ("pyproject.toml", "CLAUDE.md", "README.md")
+
+CITING_SUFFIXES = (".py", ".md", ".toml", ".yaml", ".yml")
+
+#: ``…GUIA_REIMPLEMENTACION.md`` or ``…-v3.md``, then up to forty characters of
+#: punctuation and closing markup, then ``§`` and a number. Forty is what fits a
+#: closing double backtick, a Markdown link target and a comma; past that the
+#: section sign belongs to the next sentence and is not part of the citation.
+CITATION_RE = re.compile(GUIDE_STEM + r"(-v3)?\.md[^\n§]{0,40}§\s*(\d+(?:\.\d+)?)")
+
+#: A Markdown heading numbered ``N`` or ``N.M``, and the one heading that covers
+#: two numbers at once -- ``## 2 y 3 — se fueron a docs/adr/`` in the trimmed
+#: guide, which is a real section for citation purposes even though what it says
+#: is "this moved".
+HEADING_RE = re.compile(r"^#+\s*(\d+(?:\.\d+)?)(?:\s+y\s+(\d+))?[.\s]", re.MULTILINE)
+
+
+def _guide_sections(path: Path) -> set[str]:
+    """Return every section number the guide at ``path`` has a heading for."""
+    found: set[str] = set()
+    for match in HEADING_RE.finditer(path.read_text(encoding="utf-8")):
+        found.add(match.group(1))
+        if match.group(2) is not None:
+            found.add(match.group(2))
+    return found
+
+
+def _citing_files(root: Path) -> list[Path]:
+    files = [
+        path
+        for directory in CITING_ROOTS
+        for path in (root / directory).rglob("*")
+        if path.is_file() and path.suffix in CITING_SUFFIXES
+    ]
+    files.extend(root / name for name in CITING_FILES)
+    return sorted(set(files))
+
+
+def _citations(root: Path) -> list[tuple[Path, int, str, str]]:
+    """Return ``(path, line, target_file_name, section)`` for every numbered citation."""
+    out: list[tuple[Path, int, str, str]] = []
+    for path in _citing_files(root):
+        text = path.read_text(encoding="utf-8")
+        for match in CITATION_RE.finditer(text):
+            name = f"{GUIDE_STEM}-v3.md" if match.group(1) else f"{GUIDE_STEM}.md"
+            out.append((path, text[: match.start()].count("\n") + 1, name, match.group(2)))
+    return out
+
+
+def test_every_guide_section_cited_from_the_code_exists() -> None:
+    """A citation to a section the cited file does not have, from src/, tests/ or docs/.
+
+    The failure this exists for is not the loud one. ``§5`` in a docstring when
+    the file stops at ``§3`` merely sends the reader nowhere, and they will
+    notice. What happened on 2026-09-19 (LAST_CHANGES §41, §42, INCONSISTENCIAS
+    #17) is the quiet one: trimming the guide renumbered it, ``viz/__init__.py``
+    kept citing ``§1`` for "one formula, one place", and ``§1`` still existed --
+    as "what SimulCTTC was". The citation resolved, to the wrong text, with
+    nothing anywhere saying so. That is the same family as a plausible wrong
+    number, and it is why this is an assertion and not a convention.
+
+    Eleven of fourteen numbered citations did not resolve and one resolved
+    wrongly; the fix moved each to ``archive/`` or to the ADR that owns the
+    decision today. Without this test, the next trim breaks them again.
+    """
+    root = NOTES.parent
+    guides = {
+        f"{GUIDE_STEM}.md": NOTES / f"{GUIDE_STEM}.md",
+        f"{GUIDE_STEM}-v3.md": ARCHIVE / f"{GUIDE_STEM}-v3.md",
+    }
+    sections = {name: _guide_sections(path) for name, path in guides.items()}
+    for name, found in sections.items():
+        assert found, f"no numbered headings found in notes/.../{name}; the scan is broken"
+
+    citations = _citations(root)
+    assert citations, "no numbered citations of the guide found at all; the scan is broken"
+
+    broken = [
+        f"{path.relative_to(root)}:{line} cites {name} §{section}"
+        for path, line, name, section in citations
+        if section not in sections[name]
+    ]
+    present = {name: sorted(found) for name, found in sections.items()}
+    assert not broken, (
+        f"citations pointing at a section that does not exist: {broken}. The sections that "
+        f"do exist are {present}. Point the citation at "
+        f"notes/archive/{GUIDE_STEM}-v3.md, where the old numbering is frozen, or at the ADR "
+        f"that owns the decision today."
+    )

@@ -15,7 +15,8 @@ proyecto. Elígela y no la cambies».
 
 El coste de equivocarse es asimétrico. Una unidad inconsistente no produce un
 error: produce un número plausible. Y un número plausible pero incorrecto en una
-figura es, según el diagnóstico de `notes/GUIA_REIMPLEMENTACION.md` §0, «lo peor
+figura es, según el diagnóstico de `notes/archive/GUIA_REIMPLEMENTACION-v3.md` §0,
+«lo peor
 posible en un paper».
 
 Hay tres presiones en conflicto:
@@ -173,6 +174,8 @@ decisión revisada.
 ## Referencias
 
 - `notes/ROADMAP.md` — Etapa 1
-- `notes/GUIA_REIMPLEMENTACION.md` §0, §2.3
+- `notes/archive/GUIA_REIMPLEMENTACION-v3.md` §0, §2.3 — el diagnóstico original y el
+  apartado de calidad. Al **archivo**, no al fichero vivo: el recorte del 2026-09-19
+  renumeró el documento y hoy no tiene ni §0 ni §2.3
 - `src/quoss/core/units.py` — la convención como código
 - `src/quoss/core/constants.py` — nota sobre WGS-72 vs EGM96

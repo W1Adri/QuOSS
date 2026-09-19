@@ -181,6 +181,55 @@ realizaciones, o la evaluación del campo dentro de DOP853 ya paralelizado,
 salgan en un profiler con un porcentaje dominante, la condición se cumple y se
 abre la etapa.
 
+**Y hay que decirlo al revés, porque es la lectura que esta medición autoriza:
+la etapa 2.4 no está justificada por estos 55 segundos.** Son un número correcto
+atribuible al mecanismo equivocado. Para justificar la 2.4 haría falta **volver a
+medir después de arreglar el bucle**, y hasta entonces cualquier perfil del caso
+grande mide el serialismo y no la aritmética.
+
+### El bucle **no se puede vectorizar**; lo que admite es **paralelizar**
+
+Esta distinción parece de vocabulario y decide si el escalón 1 se puede agotar.
+
+**Qué es cada cosa.** *Vectorizar* es hacer que **una sola** operación de NumPy
+recorra los S satélites a la vez: una suma de 60 elementos en lugar de sesenta
+sumas de uno. El bucle desaparece del intérprete y lo corre C, sobre memoria
+contigua y con instrucciones SIMD (una instrucción que opera sobre varios
+números a la vez). *Paralelizar* es repartir las sesenta llamadas **tal como
+están** entre varios trabajadores que corren a la vez en procesos distintos. La
+primera escala con la anchura del registro SIMD y no cuesta nada de arranque; la
+segunda escala con el número de núcleos y cuesta arrancar procesos y serializar
+lo que va y vuelve.
+
+**Por qué aquí no se puede vectorizar, que es lo no obvio.** DOP853 es un
+integrador de **paso adaptativo**: en cada paso estima su propio error y, según
+salga, alarga o acorta el siguiente. Dos satélites de la misma constelación no
+producen la misma secuencia de pasos —el que pasa por perigeo más rápido necesita
+pasos más cortos justo ahí—, así que **la rejilla interna de cada uno es
+distinta y depende de su propia historia**. Vectorizar entre satélites exige que
+los S avancen en los mismos instantes, es decir, renunciar al paso adaptativo por
+satélite y adoptar el más corto de todos, o un paso fijo. Y el paso adaptativo es
+exactamente lo que hace fiable al integrador cerca de perigeo: es la propiedad
+que se estaría cambiando por velocidad.
+
+`TWO_BODY` sí está vectorizado sobre la pila entera y por eso hace los 60 en
+2.9 s — pero es que `TWO_BODY` **no integra nada**: resuelve la ecuación de
+Kepler, que es una expresión cerrada evaluada sobre la rejilla de tiempos que el
+usuario pidió, la misma para todos. El factor 19 compara un problema que tiene
+forma vectorial con otro que no la tiene, no dos implementaciones del mismo.
+
+**Lo que queda, entonces, es paralelizar**: un satélite por trabajador, que es
+`engine/parallel.py` y la etapa 11 del roadmap. Escala con núcleos —sobre una
+máquina de ocho, los 55.6 s serían del orden de 8 s más el arranque— y no cierra
+la puerta a la 2.4: Numba seguiría pudiendo acelerar la evaluación del campo
+zonal **dentro** de cada paso, que es un bucle sobre 139 capas donde sí hay
+aritmética que medir. Pero eso es una medición que todavía no existe.
+
+**Si alguna nota dice «vectorizar ese bucle», está equivocada**, y lo está en la
+dirección cara: haría pensar que el escalón 1 se puede agotar con un refactor
+barato, cuando lo que queda tiene coste de arranque, de serialización y de
+determinismo entre trabajadores.
+
 ---
 
 ## Decisiones aplazadas, con lo que haría falta para cerrarlas

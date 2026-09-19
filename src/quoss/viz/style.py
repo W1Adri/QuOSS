@@ -2,9 +2,10 @@
 
 What this module is for, for someone arriving new
 -------------------------------------------------
-``notes/GUIA_REIMPLEMENTACION.md`` §4 gives MATLAB exactly one real advantage
-over Python — the quality of its figures — and says it is recovered with
-``matplotlib`` plus a publication *style sheet*. A style sheet is a set of
+``docs/adr/0026-the-language-ladder.md`` ("Alternativas descartadas") gives
+MATLAB exactly one real advantage over Python — the typographic quality of its
+figures — and says it is recovered with ``matplotlib`` plus a publication
+*style sheet*, naming this module as where. A style sheet is a set of
 ``matplotlib`` settings (``rcParams``: font, sizes, line widths, colours) that
 every figure is drawn under, so that forty figures in a paper look like one
 system rather than forty defaults. This module is that sheet, plus the few

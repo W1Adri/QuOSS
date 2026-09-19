@@ -17,8 +17,9 @@ origin is written next to it, and only then derives its status. A status typed
 by hand cannot survive: :class:`~quoss.validation.base.ValidationCase` refuses
 to be built with a status its own numbers do not produce. That is what stops
 "validated" from becoming a badge that outlives the agreement it once described
-(``docs/adr/0018-validation-is-a-table-not-a-badge.md``, reserved for stage 8
-and not written yet).
+(``docs/adr/0018-validation-is-a-table-not-a-badge.md``, which records the
+four statuses, why ``compatible`` exists instead of a widened tolerance, and
+why a published disagreement is exit 0 here and a red test there).
 
 Modules
 -------
