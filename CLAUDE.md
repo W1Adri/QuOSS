@@ -141,16 +141,71 @@ return _wrap_two_pi(self._argp_rad + self._true_anomaly_rad)
 
 ---
 
-## Contexto del proyecto (lo mínimo antes de tocar nada)
+## Norma 0 — Sincronizar antes de afirmar que algo no existe
 
-| Fichero | Para qué |
-|---|---|
-| [`notes/ROADMAP.md`](notes/ROADMAP.md) | En qué orden se construye y por qué ese orden |
-| [`notes/LAST_CHANGES.md`](notes/LAST_CHANGES.md) | Estado actual, decisiones tomadas, y lo pendiente con fecha |
-| [`notes/INCONSISTENCIAS.md`](notes/INCONSISTENCIAS.md) | Lo que el código o los documentos afirman y hoy no se cumple. **Hoy tiene una entrada abierta**, y su valor está en cómo se llenó: ninguna de las catorce que ha tenido la detectaba la suite, y una de ellas era un número citado en quince sitios que resultó falso |
-| [`notes/GUIA_REIMPLEMENTACION.md`](notes/GUIA_REIMPLEMENTACION.md) | Por qué la arquitectura es esta y no la de SimulCTTC |
-| [`tests/golden/README.md`](tests/golden/README.md) | Los cuatro niveles de verificación V1–V4 |
-| `docs/adr/*.md` | Las decisiones no obvias, una por fichero |
+**Regla:** lo primero de cualquier sesión, antes de leer nada y antes de decir
+que un fichero, un símbolo o una decisión falta:
+
+```bash
+git fetch origin --prune && git status -sb
+```
+
+**Por qué.** Un checkout local puede estar decenas de commits por detrás de
+`origin/main` sin que nada en el árbol lo diga: `ls`, `grep` y `git log` son
+igual de rápidos y de convincentes sobre un árbol rancio que sobre uno fresco.
+El resultado es una afirmación **defendida con evidencia y falsa** — el modo de
+fallo exacto que este proyecto persigue en los números, aplicado por una vez a
+la verificación. Y cuesta más ahí: la verificación es lo que se supone que caza
+a los números.
+
+**El ejemplo, medido, porque pasó.** El 2026-09-19 una sesión concluyó que
+`HorizontalResult`, el tag `link`, `scenarios/ge1_1km.yaml`, los ADRs 0024 y
+0025 y el §40 de `LAST_CHANGES.md` no existían, con una tabla de siete filas de
+evidencia: siete `grep` con cero ocurrencias, `ls docs/adr/` acabando en 0023,
+`git branch -a` sobre trece ramas. Las siete filas eran **ciertas sobre el árbol
+que tenía delante y falsas sobre el proyecto**. `git fetch` movió `main` de
+`fd3b3fd` a `2596618`: **29 commits**, y once refs remotos que ya no existían.
+El `grep` de «cero ocurrencias de `HorizontalResult`» devuelve hoy 94. Está en
+`notes/INCONSISTENCIAS.md` #16, abierta, porque **no se puede asertar**: la
+suite corre sobre el árbol que tiene, así que ningún test distingue uno fresco
+de uno rancio.
+
+---
+
+## Contexto del proyecto — qué leer, en qué orden, y cuánto cuesta
+
+**El orden importa y está medido.** Hasta el 2026-09-19 esta sección era una
+tabla de seis ficheros sin orden ni tamaño, y dos de ellos —`LAST_CHANGES.md` con
+6 834 líneas y `ROADMAP.md` con 935— **no se leían**: una sesión llegaba a las
+primeras pantallas y seguía. El resultado tiene fecha: la PR C la escribió una
+sesión que no había leído lo que la PR B dejó dicho. Hoy son 910 y 321, y el
+orden de abajo es de arriba a abajo, parando cuando ya sepas lo que ibas a hacer.
+
+| # | Fichero | Líneas | Para qué | ¿Siempre? |
+|---|---|---|---|---|
+| 1 | [`notes/INCONSISTENCIAS.md`](notes/INCONSISTENCIAS.md) | ~120 | **Lo que el código o los documentos afirman y hoy no se cumple.** Primero porque es lo único que puede hacerte perder la tarde entera | **sí** |
+| 2 | [`notes/LAST_CHANGES.md`](notes/LAST_CHANGES.md) | ~910 | Las **cinco últimas** entradas completas, más un índice de una línea por entrada archivada. Es el estado de hoy y cómo se llegó | **sí** |
+| 3 | [`notes/ROADMAP.md`](notes/ROADMAP.md) | ~320 | Qué existe, qué falta, en qué orden. **Estado, no justificación** | **sí** |
+| 4 | `docs/adr/<el tuyo>.md` | 1 por decisión | El **porqué**. La tabla del ROADMAP te dice cuál te toca; no los leas todos | el de tu módulo |
+| 5 | [`tests/golden/README.md`](tests/golden/README.md) | — | Los cuatro niveles V1–V4, y por qué V4 no es validación | si vas a asertar algo |
+| 6 | [`notes/archive/`](notes/archive/) | 6 000 | Las entradas §1–§36, íntegras | solo si el índice te manda |
+| 7 | [`notes/GUIA_REIMPLEMENTACION.md`](notes/GUIA_REIMPLEMENTACION.md) | ~130 | Qué era SimulCTTC y la escalera de lenguajes | si tocas `kernels/` o `deploy/` |
+
+**Hoy `INCONSISTENCIAS.md` tiene dos entradas abiertas**, y su valor está en cómo
+se llenó: ninguna de las quince que ha tenido la detectaba la suite, una era un
+número citado en quince sitios que resultó falso, y otra es una verificación que
+se hizo contra un árbol de hace 29 commits (de ahí la norma 0).
+
+**Dónde va lo que escribas al terminar**, que es la otra mitad de la regla:
+
+- **Una entrada nueva en `LAST_CHANGES.md`**, con su cifra resumen. Si con ella
+  pasan de cinco, la más vieja se archiva — y solo después de comprobar que todo
+  lo que carga peso en ella vive ya en un ADR, un test o un docstring. Lo aserta
+  `tests/unit/test_notes.py`.
+- **El porqué va al ADR**, no a la bitácora ni al roadmap. Una justificación en
+  dos sitios es una que se va a quedar quieta en uno de los dos.
+- **Lo que no se pueda cerrar va a `INCONSISTENCIAS.md` con su medida**, nunca a
+  un comentario en el código.
 
 Reglas que no se negocian, todas ya escritas en el README y los ADRs:
 
