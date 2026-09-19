@@ -1,136 +1,88 @@
 # QuOSS — Quantum Optical Satellite Simulator
 
-Simulador de enlaces cuánticos ópticos satélite↔tierra: órbitas → canal atmosférico →
-protocolo QKD → métricas de sistema (SKR, volumen de clave, outage).
+**QuOSS contesta una pregunta: cuántos bits de clave secreta certifica un enlace
+óptico cuántico, y qué habría que cambiar para que certifique más.**
 
-Núcleo Python puro y **vectorizado sobre el eje temporal**, sin dependencias web. La
-CLI, la API y el frontend son *consumidores* del mismo motor, no parte de él.
+«Enlace óptico cuántico» aquí es un láser atenuado hasta el nivel de fotón único
+que lleva estados cuánticos de un extremo a otro —de un satélite a un telescopio
+en tierra, o entre dos terminales fijos sobre el suelo— y del que se destila una
+clave criptográfica mediante **QKD** (*quantum key distribution*): un protocolo
+cuyo argumento de seguridad no depende de que nadie sepa factorizar, sino de que
+medir un estado cuántico lo perturba y esa perturbación se puede acotar.
 
-> **Estado, al 2026-09-19.** Las etapas **0 a 8 están cerradas**: `core/`,
-> `orbits/`, `channel/`, `qkd/`, `system/`, `scenario/`, `engine/`, `io/`,
-> `viz/`, `cli/` y `validation/`. Eso significa que
-> `quoss run escenario.yaml --out dir/` funciona de punta a punta desde un YAML
-> versionado, para las dos geometrías —un día del enlace de referencia son
-> **0.1 s** y 4 pases—, y que `quoss validate` tiene detrás la tabla entera.
->
-> **Qué hay y qué no, sin rodeos:**
->
-> | | |
-> |---|---|
-> | **Existe y está cerrado** | `core/` · `orbits/` · `channel/` · `qkd/` · `system/` · `scenario/` · `engine/` · `io/` · `viz/` · `cli/` · `validation/` |
-> | **La tabla de validación** | [`docs/validation.md`](docs/validation.md), generada y commiteada: **35 casos de ocho fuentes** — 17 reproducidos, 3 compatibles, **8 no reproducidos** y 7 huecos declarados. Un test la compara byte a byte con lo que la CLI produce hoy |
-> | **Los tres expedientes** | [`docs/experiments/`](docs/experiments/): [GE-1](docs/experiments/GE-1.md), [GE-0b](docs/experiments/GE-0b.md) y el [enlace de referencia](docs/experiments/reference-link.md). Son los documentos con los que se decide qué comprar, **generados por `quoss dossier`** desde los escenarios y con el mismo test byte a byte detrás. Ninguna cifra está transcrita a mano |
-> | **No existe, y ya no lo finge** | `api/` y `kernels/` son paquetes vacíos dentro de `src/quoss/`. Los cuatro directorios de la raíz que solo tenían un `.gitkeep` —`benchmarks/`, `deploy/`, `web/` y `validation/`— **se han borrado** el 2026-09-19: dónde va cada uno cuando toque está en el [ROADMAP](notes/ROADMAP.md) y en el [ADR 0027](docs/adr/0027-four-levels-of-distribution.md), que es un sitio que no promete nada por existir |
->
-> **Y un defecto conocido de la suite**, que no es del paquete:
-> `tests/viz/test_plots.py` importa matplotlib arriba del fichero, así que sin el
-> extra `viz` la recogida de `tests/viz/` **falla** en vez de saltarse. El
-> paquete sí degrada bien —`quoss.viz` levanta `ConfigurationError` diciendo qué
-> instalar—; es el test el que no.
->
-> **Lo que se puede afirmar hoy**, que es distinto de lo que está implementado:
-> clave por pase y por día con la cota finite-key aplicada al bloque que el pase
-> realmente es ([ADR 0011](docs/adr/0011-the-block-is-the-pass.md)), y que el
-> motor no añade ni pierde nada al orquestarlo
-> ([ADR 0016](docs/adr/0016-the-engine-adds-nothing-and-one-altitude.md)). Y
-> desde la etapa 8, **contra qué literatura se comparó cada número y qué salió**:
-> eso es [`docs/validation.md`](docs/validation.md), y lo honesto de esa tabla
-> son sus ocho filas que no reproducen. «Validado» aquí no significa «coincide»,
-> significa «se comparó, con una tolerancia derivada, y el resultado está escrito»
-> ([ADR 0018](docs/adr/0018-validation-is-a-table-not-a-badge.md)).
->
-> **La cifra que resume el proyecto.** En un día del enlace de referencia
-> (Castelldefels, 0.75 m, SSO a 700 km, noche clara, máscara de 10°) la tasa
-> asintótica reclama **3.78 Mbit** y la cota finita certifica **0.43 Mbit**, con
-> **dos de los cuatro pases en cero** donde la asintótica reclama 320 y 199 kbit.
-> Por eso `pass_key_volume` devuelve `FINITE` y el número asintótico solo se
-> alcanza llamando a una función que se llama `asymptotic_…`.
->
-> Esa clave del día son **433 442 bits** vista por `run(scenario)` y **432 985**
-> vista por el *fixture* de la etapa 3, y la diferencia —457 bits, el 0.106 %— no
-> es un error de ninguno de los dos: es la altitud de la estación entrando, o no,
-> en la integral de turbulencia. Las dos cifras se reproducen a la última cifra en
-> `tests/e2e/test_reference_scenarios.py`; la que se reporta es la del motor.
->
-> **Un número que este README todavía no da, y ahora se sabe cuánto vale:** las
-> cifras de arriba son para una atmósfera que **no absorbe ni dispersa**. El
-> escenario de referencia declara `zenith_transmittance: 1.0` —«sin extinción
-> modelada»— porque el hueco 14 del
-> [ADR 0009](docs/adr/0009-citation-policy.md) no tenía número que ofrecer, así
-> que son una **cota superior** sobre la atmósfera y una afirmación exacta sobre
-> todo lo demás.
->
-> Desde el [ADR 0023](docs/adr/0023-traceable-extinction.md) hay un modelo
-> —visibilidad → atenuación, por la Ec. (4) de la ITU-R P.1814— y con él la cota
-> tiene tamaño: **23 km de visibilidad, la línea más limpia del código
-> meteorológico de la UIT, son 0.230 dB cenitales y el 22.7 % de esos 433 442
-> bits**; 10 km son el 47.7 %; con 2 km de bruma el día **no certifica nada**.
-> `zenith_transmittance` sigue siendo obligatorio y sin defecto, y ahora
-> `ChannelSpec` acepta o ese número o el modelo, nunca ninguno de los dos. Hay
-> **veintitrés** huecos declarados y ninguno rellenado con la cita más plausible.
->
-> Verificación al 2026-09-15: **3 640 tests**, **100 % de líneas y ramas** en
-> todo `src/quoss` — `core/`, `orbits/`, `channel/`, `qkd/`, `system/`,
-> `scenario/`, `engine/`, `io/`, `viz/` y `validation/`.
->
-> Ver [`notes/ROADMAP.md`](notes/ROADMAP.md) para qué existe y qué falta,
-> [`notes/LAST_CHANGES.md`](notes/LAST_CHANGES.md) para las cinco últimas entradas
-> de la bitácora (las anteriores, íntegras, en [`notes/archive/`](notes/archive/)),
-> [`notes/INCONSISTENCIAS.md`](notes/INCONSISTENCIAS.md) para lo que hoy no se
-> cumple, y [`docs/adr/`](docs/adr/) para el porqué de cada decisión no obvia.
+«Certifica» es la palabra que carga el peso. La literatura suele publicar la
+**tasa asintótica**: la clave que saldría si la medida durara infinito. Un pase
+de satélite dura diez minutos, y la cota de seguridad que aguanta un bloque
+finito de datos —la de **Lim et al. 2014**— devuelve bastante menos, a veces
+cero. QuOSS calcula las dos y reporta la finita.
 
-## Instalación
+**La cifra que resume el proyecto.** Un día del enlace de referencia
+(Castelldefels, telescopio de 0.75 m, satélite heliosíncrono a 700 km, noche
+clara, máscara de elevación de 10°) tiene cuatro pases. La tasa asintótica
+reclama **3.78 Mbit**; la cota finita certifica **0.43 Mbit**, el 11.5 %. Y
+**dos de los cuatro pases certifican cero**, donde la asintótica les atribuye
+320 y 199 kbit. Por eso `pass_key_volume` devuelve `FINITE` y el número
+asintótico solo se alcanza llamando a una función que se llama `asymptotic_…`.
 
-Requiere [`uv`](https://docs.astral.sh/uv/) (gestiona también la versión de Python):
+---
+
+## Las respuestas, antes que el proceso
+
+Si has llegado aquí para leer un resultado y no para leer código, estos cuatro
+documentos son el resultado. Están **commiteados y generados**: ninguna cifra
+dentro está transcrita a mano, y un test vuelve a renderizarlos y falla si
+difieren de lo que el código produce hoy.
+
+| Documento | Qué decide |
+|---|---|
+| [**GE-1**](docs/experiments/GE-1.md) | Dos terminales en tierra a un kilómetro. Qué cuesta la arquitectura, término a término, y qué compra una lente más grande |
+| [**GE-0b**](docs/experiments/GE-0b.md) | El mismo enlace sobre un banco óptico, que es el paso previo a montarlo |
+| [**Enlace de referencia**](docs/experiments/reference-link.md) | El día de satélite sobre el que se mide todo lo demás |
+| [**`docs/validation.md`**](docs/validation.md) | **35 casos de ocho fuentes**: contra qué literatura se comparó cada número, con qué tolerancia, y qué salió |
+
+**Lo honesto de esa tabla son sus ocho filas que no reproducen.** «Validado» en
+este proyecto no significa «coincide»: significa «se comparó contra un valor
+publicado, con una tolerancia derivada de cómo está impreso ese valor, y el
+resultado está escrito» — incluido cuando el resultado es que no cuadra
+([ADR 0018](docs/adr/0018-validation-is-a-table-not-a-badge.md)). El desglose
+son **17 reproducidos**, **3 compatibles**, **8 no reproducidos** y **7 huecos
+de fuente** (la fuente no imprime nada computable).
+
+---
+
+## Instalar y correr un escenario
+
+Requiere [`uv`](https://docs.astral.sh/uv/), que además gestiona la versión de
+Python. Cinco líneas, ejecutadas en un entorno limpio y no escritas de memoria:
 
 ```bash
-uv sync                              # entorno reproducible desde uv.lock
-uv sync --extra viz --extra export   # + lo que la suite necesita
+git clone https://github.com/W1Adri/QuOSS.git && cd QuOSS
+uv sync --extra viz --extra export
+uv run quoss --version
+uv run quoss run scenarios/reference_castelldefels.yaml --out out/reference
+uv run quoss dossier scenarios/ge1_1km.yaml --out out/GE-1.md
 ```
 
-Extras disponibles: `viz` (matplotlib), `export` (pyarrow, para Parquet),
-`accel` (numba) y `web` (FastAPI). El núcleo solo necesita numpy + scipy +
-pydantic + sgp4 + pyyaml.
+La tercera línea imprime la versión, el commit y la pila numérica. La cuarta
+deja en `out/reference/` un directorio que se describe a sí mismo —un
+`manifest.json` con SHA-256 por fichero, los CSV, los arrays y un `README.txt`—
+y la quinta escribe el expediente de GE-1 desde cero, en 1.2 s.
 
-La **suite**, en cambio, todavía no es tan modular como el paquete:
-`tests/viz/test_plots.py` importa matplotlib en el módulo, así que sin el extra
-`viz` la recogida de `tests/viz/` **falla** en vez de saltarse. Está anotado como
-pendiente arriba; para correr la suite entera, `uv sync --extra viz --extra export`
-— que es exactamente lo que sincroniza CI. `--all-extras` funciona igual y trae
-210 MiB de más (`numba` y `llvmlite`) que **nada de lo que la suite toca
-importa**.
+**Cuánto tarda la cuarta, desglosado, porque el total engaña:** unos **4.8 s**
+de reloj, de los cuales **la física son 0.117 s**. El resto es 0.6 s de
+arrancar el intérprete e importar numpy y scipy, y **3.9 s de escribir el
+directorio** —CSV, `.npz` y un SHA-256 por fichero—. Si lo que interesa es el
+coste del modelo, la cifra es la de en medio, y se obtiene llamando a `run()`
+desde Python sin exportar nada.
 
-**Y los suelos de versión del paquete están probados desde el 2026-09-19**, que
-antes no lo estaban. El job `minimums` de CI construye el entorno más bajo que
-`pyproject.toml` declara —numpy 2.0.2, scipy 1.13.0, pydantic 2.7.0, sgp4 2.23,
-pyyaml 6.0, matplotlib 3.11.0, pyarrow 16.0.0, sobre Python 3.11— y corre la
-suite entera ahí. Antes de existir ese job, dos de los suelos no estaban sin
-probar sino **equivocados**: `numpy>=1.26` (el repositorio usa `np.trapezoid` y
-el `repr` de escalar de numpy 2) y `scipy>=1.11` (fija `numpy<2`, y 1.11.0 está
-retirado de PyPI por violación de licencia). Los extras `accel` y `web` **no
-declaran suelo**, porque nada los importa todavía y un `>=` que ningún entorno
-construye no es un suelo: es una esperanza publicada en los metadatos del wheel.
+**`pip install quoss` instala el motor y la CLI, no los escenarios.** Un
+escenario es una *entrada* —un fichero YAML versionado cuyo hash entra en la
+procedencia del resultado—, así que vive en el repositorio y no en el wheel:
+distribuir uno dentro del paquete sería distribuir una entrada sin su historia.
+Quien instale desde PyPI y quiera el enlace de referencia sin clonar lo tiene en
+Python, en `quoss.scenario.defaults.reference_castelldefels()`.
 
-## Uso
-
-```bash
-uv run pytest           # suite de tests
-uv run ruff check .     # lint
-uv run ruff format .    # formato
-uv run mypy             # tipos (estricto en core/, física y cli/)
-```
-
-Desde la línea de órdenes, que es lo que instala `pip install quoss`:
-
-```bash
-quoss run scenarios/reference_castelldefels.yaml --out out/reference
-quoss run scenarios/ge1_1km.yaml --out out/ge1     # misma orden, otra geometría
-quoss sweep scenarios/ge1_1km.yaml scenarios/sweeps/ge1_distance.yaml
-quoss validate
-quoss dossier scenarios/ge1_1km.yaml --out docs/experiments/GE-1.md
-```
-
-O el mismo escenario versionado desde Python, de fichero a resultado:
+### Desde Python, de fichero a resultado
 
 ```python
 from quoss.engine.pipeline import run
@@ -145,9 +97,9 @@ result.daily.asymptotic_bits.tolist()       # [3779461.558061474]
 result.provenance.scenario_hash             # qué entradas produjeron esto
 ```
 
-Y un enlace de tierra, que desde el [ADR 0024](docs/adr/0024-the-horizontal-scenario.md)
-es el otro miembro de una unión discriminada por el campo `link` y no un caso
-especial del anterior:
+Y un enlace de tierra, que desde el
+[ADR 0024](docs/adr/0024-the-horizontal-scenario.md) es el otro miembro de una
+unión discriminada por el campo `link` y no un caso especial del anterior:
 
 ```python
 result = run(load_scenario("scenarios/ge1_1km.yaml"))
@@ -158,106 +110,144 @@ result.session.finite_bits                  # 15236099.0 en 60 s de sesión
 result.session.finite_bit_s                 # 253934.98
 ```
 
-Un escenario horizontal **no puede** llevar elevación, máscara, viento ni altura
-de estación: el esquema no tiene esos campos y `extra="forbid"` los rechaza por
-su nombre. Y su bloque finite-key es la sesión que declara el operador, no un
-pase que fije la geometría — lo que cambia de quién es la responsabilidad de que
-la cota sea válida, y por eso cada ejecución lo dice en `warnings[]`.
-
-Los mismos números salen de `quoss.scenario.defaults.reference_castelldefels()`,
-sin tocar el disco. `quoss.engine.sweep` corre barridos de parámetros como una
-ejecución de primera clase —de los dos tipos de escenario—, y
-`quoss.io.export.export_result` escribe **los dos resultados** a un directorio que
-se describe a sí mismo (manifiesto con SHA-256 por fichero, CSV, y con el extra
-Parquet), en **dos formas** que el manifiesto nombra: la de bajada lleva
-`passes.csv`, `daily.csv`, `series_<estación>.csv` y `arrays.npz`; la horizontal
-lleva `budget.csv` y `session.csv`, una fila cada uno, y **ningún** `arrays.npz`,
-porque no hay arrays y un archivo vacío no se distingue de uno cuyos arrays
-salieron vacíos ([ADR 0028](docs/adr/0028-the-cli-computes-nothing.md)).
-
-**La CLI existe desde el 2026-09-19:**
+### Los cuatro subcomandos
 
 ```bash
-uv run quoss run scenarios/ge1_1km.yaml --out out/ge1
-uv run quoss sweep scenarios/ge1_1km.yaml scenarios/sweeps/ge1_distance.yaml
+uv run quoss run     scenarios/ge1_1km.yaml --out out/ge1
+uv run quoss sweep   scenarios/ge1_1km.yaml scenarios/sweeps/ge1_distance.yaml
 uv run quoss validate
 uv run quoss dossier scenarios/ge1_1km.yaml --out docs/experiments/GE-1.md
-uv run python -m quoss.dossier          # los tres a la vez
+uv run python -m quoss.dossier          # los tres expedientes a la vez
 ```
 
 `quoss run` despacha sobre el tag `link` del fichero sin que haya que decírselo,
 y **no calcula nada**: lo que escribe reconstruye un resultado igual, término a
-término, a `run()` llamado a mano sobre el mismo fichero — la afirmación del
-[ADR 0016](docs/adr/0016-the-engine-adds-nothing-and-one-altitude.md) una capa
-más arriba. Los `warnings[]` se imprimen **enteros** en `stderr`, nunca
-resumidos ni contados, y la salida es distinta de cero cuando aparece un
-`DEGRADED` que el escenario no declaró en `expected_degradations`
-([ADR 0028](docs/adr/0028-the-cli-computes-nothing.md)).
+término, a `run()` llamado a mano sobre el mismo fichero. Los `warnings[]` se
+imprimen **enteros** en `stderr`, nunca resumidos ni contados, y la salida es
+distinta de cero cuando aparece un `DEGRADED` que el escenario no declaró en
+`expected_degradations` ([ADR 0028](docs/adr/0028-the-cli-computes-nothing.md)).
 
-**Y `quoss dossier` es esa misma regla una capa más afuera.** Un expediente de
-[`docs/experiments/`](docs/experiments/) es el documento que alguien lee para
-**decidir** —comprar una lente, prestar un banco óptico, valorar si una estación
-de montaña vale su carretera—, y el lector no tiene checkout ni motivo para
-tenerlo. Así que ninguna cifra se transcribe: las tres salen de corridas que el
-generador hace, los ficheros están commiteados, y `tests/dossier/test_docs.py`
-los vuelve a renderizar y falla si difieren. La mitad de la regla que es fácil
-saltarse: **un generador puede pedirle corridas al motor y no puede evaluar
-física**. Una cifra que el resultado no lleva sube al resultado, no baja al
-informe — escribir `GE-1.md` movió tres así, y el test lo aserta leyendo los
-imports del paquete.
+---
 
-## Estructura
+## Lo que el modelo **no** afirma
 
-Lo que hay, marcado por lo que hay de verdad:
+Un simulador que solo publica lo que sabe hacer es un folleto. Esto es lo que
+hay que saber antes de usar una cifra de arriba en un documento de misión:
+
+- **Las cifras de arriba son para una atmósfera que no absorbe ni dispersa.** El
+  escenario de referencia declara `zenith_transmittance: 1.0` —«sin extinción
+  modelada»—, así que son una **cota superior** sobre la atmósfera y una
+  afirmación exacta sobre todo lo demás. Desde el
+  [ADR 0023](docs/adr/0023-traceable-extinction.md) la cota tiene tamaño:
+  **23 km de visibilidad, la línea más limpia del código meteorológico de la
+  UIT, son 0.230 dB cenitales y el 22.7 % de esos 433 442 bits**; 10 km son el
+  47.7 %; con 2 km de bruma el día **no certifica nada**.
+- **Hay veintitrés huecos de cita declarados** y ninguno rellenado con la
+  fuente más plausible ([ADR 0009](docs/adr/0009-citation-policy.md)). Un hueco
+  declarado es preferible a un valor publicado falso.
+- **SimulCTTC no es un oráculo.** El código anterior de la casa nunca fue
+  validado, y leerlo destapó cuatro defectos que congelar su salida habría
+  canonizado. Se usa como diff informativo, nunca como `assert`.
+- **Un *snapshot* de la propia salida no es validación.** Los cuatro niveles
+  —invariantes, valor publicado, implementación independiente, regresión
+  propia— están en [`tests/golden/README.md`](tests/golden/README.md), y lo que
+  este proyecto reporta como validado traza a los dos de en medio.
+- **Prohibido degradar en silencio.** Una entrada mala levanta `DomainError`; un
+  modelo que no se puede evaluar sale en `warnings[]` del resultado, nunca en un
+  `except: pass`.
+
+---
+
+## Citar QuOSS
+
+El repositorio lleva [`CITATION.cff`](CITATION.cff), que GitHub y Zenodo leen
+directamente, y cada versión lleva su tag. El procedimiento para la siguiente
+versión —incluido cómo se dispara el DOI de Zenodo desde el tag— está en
+[`CHANGELOG.md`](CHANGELOG.md), y el porqué de que se cite la herramienta y no
+solo el artículo, en el
+[ADR 0030](docs/adr/0030-a-release-is-something-you-can-cite.md).
+
+Todo resultado lleva además su propia procedencia: `result.provenance` guarda el
+hash del escenario, la versión del código, el commit, el intérprete, numpy,
+scipy y la semilla. `quoss --version` imprime lo mismo para la herramienta.
+
+---
+
+## Estado del proyecto
+
+Las etapas **0 a 8 están cerradas**, y con la 8 se alcanza el **Hito B**:
+resultados validados contra literatura y reproducibles por terceros. Lo que
+queda —`api/`, `web/`, `deploy/`— es **distribución, no ciencia**, y el
+[ROADMAP](notes/ROADMAP.md) lo lista como disparadores y no como plan: dice qué
+tendría que pasar para abrir cada etapa, no cuándo se abrirá.
 
 ```
 src/quoss/     core ✅  orbits ✅  channel ✅  qkd ✅  system ✅
                scenario ✅  engine ✅  io ✅  viz ✅  cli ✅  validation ✅
                dossier ✅
-               api ⬜  kernels ⬜
-scenarios/     ✅ siete escenarios versionados y reproducibles (.yaml): cinco de
-                  bajada (link: downlink) y dos de tierra (link: horizontal),
-                  más sweeps/ con los specs de barrido
-data/          ✅ catálogo de estaciones + snapshots offline con manifiesto
+scenarios/     ✅ siete escenarios versionados (.yaml) — cinco escenarios de
+                  bajada y dos escenarios de tierra — más sweeps/
+src/quoss/data ✅ catálogo de estaciones + snapshots offline con manifiesto
 tests/         ✅ unit · orbits · channel · qkd · system · scenario · engine
                   · io · viz · cli · validation · dossier · packaging · e2e
-                  · golden   ⬜ physics · api
-docs/          ✅ 29 ADRs + validation.md (35 casos, generado y commiteado)
-                  + experiments/ (los tres expedientes, generados y commiteados)
-                  ⬜ manual de física autogenerado
+                  · golden
+docs/          ✅ 30 ADRs + validation.md + experiments/ (los tres expedientes)
 ```
 
-`✅` cerrado · `🚧` empezado y con huecos declarados arriba · `⬜` no escrito.
-
-**Lo que no está en ese árbol tampoco está en el repositorio, y eso es nuevo.**
-Hasta el 2026-09-19 la raíz tenía `benchmarks/`, `deploy/`, `web/` y
-`validation/`: cuatro directorios con un `.gitkeep` dentro y nada más. Un
-directorio vacío **promete**, y el peor de los cuatro era `validation/`, que con
-`src/quoss/validation/` lleno al lado se leía como una segunda implementación.
-Los cuatro están borrados; dónde va cada uno cuando toque lo dice el
-[ROADMAP](notes/ROADMAP.md), que es estado y no promesa — incluida la puerta de
-regresión de rendimiento, que es de la etapa 11 y va junto al paralelismo del
-bucle que mediría. El código de validación vive en `src/quoss/validation/` y sus
-tests en `tests/validation/` (siete ficheros, cobertura del 100 % del paquete en
-líneas y ramas).
-
-Regla de dependencia: `core ← orbits/channel/qkd ← system ← engine ← {cli, api, viz}`.
+Regla de dependencia: `core ← orbits/channel/qkd ← system ← engine ← {cli, viz}`.
 Las flechas nunca van al revés.
 
-## Principios
+**Lo que no está en ese árbol tampoco está en el repositorio.** Desde el
+2026-09-19 no queda ni un directorio vacío: los cuatro de la raíz
+(`benchmarks/`, `deploy/`, `web/`, `validation/`) se borraron en la PR anterior,
+y los cuatro que quedaban dentro de `src/quoss/` y `tests/` —`api/`, `kernels/`,
+`tests/api/`, `tests/physics/`— en esta. Un directorio vacío **promete**, y dos
+de ellos viajaban dentro del wheel. Dónde va cada uno cuando toque lo dicen el
+[ROADMAP](notes/ROADMAP.md) y los ADR
+[0026](docs/adr/0026-the-language-ladder.md) y
+[0027](docs/adr/0027-four-levels-of-distribution.md), que son sitios que no
+prometen nada por existir.
 
-- **El escenario es un dato**, no un request HTTP: modelo Pydantic serializable a YAML.
-- **Prohibido degradar en silencio**: si un modelo no se puede evaluar, sale en
-  `warnings[]` del resultado.
-- **Procedencia en cada resultado**: hash de escenario + versión de código + versión de
-  datos externos + semilla.
-- **Incertidumbre de primera clase**: el motor devuelve P5/P50/P95 y outage, no escalares.
-- **SimulCTTC no es un oráculo.** Nunca fue validado, y leerlo destapó defectos que
-  congelar su salida habría canonizado. Cada módulo de física se cierra contra fuentes
-  externas en cuatro niveles (invariantes / valores publicados / implementación
-  independiente / regresión propia); ver [`tests/golden/README.md`](tests/golden/README.md).
-  Lo que se reporte como validado traza a un valor publicado o a una implementación
-  independiente, nunca a un snapshot propio.
+### Verificación
+
+| | |
+|---|---|
+| Suite, entorno del lock | **3 993 tests**, al 2026-09-19 |
+| Cobertura | **100 % de líneas y ramas** en todo `src/quoss` |
+| Matriz de CI | Python 3.11 / 3.12 / 3.13, macOS arm64, numpy 2.0, y los suelos declarados |
+
+Los **suelos de versión están probados**: el job `minimums` de CI construye el
+entorno más bajo que `pyproject.toml` declara —numpy 2.0.2, scipy 1.13.0,
+pydantic 2.7.0, sgp4 2.23, pyyaml 6.0, matplotlib 3.11.0, pyarrow 16.0.0, sobre
+Python 3.11— y corre la suite entera ahí. Los extras `accel` y `web` **no
+declaran suelo**, porque nada los importa todavía y un `>=` que ningún entorno
+construye no es un suelo: es una esperanza publicada en los metadatos del wheel.
+
+**Un defecto conocido de la suite**, que no es del paquete:
+`tests/viz/test_plots.py` importa matplotlib arriba del fichero, así que sin el
+extra `viz` la recogida de `tests/viz/` **falla** en vez de saltarse. El paquete
+sí degrada bien —`quoss.viz` levanta `ConfigurationError` diciendo qué
+instalar—; es el test el que no. Por eso la línea de instalación de arriba lleva
+`--extra viz --extra export`, que es exactamente lo que sincroniza CI.
+
+### Comandos de desarrollo
+
+```bash
+uv run pytest           # suite
+uv run ruff check .     # lint
+uv run ruff format .    # formato
+uv run mypy             # tipos (estricto en core/, física y cli/)
+```
+
+### Dónde está escrito el porqué
+
+| Fichero | Qué guarda |
+|---|---|
+| [`docs/adr/`](docs/adr/) | Una decisión no obvia por fichero, numerada y nunca renumerada |
+| [`notes/ROADMAP.md`](notes/ROADMAP.md) | Qué existe y qué falta. **Estado, no justificación** |
+| [`notes/LAST_CHANGES.md`](notes/LAST_CHANGES.md) | Las cinco últimas entradas de la bitácora; las anteriores en [`notes/archive/`](notes/archive/) |
+| [`notes/INCONSISTENCIAS.md`](notes/INCONSISTENCIAS.md) | Lo que el código o los documentos afirman y hoy no se cumple |
+| [`CHANGELOG.md`](CHANGELOG.md) | Qué contiene cada versión y qué **no** afirma |
 
 ## Licencia
 

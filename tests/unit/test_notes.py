@@ -678,3 +678,309 @@ def test_a_node_declared_absent_is_still_absent(node_id: str) -> None:
         f"{node_id} is listed in NODES_DECLARED_ABSENT "
         f"({NODES_DECLARED_ABSENT[node_id]}) and now exists. Remove the entry."
     )
+
+
+# --------------------------------------------------------------------------- #
+# The door's inventory claims match the tree they describe
+# --------------------------------------------------------------------------- #
+# Three rounds of auditing README.md, CLAUDE.md and notes/ROADMAP.md found the
+# same class of defect by a different route each time, and each round closed its
+# route with one of the scans above: a citation to a section of the guide, a
+# citation to a path, a citation to a pytest node. The fourth round found the
+# route those three cannot see, because it is not a citation at all.
+#
+# **It is a count.** "29 ADRs", "35 casos de ocho fuentes", "siete escenarios",
+# "veintitrés huecos declarados", "dos entradas abiertas" -- sentences that name
+# a number of things the repository contains. On 2026-09-19 four of them were
+# wrong: CLAUDE.md said INCONSISTENCIAS.md had two open entries when the file
+# said one, said fifteen had ever been recorded when nineteen had, and gave the
+# line counts of LAST_CHANGES.md and ROADMAP.md as 910 and 321 against 1 068 and
+# 401. None of the three scans above can see any of that: there is no identifier
+# to resolve. `29` resolves to nothing; it is either the number of files in
+# docs/adr/ or it is a lie, and telling those apart means counting the files.
+#
+# Why this is a fourth check and not the three generalised
+# --------------------------------------------------------
+# The three above share one operation -- take the identifier a citation names,
+# and look it up. That makes them **total**: a regex finds every citation of the
+# shape, so a new one written tomorrow is checked the day it is written, and
+# nobody has to register it.
+#
+# A count has no identifier to look up, so it cannot share that operation. What
+# it needs instead is a *recipe*: some code that recounts the thing from the
+# tree, and only a person can write "this sentence is about the files in
+# docs/adr/". So the registry below is unavoidable, and with it the weakness a
+# registry always has -- a claim counting something nobody registered is
+# invisible.
+#
+# That weakness is bounded the same way `CITED_ROOTS` bounds the path scan: the
+# check is total over a **vocabulary**. It does not look for the claims it knows
+# about; it scans for every sentence matching "<number> <counted noun>" over the
+# nouns in COUNTED_NOUNS, and fails on a match no recipe covers. Adding a
+# fifteenth sentence about ADRs to the README is caught with no edit here;
+# inventing a new kind of countable thing is not, and that residue is the honest
+# cost of the shape.
+#
+# What it cannot cover, and why that is not a hole to plug
+# ---------------------------------------------------------
+# **The test count.** "3 968 tests" is an inventory claim like the others, and
+# this check will not touch it: counting the suite from inside the suite is
+# self-referential -- collecting changes the number by the count of the tests
+# doing the collecting, and adding a test to this module would change the number
+# the module asserts. The README states it with the date it was measured on for
+# that reason, which is what the project does everywhere a number cannot be
+# reproduced by a test (CLAUDE.md, norm 1, "medido en este repo").
+#
+# **The physics.** "433 442 bits", "11.637 dB", "0.230 dB cenitales" are not in
+# this registry either, and they do not need to be: every one of them is
+# asserted by the test that measures it, and the README cites that test. The
+# door's physics was never the unasserted part. Its arithmetic about itself was.
+
+#: Small numbers written as words, which is how this project writes them in
+#: prose. Not a general Spanish numeral parser: only the spellings the three
+#: door files actually use, so an unrecognised word fails loudly at the sentence
+#: rather than silently matching nothing.
+_WORD_NUMBERS = {
+    "cero": 0,
+    "un": 1,
+    "una": 1,
+    "uno": 1,
+    "dos": 2,
+    "tres": 3,
+    "cuatro": 4,
+    "cinco": 5,
+    "seis": 6,
+    "siete": 7,
+    "ocho": 8,
+    "nueve": 9,
+    "diez": 10,
+    "once": 11,
+    "doce": 12,
+    "trece": 13,
+    "catorce": 14,
+    "quince": 15,
+    "dieciséis": 16,
+    "diecisiete": 17,
+    "dieciocho": 18,
+    "diecinueve": 19,
+    "veinte": 20,
+    "veintitrés": 23,
+    "veintinueve": 29,
+    "treinta": 30,
+    "treinta y cinco": 35,
+}
+
+#: The files that are the project's front door: the three a reader meets before
+#: any code. ``notes/LAST_CHANGES.md`` and ``notes/INCONSISTENCIAS.md`` are out
+#: for the reason ``PATH_CITING_ROOTS`` leaves them out -- they record what was
+#: true on a date, and "22 casos de tres fuentes" in §44 is a true sentence
+#: about 2026-09-19 that this check would turn into a lie.
+DOOR_FILES = ("README.md", "CLAUDE.md", "notes/ROADMAP.md")
+
+
+def _adr_count(root: Path) -> int:
+    """Count the ADRs written: one file per decision, numbered and never renumbered."""
+    return len(list((root / "docs" / "adr").glob("[0-9][0-9][0-9][0-9]-*.md")))
+
+
+def _scenario_counts(root: Path) -> dict[str, int]:
+    """Versioned scenarios, split by the ``link`` tag that discriminates the union."""
+    files = sorted((root / "scenarios").glob("*.yaml"))
+    horizontal = [p for p in files if re.search(r"^link:[ \t]*horizontal\b", p.read_text(), re.M)]
+    return {
+        "escenarios": len(files),
+        "escenarios de bajada": len(files) - len(horizontal),
+        "escenarios de tierra": len(horizontal),
+    }
+
+
+def _validation_counts(root: Path) -> dict[str, int]:
+    """Recompute the validation table rather than read the committed one.
+
+    Reading ``docs/validation.md`` would make this check agree with a stale
+    file; the file is what the door is quoting. ``run_all()`` is what the file
+    is quoting, so that is what gets counted.
+    """
+    from quoss.validation.base import ValidationStatus as Status
+    from quoss.validation.base import run_all
+
+    cases = run_all()
+    return {
+        "casos": len(cases),
+        "fuentes": len({case.source for case in cases}),
+        "reproducidos": sum(1 for c in cases if c.status is Status.REPRODUCED),
+        "compatibles": sum(1 for c in cases if c.status is Status.COMPATIBLE),
+        "no reproducidos": sum(1 for c in cases if c.status is Status.NOT_REPRODUCED),
+        "huecos de fuente": sum(1 for c in cases if c.status is Status.GAP),
+        "huecos de cita": _declared_gap_count(root),
+    }
+
+
+def _declared_gap_count(root: Path) -> int:
+    """Count the numbered entries of ADR 0009 §"Los huecos, declarados"."""
+    text = (root / "docs" / "adr" / "0009-citation-policy.md").read_text(encoding="utf-8")
+    start = text.index("### Los huecos, declarados")
+    end = text.index("### El caveat de Ntanos", start)
+    return len(re.findall(r"^ *(\d+)\. \*\*", text[start:end], re.M))
+
+
+def _inconsistency_counts(root: Path) -> dict[str, int]:
+    """Open entries, and every entry the file has ever carried.
+
+    Both are counted from the table rows rather than from the file's own
+    "Estado: **una abierta**" heading, because that heading is prose and is
+    exactly the kind of sentence this check exists to catch.
+    """
+    text = (root / "notes" / "INCONSISTENCIAS.md").read_text(encoding="utf-8")
+    start = text.index("## Estado")
+    return {
+        "entradas abiertas": len(
+            re.findall(r"^\| (C?\d+) \|", text[start : text.index("\n---", start)], re.M)
+        ),
+        "inconsistencias registradas": len(set(re.findall(r"^\| (C?\d+) \|", text, re.M))),
+    }
+
+
+def _inventory(root: Path) -> dict[str, int]:
+    """Every registered quantity, recounted from the tree."""
+    counts: dict[str, int] = {"ADRs": _adr_count(root)}
+    counts.update(_scenario_counts(root))
+    counts.update(_validation_counts(root))
+    counts.update(_inconsistency_counts(root))
+    return counts
+
+
+#: The vocabulary the scan is total over, as ``(pattern, quantity)``. The
+#: pattern is what appears in the prose; the quantity is the key ``_inventory``
+#: recounts. Longest first, so that ``no reproducidos`` wins over
+#: ``reproducidos`` and ``escenarios de bajada`` over ``escenarios``: the scan
+#: takes the first alternative that matches, and a shorter noun nested in a
+#: longer one would otherwise check the wrong quantity with a right-looking
+#: number.
+#:
+#: ``casos`` carries a lookahead because the bare word is ordinary Spanish --
+#: "en los dos casos" is a sentence about two situations, not about the
+#: validation table, and the first run of this check caught exactly that in
+#: ``CLAUDE.md``. The lookahead is what makes the noun mean the table: the door
+#: always writes the claim as "N casos de M fuentes", so requiring the tail
+#: costs nothing and removes the whole class.
+#:
+#: **Every quantity here is a repository-wide total.** A sentence counting a
+#: *subset* -- the two gap rows of one source, say -- must be spelled with a
+#: noun that is not in this list, and if it is not, this check fails on it. That
+#: is a false positive on purpose: it is loud, and the fix (name the scope) is
+#: the sentence a cold reader needed anyway.
+COUNTED_NOUNS: tuple[tuple[str, str], ...] = (
+    ("inconsistencias registradas", "inconsistencias registradas"),
+    ("escenarios de bajada", "escenarios de bajada"),
+    ("escenarios de tierra", "escenarios de tierra"),
+    ("huecos de fuente", "huecos de fuente"),
+    ("huecos de cita", "huecos de cita"),
+    (r"entradas? abiertas?", "entradas abiertas"),
+    ("no reproducidos", "no reproducidos"),
+    ("compatibles", "compatibles"),
+    ("reproducidos", "reproducidos"),
+    ("escenarios", "escenarios"),
+    ("fuentes", "fuentes"),
+    (r"casos(?=[\s*]+de[\s*]+\S+[\s*]+fuentes)", "casos"),
+    ("ADRs", "ADRs"),
+)
+
+
+def _wrapped(pattern: str) -> str:
+    """Let a multi-word noun survive a line break.
+
+    These are prose files wrapped at eighty columns, so ``escenarios de
+    bajada`` arrives with a newline and an indent somewhere inside it about as
+    often as not. Every plain space in a pattern therefore becomes the same
+    separator the scan uses between the number and the noun, which also lets
+    the markup fall in the middle of the phrase.
+    """
+    return pattern.replace(" ", r"[\s*]+")
+
+
+def _quantity_of(matched: str) -> str:
+    """Return the quantity the matched noun counts.
+
+    Resolved by re-matching rather than by a dictionary because a pattern may
+    be a regex -- ``entradas? abiertas?`` covers both the plural of "there are
+    three open entries" and the singular of "there is one" -- so the text that
+    comes out of the scan is not always one of the patterns that went in.
+    """
+    for pattern, quantity in COUNTED_NOUNS:
+        if re.fullmatch(_wrapped(re.sub(r"\(\?=.*", "", pattern)), matched):
+            return quantity
+    raise AssertionError(f"{matched!r} matched the scan but no pattern claims it")
+
+
+#: ``<number><emphasis and space><noun>``. The separator accepts asterisks
+#: because these files bold the number, the noun, or the pair: ``**siete**
+#: escenarios``, ``**35 casos de ocho fuentes**`` and ``29 ADRs`` are all the
+#: same claim wearing different markup. The number accepts the thin space this
+#: project groups thousands with (``3 968``), which is why it is normalised
+#: before ``int()``.
+INVENTORY_CLAIM_RE = re.compile(
+    r"(?<![\w.,-])(\d[\d\u00a0\u202f ]*\d|\d|"
+    + "|".join(sorted(_WORD_NUMBERS, key=len, reverse=True))
+    + r")[\s*]+("
+    + "|".join(_wrapped(pattern) for pattern, _ in COUNTED_NOUNS)
+    + r")(?![\wáéíóú])"
+)
+
+
+def _as_int(token: str) -> int:
+    """Turn ``"3 968"``, ``"35"`` or ``"veintitrés"`` into an integer."""
+    lowered = token.lower()
+    if lowered in _WORD_NUMBERS:
+        return _WORD_NUMBERS[lowered]
+    return int(re.sub(r"[\s .]", "", token))
+
+
+def test_every_inventory_claim_the_door_makes_matches_the_tree() -> None:
+    """A number the door states about the repository, recounted from the repository.
+
+    The fourth route into the same defect, and the first that is not a
+    citation. See the block comment above for why it cannot be folded into the
+    three scans that are, and for the two things it deliberately does not cover.
+    """
+    root = NOTES.parent
+    inventory = _inventory(root)
+    wrong: list[str] = []
+    for name in DOOR_FILES:
+        path = root / name
+        text = path.read_text(encoding="utf-8")
+        for match in INVENTORY_CLAIM_RE.finditer(text):
+            claimed = _as_int(match.group(1))
+            actual = inventory[_quantity_of(match.group(2))]
+            if claimed != actual:
+                line = text[: match.start()].count("\n") + 1
+                wrong.append(f"{name}:{line} says {match.group(0)!r}, the tree has {actual}")
+    assert not wrong, (
+        f"inventory claims the tree does not sustain: {wrong}. Each of these is a sentence "
+        f"at the front door counting something this repository contains, and the count is "
+        f"recomputed above from the thing itself -- not from a committed file that quotes "
+        f"it. Fix the sentence, or explain in the pull request why the recount is the thing "
+        f"that is wrong."
+    )
+
+
+@pytest.mark.parametrize("quantity", [quantity for _, quantity in COUNTED_NOUNS])
+def test_every_counted_noun_is_claimed_somewhere(quantity: str) -> None:
+    """The vocabulary empties itself, like the two allowlists above.
+
+    A noun no door sentence uses any more is a recipe nobody is checking, and a
+    registry that can only grow is the kind of exception that outlives its
+    reason. This is the direction that catches a claim being *deleted* from the
+    README rather than being wrong in it.
+    """
+    root = NOTES.parent
+    found = any(
+        _quantity_of(match.group(2)) == quantity
+        for name in DOOR_FILES
+        for match in INVENTORY_CLAIM_RE.finditer((root / name).read_text(encoding="utf-8"))
+    )
+    assert found, (
+        f"no door file counts {quantity!r} any more, so its recipe in _inventory() is dead "
+        f"code that nothing can falsify. Remove it from COUNTED_NOUNS and from the "
+        f"recipe it belongs to."
+    )

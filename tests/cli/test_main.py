@@ -14,16 +14,20 @@ installed file as a subprocess sees any of those, so that is what this does.
 
 from __future__ import annotations
 
+import platform
 import shutil
 import subprocess
 import sys
 import tomllib
 from pathlib import Path
 
+import numpy as np
 import pytest
 
-from quoss.cli.main import PROG, build_parser, main
+import quoss
+from quoss.cli.main import NO_COMMIT, PROG, build_parser, main, version_report
 from quoss.cli.report import EXIT_ERROR, EXIT_OK, EXIT_USAGE
+from quoss.scenario.result import git_commit
 
 
 def _console_script() -> Path:
@@ -49,6 +53,75 @@ class TestTheInstalledCommandRuns:
         )
         assert completed.returncode == 0, completed.stderr
         assert completed.stdout.startswith(f"{PROG} ")
+
+
+class TestWhatVersionAnswers:
+    """``--version`` has to answer "which tree", not only "which release".
+
+    ``0.1.0`` covers every commit made between two tags, so a figure somebody
+    copied out of a run and labelled with the version alone cannot be traced
+    back to the code that produced it. These tests are about the second half of
+    the answer (ADR 0030).
+    """
+
+    def test_it_names_the_release_on_the_first_line(self) -> None:
+        """First line stays ``<prog> <version>``, which is what a script parses."""
+        assert version_report().splitlines()[0] == f"{PROG} {quoss.__version__}"
+
+    def test_it_names_the_commit_the_provenance_of_a_result_would_name(self) -> None:
+        """The command and a result file must not disagree about the tree.
+
+        ``Provenance`` has carried the commit since stage 4; ``--version`` did
+        not until ADR 0030. Asserting them equal is what keeps the two answers
+        one answer: a reader holding an exported ``result.json`` and a terminal
+        must not have to decide which to believe.
+        """
+        commit = git_commit()
+        line = version_report().splitlines()[1]
+        if commit is None:  # pragma: no cover - the suite runs inside the checkout
+            assert line == NO_COMMIT
+        else:
+            assert line.split() == ["commit", commit]
+
+    def test_a_tree_without_a_repository_says_so_instead_of_going_quiet(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An installed wheel has no ``.git``, and the report must not shrink.
+
+        Dropping the line would make "installed from PyPI" and "this build
+        failed to record its commit" produce identical output, and those are
+        very different things to tell somebody who is trying to reproduce a
+        number.
+        """
+        monkeypatch.setattr("quoss.cli.main.git_commit", lambda: None)
+        report = version_report()
+        assert report.splitlines()[1] == NO_COMMIT
+        assert len(report.splitlines()) == 4
+
+    def test_it_names_the_numeric_stack(self) -> None:
+        """numpy and scipy move results; the report says which ones ran."""
+        report = version_report()
+        assert platform.python_version() in report
+        assert np.__version__ in report
+
+    def test_the_lines_are_not_rewrapped_to_the_terminal(self) -> None:
+        """The reason this is a custom action and not ``action="version"``.
+
+        ``argparse``'s own version action runs the string through the help
+        formatter, which re-wraps it: four lines come out as however many the
+        window allows, broken wherever the width falls. Running the flag as a
+        subprocess with no terminal at all is what catches that -- calling
+        :func:`version_report` directly cannot, because the re-wrapping happens
+        in argparse and not in the function.
+        """
+        completed = subprocess.run(
+            [str(_console_script()), "--version"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert completed.returncode == 0, completed.stderr
+        assert completed.stdout == version_report() + "\n"
 
     def test_the_console_script_reaches_a_subcommand(self, tmp_path: Path) -> None:
         """``--version`` is handled by argparse; this proves the subcommand modules import.

@@ -2,6 +2,11 @@
 
 # Validation
 
+|  |  |
+|---|---|
+| QuOSS version | `0.1.0` |
+| Regenerate with | `uv run python -m quoss.validation --write docs/validation.md` |
+
 Every row below is a number printed in a source, recomputed by this project at the moment this file was generated, and compared under a tolerance whose origin is written beside it. The status is **derived** from those three numbers (`quoss.validation.base.classify`), never typed: *reproduced* within the tolerance; *compatible* once a declared, bounded term the source omits is accounted for; **not reproduced**, with the disagreement written down; *gap* where the source gives nothing computable. Only V2 (a printed value) and V3 (an independent implementation) appear: a snapshot of this project's own output is not validation (`tests/golden/README.md`).
 
 ## Summary

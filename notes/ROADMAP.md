@@ -48,11 +48,25 @@ propia — y **V4 no es validación**.
 **Hito A (fin de etapa 5):** simulador completo en Python, sin red y sin web.
 **Alcanzado.** **Hito B (fin de etapa 8):** resultados validados contra
 literatura y reproducibles por terceros — aquí es donde el proyecto es
-publicable. **Alcanzado el 2026-09-19**, y conviene leer lo que significa: no es
-«los números están bien», es que **cada número publicable tiene una fila que
-dice contra qué se comparó, con qué tolerancia y de dónde sale esa tolerancia**,
-y que ocho de esas filas dicen que no cuadra. Un hito de credibilidad se alcanza
-publicando los desacuerdos, no eliminándolos.
+publicable. **Alcanzado y cerrado el 2026-09-19**, y conviene leer lo que
+significa: no es «los números están bien», es que **cada número publicable tiene
+una fila que dice contra qué se comparó, con qué tolerancia y de dónde sale esa
+tolerancia**, y que ocho de esas filas dicen que no cuadra. Un hito de
+credibilidad se alcanza publicando los desacuerdos, no eliminándolos.
+
+**Lo que «cerrado» añade a «alcanzado»**, que es lo que esta última PR hizo:
+existe una versión que se puede citar —`0.1.0`, con tag, `CITATION.cff` y
+`CHANGELOG.md`— y una puerta de entrada que un lector frío puede seguir hasta un
+resultado sin leer código ([ADR 0030](../docs/adr/0030-a-release-is-something-you-can-cite.md)).
+Un hito de reproducibilidad que no se puede nombrar en una bibliografía es uno
+que nadie puede reproducir por accidente.
+
+**Y a partir de aquí este fichero deja de listar trabajo.** Lo que queda abierto
+está abajo, en § Disparadores, escrito como condición y no como plan: qué tendría
+que pasar para abrir cada etapa. La diferencia no es de estilo. Una lista de
+trabajo envejece hacia «pendiente desde hace ocho meses», que no informa de
+nada; una lista de condiciones o se cumple —y entonces hay una PR que escribir—
+o no, y mientras no se cumpla el silencio es la respuesta correcta.
 
 ---
 
@@ -100,7 +114,7 @@ antes de pasar al siguiente.
 
 Andrews & Phillips **no se cita** porque no se pudo abrir. Fuentes primarias:
 ITU-R P.1621-2, P.1622, P.1814, P.1817-1, Ntanos et al. 2021, Kim et al. 2001.
-**Veintitrés huecos declarados** en vez de rellenados con la cita más plausible →
+**Veintitrés huecos de cita declarados** en vez de rellenados con la fuente más plausible →
 [ADR 0009](../docs/adr/0009-citation-policy.md).
 
 | Fichero | Qué | ADR |
@@ -295,13 +309,13 @@ etapa: el [**0018**](../docs/adr/0018-validation-is-a-table-not-a-badge.md).
 | `base.py` | los cuatro estados, y la regla que **deriva** el estado en vez de aceptarlo escrito a mano | ✅ |
 | `channel.py` | ITU-R P.1621-2, P.1622, y Farid & Hranilovic | ✅ |
 | `ntanos2021.py` | la fuente del enlace de referencia entero, más Ma et al. 2005 y Lim et al. 2014 | ✅ |
-| `satquma.py` | dos identidades reproducidas y **dos huecos declarados** | ✅ |
+| `satquma.py` | dos identidades reproducidas y **dos filas de hueco** | ✅ |
 | `micius.py` | datos de misión real | ✅ |
 | `tests/validation/` | `cases.py`, `test_base.py`, `test_docs.py`, `test_main.py`, `test_micius.py`, `test_ntanos2021.py`, `test_satquma.py` | ✅ |
 | `docs/validation.md` | autogenerado, **commiteado**, y con un test que lo compara byte a byte | ✅ |
 
 **Estado al 2026-09-19:** **35 casos de ocho fuentes** — 17 reproducidos, 3
-compatibles, **8 no reproducidos** y 7 huecos declarados.
+compatibles, **8 no reproducidos** y 7 huecos de fuente.
 `tests/validation/` cubre el paquete al **100 %** de líneas y ramas.
 
 Siete de los ocho desacuerdos son de Ntanos et al. 2021, y no es un juicio sobre
@@ -314,50 +328,54 @@ implementaciones de una misma sección publicada.
 
 ---
 
-## Etapas 9–11 — distribución, no ciencia ⬜
+## Disparadores — qué abriría cada etapa que sigue abierta
 
-**No se tocan antes de tiempo: hacerlas pronto es exactamente lo que acopló
-SimulCTTC.** Los cuatro niveles de entrega —CLI, `serve`, Docker, cloud—, el
-orden en que se construyen y por qué la web es un **cliente** y no el simulador
-están en el [ADR 0027](../docs/adr/0027-four-levels-of-distribution.md).
+**Esto no es un plan y no lleva fechas.** Cada fila dice qué tendría que ocurrir
+para que valga la pena escribir esa etapa, y hasta que ocurra la respuesta
+correcta es no escribirla. Las condiciones están medidas o tienen dueño en un
+ADR; ninguna es «cuando haya tiempo», que es la forma que tiene una lista de
+trabajo de no caducar nunca.
 
-- **9. `api/`** — routers finos que traducen HTTP ↔ engine y nada más:
-  `settings.py`, `deps.py`, `app.py`, `routes/{simulate,jobs,catalog}.py`,
-  `cli/serve.py`.
-- **10. `web/`** — TypeScript + Vite + Svelte, deps vendorizadas. El frontend
-  **no calcula física**: pinta lo que devuelve el motor, `warnings[]` incluidos.
-- **11. `deploy/` + rendimiento** — `Dockerfile` que funciona **offline**,
-  `compose.yaml`, la **puerta de regresión de rendimiento** en CI, y `kernels/`
-  solo si el profiler lo pide.
+| Etapa | El disparador | Dónde está la medida o la decisión |
+|---|---|---|
+| **2.4 `kernels/`** | **Un perfil del caso grande tomado *después* de paralelizar el bucle de satélites**, que siga señalando a la aritmética. Hoy cualquier perfil mide el serialismo: 927 ms por satélite con S = 60 contra 934 con S = 1 es menos del 1 % de dispersión, que es la firma de un bucle en serie y no de operaciones lentas. La etapa 11 va **antes**, no después | [ADR 0026](../docs/adr/0026-the-language-ladder.md), y el bucle es `orbits/propagator.py:535` |
+| **2.5 Brouwer-Lyddane** | **Que alguien pida el modo analítico de `propagate`, o que el predictor `3π·δa` tenga que apretarse por debajo del 5 %.** Hoy ese 5 % existe porque el promedio temporal del semieje osculador sustituye al semieje medio, y ninguna cifra publicable depende de la diferencia | [ADR 0006](../docs/adr/0006-osculating-vs-mean-elements.md) |
+| **2.5 Vallado §9.6 como V2** | **Abrir el libro y comprobar si imprime elementos medios u osculadores.** No es trabajo de código: transcribir sin saberlo produciría un V2 falso, que es lo único que el [ADR 0009](../docs/adr/0009-citation-policy.md) prohíbe de plano | [ADR 0009](../docs/adr/0009-citation-policy.md) |
+| **2.5 GCRF↔ITRF completo** | **Un escenario que pida precisión de marco por debajo del metro.** Medido: hoy ninguno lo pide, y el presupuesto que se deja sobre la mesa son 14.4 m de movimiento polar y 274 m de DUT1 | [ADR 0002](../docs/adr/0002-frames-and-time-scales.md) |
+| **9 `api/`** | **Un segundo consumidor del motor que no sea un proceso local.** Mientras el único cliente es la CLI, un router HTTP es una capa que traduce de algo a lo mismo | [ADR 0027](../docs/adr/0027-four-levels-of-distribution.md) |
+| **10 `web/`** | **La etapa 9, y alguien que tenga que mirar un resultado sin instalar nada.** El frontend no calcula física: pinta lo que devuelve el motor, `warnings[]` incluidos, así que sin API no hay nada que pintar | [ADR 0027](../docs/adr/0027-four-levels-of-distribution.md) |
+| **11 `deploy/` + rendimiento** | **Que el tiempo de una corrida moleste a alguien que no sea quien la lanzó**, o que haga falta correr esto en una máquina que no es la propia. Se lleva dentro la **puerta de regresión de rendimiento** y el paralelismo del bucle, que es lo que esa puerta mediría | [ADR 0027](../docs/adr/0027-four-levels-of-distribution.md) |
 
-  **Decisión del 2026-09-19: la puerta de regresión es de esta etapa, y va junto
-  al paralelismo del bucle de `propagator.py:535`, que es justamente lo que
-  mediría.** Hasta hoy la prometía un directorio `benchmarks/` vacío en la raíz
-  del repositorio, con un `.gitkeep` dentro y nada más. Ese directorio está
-  **borrado**, con los otros tres que prometían lo mismo (`deploy/`, `web/` y el
-  `validation/` de la raíz, que con `src/quoss/validation/` lleno al lado se
-  leía como una segunda implementación). Decir que la puerta no está escrita es
-  mejor que fingirla; un directorio vacío la finge sin que nada pueda
-  comprobarlo, y el sitio donde una etapa se promete es esta tabla.
+**El orden entre ellas no es libre y es el único que este fichero sigue
+imponiendo:** la 11 (paralelizar el bucle) va antes que la 2.4 (reescribir la
+aritmética), porque hasta que el bucle no vaya en paralelo cualquier perfil
+atribuye al lenguaje lo que es del serialismo. Esa inversión —una etapa de
+distribución antes que una de física— es contraintuitiva y por eso está escrita
+dos veces.
+
+**Y una nota sobre por qué ninguna de estas etapas tiene un directorio vacío
+esperándola.** Hasta el 2026-09-19 `benchmarks/`, `deploy/`, `web/` y
+`validation/` existían en la raíz con un `.gitkeep` dentro; en esta última ronda
+cayeron también `src/quoss/api/`, `src/quoss/kernels/`, `tests/api/` y
+`tests/physics/`, y los dos primeros viajaban **dentro del wheel**. Un
+directorio vacío promete una etapa y nada puede comprobar la promesa. El sitio
+donde una etapa se promete es esta tabla, que sí se lee.
 
 ---
 
 ## Trabajo abierto que no es una etapa
 
 > Heredado de `LAST_CHANGES.md` §13 («Pendiente de decidir» y «Deuda pequeña») al
-> archivarlo. Las filas que ya estaban tachadas allí no se copian; estas son las
-> que seguían vivas, **comprobadas una a una contra el árbol de hoy**.
+> archivarlo. Lo que tenía etapa se ha ido arriba, a § Disparadores; aquí queda
+> lo que no la tiene: condiciones que no abren una etapa, solo un fichero.
 
 | Dónde | Qué | Comprobado |
 |---|---|---|
-| ~~etapa 8~~ | ~~Reactivar `warn_unused_configs = true` en mypy.~~ **Cerrada el 2026-09-19.** Activada, nombró **tres** secciones muertas (`quoss.kernels.*`, `numba.*`, `pyarrow.*`) y las tres están fuera con su razón. La bandera sola no bastaba —mypy la emite como `note:` y sale 0—, así que la mitad que falla es `tests/unit/test_project_config.py`. §46 | cerrada |
-| etapa 11 | **Paralelismo del bucle sobre satélites.** `ZONAL_NUMERIC` integra las S órbitas en serie (`propagator.py:535`): 927 ms/satélite con S = 60 y 934 con S = 1. **Paralelizar, no vectorizar** — cada satélite lleva su propia secuencia de pasos adaptativos en DOP853 ([ADR 0026](../docs/adr/0026-the-language-ladder.md)). Pertenece a `engine/parallel.py`, no a la física, y es lo que hay que hacer **antes** de volver a medir la etapa 2.4 | en serie |
-| ~~etapa 11~~ | ~~`uv sync --all-extras` arrastra `numba` y `fastapi` a los cinco jobs.~~ **Cerrada el 2026-09-19.** Medido antes de quitarlo: **210 MiB, el 30 %** de la caché de uv y del entorno, casi todo `llvmlite`; el tiempo **no** era el coste (0.56 s contra 0.17 s en caliente). Los jobs sincronizan `--extra viz --extra export`. §48 | cerrada |
-| ~~etapa 11~~ | ~~El suelo `numpy>=1.26` no está testeado.~~ **Cerrada el 2026-09-19, y no estaba sin probar sino MAL**: `np.trapezoid` y el `repr` de escalar de numpy 2 hacen que la suite no corra por debajo de 2.0, y `scipy>=1.11` fija `numpy<2` además de estar retirado de PyPI. Los suelos son hoy los medidos y el job `minimums` los construye; los dos extras que nada importa (`accel`, `web`) **pierden el suyo**. §48 | cerrada |
 | cuando duela | **Coste de la suite.** Casi todo integraciones DOP853 de `test_perturbations.py`. Recortar revoluciones antes que tolerancias | ver §41 |
 | si entra `sgp4` en más sitios | `filterwarnings = ["error"]` necesitará excepciones **por warning concreto**, nunca una categoría entera | — |
 | si aparece un tercero | `frames._broadcast_against` y `kepler._broadcast_to_common` siguen duplicados a medias. **Difieren** en forma y en lo que aconsejan sus mensajes, y por eso no se unificaron | documentado en `orbits/_validation.py` |
 | si entra un optimizador | **Elementos equinocciales** como representación primaria. Hoy el pliegue resuelve el problema real sin mantener una segunda representación | [ADR 0003](../docs/adr/0003-orbital-elements.md) |
+| si se conecta Zenodo | El **DOI** entra en `CITATION.cff` y en el README. El tag es lo que lo dispara, y el procedimiento está en `CHANGELOG.md` | [ADR 0030](../docs/adr/0030-a-release-is-something-you-can-cite.md) |
 | no corregido, documentado | La ecuación de Kepler cerca de `e = 1`: la precisión en `E` se degrada como `1/(1−e)`. No hay escenario QuOSS que llegue ahí | `orbits/kepler.py` |
 
 ---
@@ -365,7 +383,7 @@ están en el [ADR 0027](../docs/adr/0027-four-levels-of-distribution.md).
 ## Numeración de ADRs
 
 Un ADR por decisión no obvia, numerado al escribirse y **nunca renumerado**. A
-2026-09-19 hay **veintinueve escritos** (0001–0029) y **ninguno reservado**.
+2026-09-19 hay **treinta ADRs** escritos (0001–0030) y **ninguno reservado**.
 
 | Nº | Etapa | Qué gobierna |
 |---|---|---|
@@ -377,6 +395,7 @@ Un ADR por decisión no obvia, numerado al escribirse y **nunca renumerado**. A
 | **0026** | 2.4 (`kernels/`) | La **escalera de lenguajes**, que gobierna una etapa que aún no existe |
 | **0027** | 7, 9–11 (`cli/`, `api/`, `web/`, `deploy/`) | Los **cuatro niveles de distribución** |
 | **0028** | 7 (`cli/`) + 6 (`io/export.py`) | **La CLI no calcula nada**, y un resultado horizontal tiene su propia forma de directorio |
+| **0030** | 9–11 (distribución) | **Una versión es algo que se puede citar**, y por qué el commit entra en `quoss --version` y no en los cuatro documentos que se comparan byte a byte |
 
 **Los 0017 y 0018 estuvieron reservados cinco días**, del 2026-09-14 al
 2026-09-19, porque `viz/plots.py` y `validation/__init__.py` ya los citaban por

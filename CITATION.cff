@@ -1,0 +1,50 @@
+# Citation File Format 1.2.0 — https://citation-file-format.github.io
+#
+# What this file is for
+# ---------------------
+# GitHub reads it to render "Cite this repository", and Zenodo reads it to fill
+# the metadata of a deposit when a release is published from a tag. Both
+# conversions are automatic; the BibTeX and APA that GitHub offers are generated
+# from here, which is why this file and not a hand-written CITATION.bib.
+#
+# The rule this file lives under: `version` and `authors` must agree with
+# pyproject.toml and with src/quoss/__init__.py, and
+# tests/unit/test_project_config.py fails when they do not. Three places that
+# name the same version is two places that can drift, so the drift is asserted
+# rather than remembered.
+#
+# Releasing a new version is four steps and they are written down in
+# CHANGELOG.md, not here: this file is the metadata, not the procedure.
+cff-version: 1.2.0
+title: "QuOSS — Quantum Optical Satellite Simulator"
+message: >-
+  If you use this software, or report a figure it produced, please cite it
+  using the metadata below. Please cite the version you ran: the physics
+  changes between versions, and `quoss --version` prints the version and the
+  commit of whatever produced your numbers.
+type: software
+authors:
+  - given-names: Adrià
+    family-names: Sancho
+    email: francesc.adria.sancho@gmail.com
+repository-code: "https://github.com/W1Adri/QuOSS"
+abstract: >-
+  A vectorised simulator of quantum optical links, satellite-to-ground and
+  ground-to-ground, that answers how many secret key bits a link certifies
+  under a composable finite-key bound rather than asymptotically. It covers
+  orbital geometry, the turbulent atmospheric channel, decoy-state BB84, and
+  the system metrics built on them, from a versioned YAML scenario whose hash
+  travels with every result. Its validation table records, for thirty-five
+  cases from eight published sources, what was compared, under which derived
+  tolerance, and what came out — including the eight comparisons that do not
+  reproduce.
+keywords:
+  - quantum key distribution
+  - satellite communications
+  - free-space optical link
+  - atmospheric turbulence
+  - finite-key analysis
+  - simulation
+license: MIT
+version: 0.1.0
+date-released: "2026-09-19"

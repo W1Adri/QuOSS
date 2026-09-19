@@ -178,23 +178,37 @@ de uno rancio.
 tabla de seis ficheros sin orden ni tamaño, y dos de ellos —`LAST_CHANGES.md` con
 6 834 líneas y `ROADMAP.md` con 935— **no se leían**: una sesión llegaba a las
 primeras pantallas y seguía. El resultado tiene fecha: la PR C la escribió una
-sesión que no había leído lo que la PR B dejó dicho. Hoy son 910 y 321, y el
-orden de abajo es de arriba a abajo, parando cuando ya sepas lo que ibas a hacer.
+sesión que no había leído lo que la PR B dejó dicho. El orden de abajo es de
+arriba a abajo, parando cuando ya sepas lo que ibas a hacer.
 
-| # | Fichero | Líneas | Para qué | ¿Siempre? |
+**La columna de coste es la cota, no la medida de hoy.** Escribir ahí el número
+de líneas de hoy fue el defecto que esta misma tabla cometió durante tres días:
+decía 910 y 321 cuando los ficheros iban por 1 068 y 401, porque una bitácora
+crece en cada PR y un número copiado a mano no. La cota, en cambio, no envejece
+—`tests/unit/test_notes.py` la aserta— y es lo que de verdad hace falta saber
+antes de abrir el fichero: cuánto puede llegar a costar, no cuánto costó el
+martes.
+
+| # | Fichero | Cota de líneas | Para qué | ¿Siempre? |
 |---|---|---|---|---|
-| 1 | [`notes/INCONSISTENCIAS.md`](notes/INCONSISTENCIAS.md) | ~120 | **Lo que el código o los documentos afirman y hoy no se cumple.** Primero porque es lo único que puede hacerte perder la tarde entera | **sí** |
-| 2 | [`notes/LAST_CHANGES.md`](notes/LAST_CHANGES.md) | ~1 140 | Las **cinco últimas** entradas completas, más un índice de una línea por entrada archivada. Es el estado de hoy y cómo se llegó | **sí** |
-| 3 | [`notes/ROADMAP.md`](notes/ROADMAP.md) | ~350 | Qué existe, qué falta, en qué orden. **Estado, no justificación** | **sí** |
+| 1 | [`notes/INCONSISTENCIAS.md`](notes/INCONSISTENCIAS.md) | ≤ 500 | **Lo que el código o los documentos afirman y hoy no se cumple.** Primero porque es lo único que puede hacerte perder la tarde entera | **sí** |
+| 2 | [`notes/LAST_CHANGES.md`](notes/LAST_CHANGES.md) | ≤ 1 732 | Las **cinco últimas** entradas completas, más un índice de una línea por entrada archivada. Es el estado de hoy y cómo se llegó | **sí** |
+| 3 | [`notes/ROADMAP.md`](notes/ROADMAP.md) | ≤ 500 | Qué existe, qué falta, en qué orden. **Estado, no justificación** | **sí** |
 | 4 | `docs/adr/<el tuyo>.md` | 1 por decisión | El **porqué**. La tabla del ROADMAP te dice cuál te toca; no los leas todos | el de tu módulo |
 | 5 | [`tests/golden/README.md`](tests/golden/README.md) | — | Los cuatro niveles V1–V4, y por qué V4 no es validación | si vas a asertar algo |
-| 6 | [`notes/archive/`](notes/archive/) | 6 800 | Las entradas §1–§38 íntegras, y la guía v3 con su numeración §0–§5 congelada | solo si el índice te manda |
-| 7 | [`notes/GUIA_REIMPLEMENTACION.md`](notes/GUIA_REIMPLEMENTACION.md) | ~85 | Qué era SimulCTTC, y nada más: la escalera de lenguajes se fue al [ADR 0026](docs/adr/0026-the-language-ladder.md) | si tocas `kernels/` o `deploy/` |
+| 6 | [`notes/archive/`](notes/archive/) | sin cota | Las entradas §1–§44 íntegras, y la guía v3 con su numeración §0–§5 congelada. Crece a propósito: es lo que deja de pesar en el camino de lectura | solo si el índice te manda |
+| 7 | [`notes/GUIA_REIMPLEMENTACION.md`](notes/GUIA_REIMPLEMENTACION.md) | ≤ 500 | Qué era SimulCTTC, y nada más: la escalera de lenguajes se fue al [ADR 0026](docs/adr/0026-the-language-ladder.md) | si tocas `kernels/` |
 
-**Hoy `INCONSISTENCIAS.md` tiene dos entradas abiertas**, y su valor está en cómo
-se llenó: ninguna de las quince que ha tenido la detectaba la suite, una era un
-número citado en quince sitios que resultó falso, y otra es una verificación que
-se hizo contra un árbol de hace 29 commits (de ahí la norma 0).
+Las tres cotas de 500 son la misma y están derivadas en
+`test_the_other_notes_stay_readable`; la de 1 732 no se elige, sale de
+multiplicar las cinco entradas vivas por la más larga jamás escrita y sumar el
+índice.
+
+**Hoy `INCONSISTENCIAS.md` tiene una entrada abierta**, y su valor está en cómo
+se llenó: de las diecinueve inconsistencias registradas que ha tenido, **ninguna
+la detectaba la suite**; una era un número citado en quince sitios que resultó
+falso, y otra es una verificación que se hizo contra un árbol de hace 29 commits
+(de ahí la norma 0).
 
 **Dónde va lo que escribas al terminar**, que es la otra mitad de la regla:
 
