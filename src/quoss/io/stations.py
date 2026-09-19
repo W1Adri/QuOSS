@@ -1,4 +1,4 @@
-"""The optical-ground-station catalogue: ``data/ogs.yaml``, read and checked.
+"""The optical-ground-station catalogue: ``quoss/data/ogs.yaml``, read and checked.
 
 What a catalogue entry is
 -------------------------
@@ -61,6 +61,7 @@ import numpy as np
 import yaml
 
 from quoss.core.errors import DataError
+from quoss.data import DATA_ROOT
 
 __all__ = [
     "DEFAULT_CATALOGUE_PATH",
@@ -69,8 +70,16 @@ __all__ = [
     "load_station_catalogue",
 ]
 
-DEFAULT_CATALOGUE_PATH = Path(__file__).resolve().parents[3] / "data" / "ogs.yaml"
-"""``<repo>/data/ogs.yaml`` for a checkout; see :mod:`quoss.io.snapshots` for the wheel caveat."""
+DEFAULT_CATALOGUE_PATH = DATA_ROOT / "ogs.yaml"
+"""``<package>/data/ogs.yaml``, the same file in a checkout and in an installation.
+
+It resolved to ``<repo>/data/ogs.yaml`` until 2026-09-19, by walking three
+directories up from this module. That is the repository root only while the
+module is *in* the repository: from an installed wheel the same walk landed on
+``<venv>/lib/python3.13/data/ogs.yaml``, above ``site-packages``, and the
+catalogue was not in the wheel to begin with. :mod:`quoss.data` has the
+measurement and the reason the anchor moved inside the package.
+"""
 
 _SCHEMA_VERSION = 1
 _REQUIRED = (

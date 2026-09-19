@@ -41,7 +41,7 @@ export
     A ``SimulationResult`` written to a self-describing directory: manifest,
     CSV tables, ``.npz`` arrays, optional Parquet.
 stations
-    The optical-ground-station catalogue in ``data/ogs.yaml``, every entry with
+    The optical-ground-station catalogue in ``quoss/data/ogs.yaml``, every entry with
     the source of its coordinates.
 
 No re-exports, deliberately — see :mod:`quoss.core` for the reasoning. Import

@@ -23,6 +23,13 @@ env:
   # loudly instead of silently re-resolving and testing an environment that
   # nobody has on their machine.
   UV_LOCKED: "1"
+  # tests/packaging/ builds the wheel, installs it into a clean venv outside
+  # the checkout and reads the shipped data from there. It skips if `uv` is not
+  # on PATH, which cannot happen under `uv run pytest` -- but a skip nobody
+  # sees is a test that does not exist, so here the skip is a failure instead.
+  # It costs ~16 s, 15 of them physics, so it runs in every job rather than in
+  # one of its own.
+  QUOSS_REQUIRE_PACKAGING_TESTS: "1"
 
 jobs:
   lint:

@@ -58,13 +58,16 @@ both were fetched live on 2026-09-13 (see
 a perfectly good result — but a reader of its manifest must be able to tell
 that the TLE is from a stated date and not from this morning.
 
-Where ``root`` points, and a limitation
----------------------------------------
-The default root is ``data/snapshots`` at the repository root, found relative
-to this file. That works for a checkout and for ``uv run``; it does **not**
-work for the package installed as a wheel, where ``data/`` is not shipped.
-Every function takes ``root`` explicitly for that case. Moving the snapshots
-into the package is a packaging decision left to the orchestrator.
+Where ``root`` points
+---------------------
+The default root is ``snapshots/`` inside the package, :data:`DATA_ROOT`, so it
+is the same directory in a checkout and in an installed wheel. It was the
+repository's ``<repo>/data/snapshots`` until 2026-09-19, found by walking three
+directories up from this file, and that walk left the installed package
+pointing above ``site-packages`` at a directory that does not exist -- see
+:mod:`quoss.data` for the measurement and ``notes/INCONSISTENCIAS.md`` #18 for
+the promise it broke. Every function still takes ``root`` explicitly, which is
+what a caller keeping snapshots elsewhere uses.
 
 Examples
 --------
@@ -88,6 +91,7 @@ from pathlib import Path
 from typing import Any
 
 from quoss.core.errors import DataError, DegradationLog
+from quoss.data import DATA_ROOT
 from quoss.io.celestrak import TleRecord, parse_tle_text
 from quoss.io.openmeteo import CloudCoverSeries, parse_cloud_cover
 
@@ -104,8 +108,8 @@ __all__ = [
     "snapshot_tle",
 ]
 
-DEFAULT_SNAPSHOT_ROOT = Path(__file__).resolve().parents[3] / "data" / "snapshots"
-"""``<repo>/data/snapshots`` for a checkout. See the module docstring's limitation."""
+DEFAULT_SNAPSHOT_ROOT = DATA_ROOT / "snapshots"
+"""``<package>/data/snapshots``, the same directory in a checkout and in an installation."""
 
 _NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_.-]*$")
 _SYNTHETIC_PREFIX = "synthetic_"

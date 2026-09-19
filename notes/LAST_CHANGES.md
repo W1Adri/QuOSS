@@ -1,8 +1,8 @@
 # QuOSS — Últimos cambios
 
 > **Bitácora viva. Se actualiza al cerrar cada etapa del [`ROADMAP.md`](ROADMAP.md).**
-> Última entrada: **§44, 2026-09-19** — la fila que faltaba, y la tabla de
-> validación commiteada.
+> Última entrada: **§45, 2026-09-19** — el wheel lleva sus datos, y una cita a
+> un fichero deja de poder envejecer sola.
 >
 > **Qué hay aquí y qué no.** Este fichero guarda **las cinco últimas entradas
 > completas**. Todo lo anterior está en [`archive/`](archive/), íntegro y sin
@@ -22,7 +22,7 @@
 
 ---
 
-## Índice de lo archivado (§1–§39)
+## Índice de lo archivado (§1–§40)
 
 | § | Fecha | La cifra o la regla que la resume | Dónde |
 |---|---|---|---|
@@ -65,253 +65,7 @@
 | §37 | 2026-09-15 | `turbulence.py` entra en **régimen moderado-a-fuerte** → [ADR 0022](../docs/adr/0022-the-strong-regime.md). El titular horizontal era un **intervalo, no un número**: la lente de 10 cm vale **entre 8.4 y 11.2**, porque las dos filas se habían calculado con onda plana a **3.16 rangos de Rayleigh** | [archivo](archive/LAST_CHANGES-37-38.md) |
 | §38 | 2026-09-15 | `extinction.py` → [ADR 0023](../docs/adr/0023-traceable-extinction.md). La extinción deja de ser una **entrada** del escenario: **0.230 dB cenitales —el aire más limpio del código meteorológico de la UIT— cuestan el 22.7 % de la clave certificada** del día de referencia | [archivo](archive/LAST_CHANGES-37-38.md) |
 | §39 | 2026-09-15 | El **régimen de escintilación pasa a ser un campo** del escenario, y con ello entra en el hash. Los 30 m de la estación valen **+457 bits en régimen débil y −206 en saturado**: el cruce está en 27.02° y el día pasa el 67.7 % de sus segundos por debajo | [archivo](archive/LAST_CHANGES-39.md) |
-
----
-
-## 40. El camino horizontal deja de ser una biblioteca y pasa a ser un escenario
-
-**Fecha:** 2026-09-17. **ADRs nuevos:** [0024](../docs/adr/0024-the-horizontal-scenario.md)
-(el escenario horizontal, su bloque y la forma de su resultado) y
-[0025](../docs/adr/0025-two-terminals-one-way.md) (dos terminales y un sentido
-para GE-1). **ADRs tocados:** 0009 (huecos 20 y 21, los dos subidos de categoría
-con medida), 0021 (ya no es una biblioteca suelta; la arquitectura decidida),
-0022 (anexo: el defecto del régimen se muda a las firmas).
-
-**La cifra que resume la entrada: el enlace de GE-1 de 1 km certifica 253 935
-bit/s en una sesión de 60 s — y a 5 km certifica exactamente cero mientras el
-cálculo asintótico sigue reclamando 4.4 kbit/s.**
-
-### El problema, y por qué no era «solo cablear»
-
-Desde §36 y §37 `channel/horizontal.py` sabía calcular todo lo de un camino
-horizontal, y estaba anclado contra la Tabla 4 de la P.1814. **Y nadie lo
-importaba.** Ni `scenario/`, ni `engine/`, ni `system/`. Las consecuencias, de
-menos a más grave: no se podía exportar, no se podía barrer, no se podía
-dimensionar desde un fichero — y **no había hash**, que es lo que ata una figura
-a sus entradas. Todas las cifras publicadas de GE-1 salen de llamadas a mano
-dentro de un test, exactamente el problema que §39 arregló para el régimen de
-escintilación en la bajada.
-
-### La decisión de forma: una unión discriminada, no campos opcionales
-
-`link: downlink | horizontal`, con `AnyScenario` validada por un `TypeAdapter`.
-Lo que compra, y es la razón de elegirla sobre un `Scenario` con `orbit`,
-`stations` y `passes` opcionales:
-
-> La regla del ADR 0021 —«ninguna firma acepta elevación»— estaba asertada por
-> ausencia y por un recorrido del AST. Ahora lo está **también por el esquema**:
-> `HorizontalScenario` no tiene `passes`, y como `SpecModel` lleva
-> `extra="forbid"`, escribir `passes:` en un fichero horizontal es un error de
-> validación **que nombra el campo**. Nadie tiene que acordarse de comprobarlo.
-
-**Digest repinchado, caso 2:** `17f44003…`. El canónico gana `"link":"downlink"`
-y nada más; `SCHEMA_VERSION` sigue en 1 y la entrada de `DIGEST_HISTORY` lo
-demuestra borrando ese campo y recuperando el `303a3729…` del día anterior.
-
-### La decisión que más prosa necesitaba: quién es responsable del bloque
-
-El [ADR 0011](../docs/adr/0011-the-block-is-the-pass.md) fijó que el bloque
-finite-key **es un pase**, y el argumento no era de comodidad: es que **la
-geometría lo fija**. Entre dos pases el satélite está bajo el horizonte y no se
-emite ni un pulso.
-
-Un enlace horizontal es estacionario. Nada para los datos. El bloque es lo que el
-operador decida, y eso **cambia de quién es la responsabilidad de que la cota sea
-válida**: en la bajada el esquema puede impedir que alguien se equivoque; aquí no
-puede. Lo único que el código puede hacer es que no se mude en silencio, y hace
-tres cosas: el campo es obligatorio y sin defecto, entra en el hash, y cada
-ejecución registra `horizontal.block-is-the-declared-session` diciendo la
-duración, los pulsos y que nada en la geometría la fija.
-
-**Y lo que vale un bloque está medido**, que es lo que impide leerlo como una
-formalidad (GE-1, solo cambia la sesión):
-
-| sesión | bits certificados | bit/s |
-|---|---|---|
-| 15 s | 3 115 905 | 207 727 |
-| 30 s | 7 027 898 | 234 263 |
-| 60 s | 15 205 091 | **253 418** |
-| 120 s | 32 059 995 | 267 167 |
-
-Doblar el bloque compra **2.164 veces** la clave, no dos: el peaje fijo de 260
-bits de la Ec. (1) de Lim et al. y, mucho más grande, las desviaciones de
-Hoeffding y de muestreo, que crecen como la raíz del bloque. Leído al revés:
-**una sesión declarada más larga de lo que el enlace estuvo estable compra
-exactamente ese 16 % de clave que nadie ganó.**
-
-### El resultado es un contenedor propio, y la razón es un número
-
-No un `SimulationResult` con las etapas orbitales vacías. **Arrays de longitud
-cero pasan el tipado y son peores que `None`:** una suma sobre un eje vacío es
-`0.0`, así que `daily.finite_bits.sum()` reportaría **un enlace horizontal que
-certificó 15.2 Mbit como cero bits al día**, sin error en ninguna parte y sin que
-ningún consumidor pudiera distinguirlo de un enlace que no cerró.
-
-Las etapas ausentes están **ausentes**: `HORIZONTAL_STAGES` son tres
-(`channel`, `key`, `result`) y no siete, porque una etapa que dice tardar cero
-segundos se lee como una que corrió deprisa.
-
-### La extinción, reutilizada y no reinventada
-
-`ExtinctionSpec` sigue siendo **un solo tipo**. Lo único que cambia es a qué se
-evalúa, y es un paso de integración: la bajada integra la columna
-(`zenith_transmittance_from_visibility`), el horizontal **evalúa el coeficiente a
-su altura** (`specific_attenuation_at_altitude_db_per_km`, nuevo). Las dos leen
-el mismo perfil y comparten el factor exponencial en una privada, así que no
-pueden discrepar sobre hacia dónde apunta el exponente.
-
-El campo nuevo es `HorizontalPathSpec.altitude_m`, y está defendido en el ADR
-0024: entra **solo** por `exp(-(h - h_v)/H)`, así que en el caso ordinario —la
-visibilidad medida donde corre el enlace— **se cancela exactamente** y la altura
-de escala del hueco 22 no influye en ningún número. El hueco 23 (absorción
-molecular) sigue abierto y sigue diciéndose; no se tapa con la dispersión.
-
-### Los barridos reproducen las tablas medidas a mano
-
-Todo lo que §36 y §37 midieron llamando al canal a mano lo reproduce ahora
-`run()` a través de `SweepSpec`. **El residuo es una identidad**, cerrada por los
-dos extremos como en §39: el punto del barrido y la cadena a mano son las mismas
-llamadas con los mismos argumentos, así que se compara con igualdad exacta y las
-cifras impresas a dos decimales se comprueban aparte, como afirmación sobre lo
-que se publicó.
-
-| lente | onda | kbit/s asintóticos |
-|---|---|---|
-| 2.5 cm | plana | 56.82 |
-| 2.5 cm | esférica | 70.15 |
-| 10 cm | plana | 636.20 |
-| 10 cm | esférica | 589.92 |
-
-Factor **11.20** plana, **8.41** esférica — y **el intervalo no está ordenado
-igual en las dos lentes**: a 2.5 cm la plana es el borde pesimista y a 10 cm el
-optimista, porque el promediado de apertura trabaja sobre el otro factor. Hay
-test explícito, y también de que el factor 2.46 de las varianzas de punto es el
-mismo en las dos, así que **no** es lo que invierte el orden.
-
-Distancia (10 cm, asintótico): 896/888 a 200 m, 636/590 a 1 km, 122/107 a 2.41 km
-(el límite de la teoría débil, comprobado por los dos lados contra el aviso del
-propio módulo), 4.0/4.4 a 5 km. `C_n^2` en cuatro décadas, con la varianza de
-Rytov exactamente lineal en él. **Y la anchura de puerta, que resulta no ser una
-palanca aquí:** 25 veces más ancha mueve la clave un **0.09 %**, porque de noche
-a 1 km el ruido entero son 6e-7 cuentas por puerta contra 4e-2 de señal. Medirlo
-es lo que impide que alguien la optimice.
-
-### Los dos hallazgos, que son lo mejor de la ronda
-
-**1. A 5 km GE-1 no certifica nada.** Con 60 s de sesión, a 4 km la clave
-certificada son 672–843 bit/s y a 5 km es **exactamente cero**, mientras el
-asintótico sigue dando 4.0–4.4 kbit/s. Es el acantilado del ADR 0011 —división
-por cero en la tasa de error de fase, no un factor— aparecido por primera vez en
-un enlace de tierra, y es justo el régimen en que un dimensionado asintótico
-diría que el enlace funciona. El resultado lo dice:
-`horizontal.session-without-key` lleva la cifra asintótica al lado.
-
-**2. El banco iguala la varianza de Rytov de GE-1 y no iguala lo que ve su
-receptor.** El `C_n^2` de `equivalent_bench_cn2_m23` hace coincidir las dos
-varianzas de Rytov a precisión de máquina (0.198845). Pero esa es la de un
-detector puntual, y lo que llega a la clave es la promediada por la apertura, que
-depende de **a qué distancia** está la turbulencia:
-
-| enlace | `σ_R²` | promediado `A` | margen al 1 % |
-|---|---|---|---|
-| GE-1, 1 km | 0.198845 | 0.2386 | **1.446 dB** |
-| GE-0b, 2 m | 0.198845 | 4.45e-5 | **0.030 dB** |
-
-**2 183 veces menos varianza en el receptor, 1.42 dB menos de margen.** Es la
-segunda mitad del hueco 20, y a diferencia de la primera —el argumento de las
-pantallas de fase, que queda fuera de lo que QuOSS modela— **esta se puede medir
-dentro del modelo**. No hace inútil el banco: hace que la pregunta que contesta
-sea otra, y está escrita en `scenarios/ge0b_bench.yaml` para que la lea quien vaya
-a comprar algo.
-
-### Los dos cambios que arrastraba la PR #15
-
-**a) `ChannelSpec.scintillation_regime` pasa a obligatorio.** No se flipa el
-defecto a saturado —seguiría costando seis de las ocho celdas de la Tabla 2 de la
-P.1622— y no se deja invisible. Se **muda a las siete firmas de física**, donde
-significa «la P.1622 tal como está impresa» (una afirmación bibliográfica,
-estable) en vez de «el aire de este experimento» (una física, que depende del
-experimento). La razón de la mudanza es el otro miembro de la unión: en un camino
-horizontal la teoría débil deja de ser citable a **2413 m**, así que un defecto
-correcto para la bajada sería el modelo equivocado en más de la mitad del barrido
-que esta PR existe para hacer. La asimetría está asertada con el **recuento** de
-firmas, para que una nueva sin defecto sea un test rojo. Anexo del ADR 0022.
-
-**b) El hueco 21 sube de categoría, con la cifra hasta bits/día.** Se citaba con
-«0.39 dB» y se leía como una discrepancia pequeña. No lo es, por dos razones que
-solo se ven midiendo hasta el final.
-
-*Primera: el 0.39 dB era la celda más favorable.* Es el régimen saturado a 10°
-con el telescopio de 0.75 m; en régimen débil, que es el predeterminado de las
-siete firmas, el mismo punto vale **1.69 dB**.
-
-*Segunda, y es la que lo sube de categoría: el convenio fija el signo del cruce
-de 27.02°.* Propagado a bits/día (día de referencia, un solo término cambiado):
-
-| régimen | convenio P.1622 | convenio Ntanos | cambio | término de altitud (0 → 30 m) |
-|---|---|---|---|---|
-| `weak` | 433 442 | 419 162 | **−3.29 %** | +457 → **+1237 bits** |
-| `moderate-to-strong` | 449 308 | 441 870 | **−1.66 %** | −206 → **+4 bits** |
-
-**El término de altitud saturado cambia de signo con el convenio y aterriza
-prácticamente en cero** (+4 bits de 449 308, 9e-6 del día). Es decir: los −206
-bits que el anexo del ADR 0022 explica con un mecanismo correcto están **enteros
-dentro de este hueco**, y la pregunta «¿suma o resta la altitud de la estación?»
-no tiene respuesta hasta que alguien decida en qué espacio vive `A`. El cruce se
-mueve de **27.02°** a **18.95°**, con el 67.7 % y el 56.1 % de los segundos del
-día por debajo. El hueco **no se cierra** —elegir el otro convenio por el
-resultado que da sería ajustar la física al número— pero se cierra la ignorancia
-sobre cuánto cuesta.
-
-### La figura
-
-`viz.plots.plot_horizontal_key_against_distance`: clave contra distancia con el
-intervalo plana-a-esférica como **banda**, la marca de `weak_theory_path_limit_m`
-(2413 m) y la región de dentro del rango de Rayleigh sombreada con su propia
-etiqueta —porque ahí la banda **se estrecha por la razón equivocada** y leerla
-como «bien determinado» es la conclusión opuesta a la correcta—. La banda no es
-una barra de error y el docstring lo dice: son dos modelos exactos acotando un
-tercero que no está implementado. Y una distancia que no certifica nada **no se
-pierde** en el eje logarítmico: se dibuja como un `×` con un «0» encima, que es
-el punto más importante de la figura.
-
-### Verificación
-
-`uv run pytest`: **3 763 passed**, 0 fallos. `ruff check`, `ruff format --check`
-y `mypy` limpios sobre 146 ficheros. Cobertura de líneas **y ramas al 100 %** en
-todo `src/quoss` — 8 658 sentencias y 2 100 ramas, sin una sola sin cubrir —,
-incluidos los cinco ficheros nuevos o muy tocados (`engine/horizontal.py`,
-`scenario/result.py`, `scenario/models.py`, `engine/sweep.py`, `viz/plots.py`).
-
-### Lo que queda para la PR D, dicho aquí para que no se pierda
-
-`io/export.py` escribe un `SimulationResult` y **no sabe escribir un
-`HorizontalResult`**. No es un descuido de esta PR: es el trabajo de la etapa 7,
-donde `quoss run scenarios/ge1_1km.yaml --out out/` lo necesita. Hasta entonces
-un resultado horizontal se serializa con `to_dict()` (no tiene arrays, así que el
-JSON **es** su formato de archivo) y no con `export_result`.
-
-### Ficheros
-
-| Fichero | Qué |
-|---|---|
-| `src/quoss/scenario/models.py` | `LinkKind`, `HorizontalPathSpec`, `SessionSpec`, `HorizontalScenario`, `AnyScenario`; `Scenario.link`; `scintillation_regime` obligatorio; `sky_radiance_w_m2_um_sr` admite 0.0 (un banco cerrado) |
-| `src/quoss/scenario/io.py` | `TypeAdapter(AnyScenario)`, y el tag ausente con un mensaje que nombra los dos valores en vez de la queja interna de Pydantic |
-| `src/quoss/scenario/hash.py` | canoniza por `physics_dict()`, que tienen los dos miembros |
-| `src/quoss/scenario/result.py` | `HorizontalBudgetResults`, `HorizontalSessionResults`, `HorizontalResult`, `AnyResult` |
-| `src/quoss/scenario/defaults.py` | `ge1_two_terminals()`, `ge0b_bench()` y sus constantes |
-| `src/quoss/engine/horizontal.py` | nuevo: cinco llamadas y el `INFO` del bloque |
-| `src/quoss/engine/pipeline.py` | `run()` despacha sobre el tag; la caché se declina en voz alta |
-| `src/quoss/engine/sweep.py` | dos juegos de raíces de métrica que no se solapan |
-| `src/quoss/channel/extinction.py` | `specific_attenuation_at_altitude_db_per_km` y el factor exponencial compartido |
-| `src/quoss/viz/plots.py` | `plot_horizontal_key_against_distance` y `_vertical_mark` |
-| `scenarios/ge1_1km.yaml`, `scenarios/ge0b_bench.yaml` | nuevos; los cinco de bajada ganan `link: downlink` |
-| `tests/e2e/test_horizontal_scenario.py`, `tests/engine/test_horizontal.py` | nuevos |
-| `tests/e2e/oracle.py` | `hand_horizontal`, la cadena a mano del horizontal |
-| `tests/e2e/test_reference_scenarios.py` | `TestWhatTheApertureAveragingConventionCosts` (hueco 21) |
-| `docs/adr/0024`, `docs/adr/0025` | nuevos |
-| `docs/adr/0009`, `0021`, `0022` | huecos 20 y 21 medidos, la arquitectura decidida, el anexo del defecto |
-| `notes/ROADMAP.md`, `README.md` | etapas 2.2, 4 y 5; siete escenarios; 23 ADRs |
+| §40 | 2026-09-17 | El **camino horizontal pasa de biblioteca a escenario** → [ADR 0024](../docs/adr/0024-the-horizontal-scenario.md), [0025](../docs/adr/0025-two-terminals-one-way.md). GE-1 a 1 km certifica **253 935 bit/s** en una sesión de 60 s, y el **acantilado de los 5 km** es lo que impide dimensionar con el número asintótico | [archivo](archive/LAST_CHANGES-40.md) |
 
 ---
 
@@ -1274,3 +1028,194 @@ la pila numérica sobre la que está construido. Un comentario que defiende una
 dependencia con un número que nadie comprobó es el mismo defecto que persigue el
 [ADR 0016](../docs/adr/0016-the-engine-adds-nothing-and-one-altitude.md), una
 capa fuera de la física.
+---
+
+## 45. El wheel lleva sus datos, y una cita a un fichero deja de poder envejecer sola
+
+**Fecha:** 2026-09-19. **Ningún módulo de física tocado.** ADRs tocados:
+[0015](../docs/adr/0015-external-data-isolation-and-snapshots.md) («Lo que esto
+cuesta», que tenía este defecto escrito como aplazado) y
+[0027](../docs/adr/0027-four-levels-of-distribution.md) (el segundo de los dos
+defectos de nivel 0 que su medición destapó). **Cierra la
+[inconsistencia #18](INCONSISTENCIAS.md).**
+
+**La cifra que resume la entrada: el wheel pasa de 90 a 95 entradas, y con ellas
+un `pip install quoss` deja de ser una promesa incumplida. Y la comprobación que
+lo demuestra no es que los ocho tests nuevos pasen, es que devolviendo el defecto
+a mano fallan cinco de los ocho — y los tres que pasan son los tres escenarios.**
+
+### Qué es un «dato de paquete», antes de nada
+
+Un proyecto Python tiene dos clases de fichero que no son código. Están los del
+**repositorio**: el `README`, los tests, los escenarios de ejemplo, el `.github/`.
+Y están los que el programa **necesita para funcionar**: aquí, el catálogo de
+estaciones ópticas (`ogs.yaml`, cuatro telescopios con sus coordenadas) y los dos
+*snapshots* —respuestas reales de Celestrak y de Open-Meteo, congeladas con su
+fecha y su SHA-256, para que la demo corra sin wifi.
+
+La diferencia no es de contenido, es de **quién los tiene que ver**. Un test solo
+lo ejecuta quien clona el repositorio. El catálogo lo abre el programa, y el
+programa lo puede estar ejecutando alguien que nunca ha clonado nada: `pip
+install quoss` y `quoss run`. Un fichero de la segunda clase se llama **dato de
+paquete**, y la regla que lo define es física antes que conceptual: **tiene que
+estar físicamente dentro del directorio del paquete**, porque el directorio del
+paquete es lo único que se copia dentro del `.whl`.
+
+Un **wheel** (`.whl`) es un ZIP con un nombre normalizado. `pip install` lo
+descomprime dentro de `site-packages` y no hace nada más listo que eso. Lo que no
+estaba en el ZIP no existe en la instalación, y no hay mensaje que lo diga.
+
+### Qué pasaba, y por qué la suite entera no podía verlo
+
+`data/ogs.yaml` y `data/snapshots/` vivían en la **raíz del repositorio**, fuera
+de `src/quoss/`. Los dos lectores los encontraban subiendo tres directorios desde
+sí mismos:
+
+```python
+DEFAULT_CATALOGUE_PATH = Path(__file__).resolve().parents[3] / "data" / "ogs.yaml"
+```
+
+Desde `<repo>/src/quoss/io/stations.py`, tres niveles arriba es `<repo>`. Correcto,
+y correcto **solo mientras el módulo esté dentro del repositorio**. Desde
+`<venv>/lib/python3.13/site-packages/quoss/io/stations.py`, tres niveles arriba es
+`<venv>/lib/python3.13/`, que es del intérprete y no tiene nada que ver con QuOSS.
+Medido el 2026-09-19 con el wheel instalado en un `.venv` limpio fuera del
+checkout, `load_station_catalogue()` levantaba:
+
+```
+DataError: Station catalogue not found at
+  /tmp/.../venv/lib/python3.13/data/ogs.yaml
+```
+
+Ruidoso, que es la regla del proyecto funcionando —«prohibido degradar en
+silencio»— y **aun así una promesa incumplida**, porque no había ninguna ruta que
+el usuario pudiera haber puesto: el fichero no estaba en el wheel. Sus 90 entradas
+eran `quoss/**/*.py` y el `dist-info`, y nada más.
+
+**Y por qué 3 875 tests en verde no lo veían.** Porque todos corren sobre el
+checkout. `uv run pytest` pone `src/` en el path y la física no se entera de si el
+paquete está instalado: en el árbol, los datos **sí** están tres directorios
+arriba, así que cualquier aserción escrita contra el checkout pasa igual antes y
+después del arreglo y no prueba nada. Este es el mismo argumento que obligó al
+test del *console script* de la etapa 7 a lanzar `quoss` como subproceso: un
+`import` no ve una cadena de *entry point* equivocada, y un checkout no ve una
+entrada que falta en un ZIP.
+
+### El arreglo: una sola ancla, dentro de lo que se copia
+
+`data/` pasa a `src/quoss/data/`, y `src/quoss/data/__init__.py` define la única
+ancla:
+
+```python
+DATA_ROOT = Path(__file__).resolve().parent
+```
+
+**Un** directorio por encima de sí misma, no tres por encima de otro módulo. La
+diferencia es que ese directorio está *dentro* de lo que el backend de
+construcción copia, así que la expresión da el mismo resultado en el checkout y
+en `site-packages`. `DEFAULT_CATALOGUE_PATH` y `DEFAULT_SNAPSHOT_ROOT` se derivan
+de ella, de modo que los dos lectores coinciden por construcción y no porque dos
+copias de la misma expresión sigan en paso.
+
+Es también la razón de que sea un módulo con `__init__.py` y no un directorio
+suelto: `quoss.data` importable es lo que garantiza que **cualquier** backend lo
+trate como paquete, no solo hatchling con esta configuración concreta.
+
+Lo que **no** cubre, dicho en su docstring en vez de descubrirse: un paquete
+zipimportado (`python app.pyz`), donde `__file__` nombra una entrada dentro de un
+archivo y no hay directorio que abrir. Ninguno de los cuatro niveles de
+distribución del ADR 0027 distribuye así.
+
+### La comprobación, y por qué la negativa es la que vale
+
+`tests/packaging/test_wheel.py`, ocho tests: construye el wheel en un directorio
+temporal (**no** en `<repo>/dist` — un test que escribe dentro del checkout que
+está midiendo ha cambiado lo que mide), crea un `.venv` limpio **fuera del
+checkout** —comprobado con un `assert` sobre la ruta, no supuesto—, instala el
+wheel y desde ahí carga el catálogo, los dos snapshots con su SHA-256 y corre los
+tres escenarios.
+
+| Antes | Después |
+|---|---|
+| 90 entradas, 648 KB | **95 entradas, 671 KB** |
+| `<venv>/lib/python3.13/data/ogs.yaml` → `DataError` | `<venv>/lib/python3.13/site-packages/quoss/data/ogs.yaml` → cuatro estaciones |
+
+**Y la parte que de verdad prueba algo.** Un test de empaquetado que solo ha visto
+un paquete que funciona es una fotografía de un paquete que funciona. Se devolvió
+el defecto a mano —un `exclude` en `[tool.hatch.build.targets.wheel]` que deja
+`quoss/data/` fuera del wheel— y **fallaron cinco de los ocho**: las tres entradas
+de datos y los dos lectores.
+
+Los otros tres pasaron. Son los tres escenarios, y **pasaron con los datos
+ausentes**. Eso no es un agujero, es la medida que explica por qué los dos tests
+de lectura tienen que existir: los escenarios commiteados llevan su estación y su
+TLE en línea, así que `quoss run` nunca abre `quoss/data/` y no puede notar que no
+está. Es literalmente lo que la inconsistencia #18 reportaba —«corre los tres
+escenarios y sale 0» mientras el catálogo no cargaba—, reproducido aquí como
+control del instrumento.
+
+**Lo que cuesta:** 17.7 s los ocho, de los cuales 15 son física (0.74 s el
+horizontal, 4.86 s la bajada, 9.27 s el TLE) y 0.85 s el empaquetado entero
+—0.63 s construir el wheel, 0.22 s crear el venv e instalar— con la caché de `uv`
+caliente. Barato, así que corre en los cinco jobs de CI y no en uno aparte; y
+porque un `skip` que nadie ve es un test que no existe, CI exporta
+`QUOSS_REQUIRE_PACKAGING_TESTS=1` y ahí el `skip` por falta de `uv` es un fallo.
+
+### La otra mitad: una cita a un fichero tampoco puede envejecer sola
+
+Mover ficheros es la operación que en §42 rompió catorce citas a apartados de la
+guía ([inconsistencia #17](INCONSISTENCIAS.md)). El remedio que allí funcionó fue
+un test que resuelve cada cita; aquí había **la misma clase de cita sin cubrir**:
+`test_every_guide_section_cited_from_the_code_exists` comprueba que un **apartado**
+citado existe, y nada comprobaba que un **fichero** citado exista. Este cambio
+movía quince referencias a `data/`, así que el test se escribió **antes** de mover
+nada, no después.
+
+`test_every_path_cited_from_the_code_exists` recorre `src/`, `tests/`, `docs/`,
+`pyproject.toml`, `CLAUDE.md`, `README.md` y `notes/ROADMAP.md`, y resuelve cada
+ruta citada contra tres anclas —la raíz, `src/` y `src/quoss/`— porque el árbol
+usa de verdad las tres grafías (`docs/adr/0018-….md`, `quoss/data/ogs.yaml`,
+`channel/atmosphere.py`) e imponer una sola haría fallar 140 citas perfectamente
+legibles. **Medido: 186 rutas distintas citadas.** Siete no existen, y las siete
+están en `PATHS_DECLARED_ABSENT` con su razón escrita —seis son ficheros de las
+etapas 9-11 y 2.4 que el propio ADR declara no escritos en la misma frase, y la
+séptima es un marcador dentro de un doctest—; cada una lleva además un test que
+**aserta que sigue ausente**, de modo que la lista se encoge sola el día que
+alguien escriba uno de esos ficheros.
+
+**Comprobado rompiendo una a mano**, como se hizo con las catorce: renombrando
+`scenarios/ge1_1km.yaml` a `.yml`, el test falla nombrando **26 líneas** que la
+citan; restaurado, vuelve a pasar.
+
+**Lo que no cubre, dicho en voz alta.** Solo comprueba rutas que acaban en una
+extensión conocida, así que una cita a un **directorio** —`data/snapshots/`— le es
+invisible. No es pereza: en prosa un nombre terminado en barra es indistinguible
+de una lista separada por barras, y el árbol tiene el contraejemplo exacto,
+`core ← orbits/channel/qkd ← system` en `README.md:205`, que cualquier regla de
+forma-directorio lee como una cita de `src/quoss/orbits/channel/`. Un escaneo que
+salte con esa frase se apaga en una semana, y un test apagado no protege nada.
+
+### Verificación
+
+`ruff check`, `ruff format --check`, `mypy` (165 ficheros) y **3 883 tests** en
+verde, 3 875 antes: los ocho nuevos son los de empaquetado, y los dos de citas
+sustituyen a ninguno. Cobertura **100 %** de líneas y ramas sobre las 9 032
+sentencias del paquete, el mismo porcentaje que antes — `quoss/data/__init__.py`
+entra cubierto, por su doctest.
+
+Y el wheel se construyó e instaló de verdad, que es lo único que esta entrada
+podía dar por supuesto y no ha hecho.
+
+### Ficheros
+
+| Fichero | Qué |
+|---|---|
+| `src/quoss/data/__init__.py` | **nuevo.** `DATA_ROOT`, y la defensa entera de por qué el ancla se mueve dentro del paquete |
+| `src/quoss/data/ogs.yaml`, `src/quoss/data/snapshots/**` | movidos desde `<repo>/data/` |
+| `src/quoss/io/stations.py`, `src/quoss/io/snapshots.py` | las dos rutas por defecto derivan de `DATA_ROOT`; la «limitación» del docstring de `snapshots.py` deja de ser una limitación |
+| `src/quoss/io/celestrak.py`, `src/quoss/io/openmeteo.py`, `src/quoss/io/__init__.py` | las citas a los ficheros movidos |
+| `tests/packaging/test_wheel.py` | **nuevo.** Los ocho tests, el control negativo y lo que cuesta |
+| `tests/unit/test_notes.py` | `test_every_path_cited_from_the_code_exists` y su gemelo que vacía la lista de excepciones |
+| `tests/conftest.py`, `tests/io/test_stations.py`, `tests/io/test_snapshots.py` | `data_dir` apunta al paquete; dos tests renombrados para que digan lo que comprueban |
+| `.github/workflows/ci.yml` | `QUOSS_REQUIRE_PACKAGING_TESTS=1` |
+| ADRs 0015 y 0027, `INCONSISTENCIAS.md`, `ROADMAP.md` | el defecto pasa de aplazado a cerrado, con su medida |

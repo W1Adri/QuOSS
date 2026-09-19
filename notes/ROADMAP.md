@@ -223,9 +223,10 @@ todos los caminos con `fetch` falsos. Decisiones en el
 | ✅ `cache.py` | caché HTTP en disco, content-addressed, TTL obligatorio, reloj inyectado |
 | ✅ `celestrak.py` | un TLE del API GP, validado por `parse_tle` antes de existir |
 | ✅ `openmeteo.py` | cobertura horaria de nubes del archivo histórico (familia ERA5) |
-| ✅ `snapshots.py` | `data/snapshots/<kind>/<name>.json` con manifiesto y hash comprobado |
+| ✅ `snapshots.py` | `quoss/data/snapshots/<kind>/<name>.json` con manifiesto y hash comprobado |
 | ✅ `export.py` | `manifest.json`, `passes.csv`, `daily.csv`, `series_*.csv`, `arrays.npz`, `result.json` |
-| ✅ `stations.py` + `data/ogs.yaml` | cuatro estaciones con `source` y `coordinates_precision` obligatorios |
+| ✅ `stations.py` + `quoss/data/ogs.yaml` | cuatro estaciones con `source` y `coordinates_precision` obligatorios |
+| ✅ `quoss/data/` | **datos de paquete**, no ficheros del checkout: el wheel los lleva y `quoss.data.DATA_ROOT` los encuentra igual instalado que en el árbol. Asertado desde una instalación por `tests/packaging/test_wheel.py` |
 
 ---
 

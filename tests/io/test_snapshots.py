@@ -35,7 +35,7 @@ ISS_TEXT = (
 class TestShippedSnapshots:
     """Both shipped snapshots are real fetches: the manifests say so and the payloads parse."""
 
-    def test_root_is_the_repository_data_directory(self, data_dir: Path) -> None:
+    def test_root_is_the_package_data_directory(self, data_dir: Path) -> None:
         assert DEFAULT_SNAPSHOT_ROOT == data_dir / "snapshots"
 
     def test_listing(self) -> None:
